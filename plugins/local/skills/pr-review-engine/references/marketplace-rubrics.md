@@ -44,21 +44,29 @@ N agents on the same diff.
 
 ## Why this lives in `references/`
 
-This file is the single canonical inventory of which agent consumes which
-marketplace skill. It deduplicates the **inventory table** (previously
-restated in `CLAUDE.md`, `README.md`, `plugins/local/README.md`, and
-`setup/SKILL.md`); the inventory now lives here, with the other docs
-pointing at this file for ground truth.
+This file is the **agent-side load surface** for the marketplace-skill
+inventory. When a review agent needs to know which marketplace skill
+backs its rubric, it Reads this file once instead of inferring it from
+the dispatcher prose or the human-facing tables.
 
-It does **not** currently deduplicate the **discovery snippet** —
-each agent still independently invokes `find ~/.claude -type f -name
-SKILL.md -path "*<skill-name>*"` for the marketplace skills it needs.
-The inline `find_skill` calls are kept because each agent's rubric
-narrows the marketplace skill to a specific surface, and the per-agent
-calls execute in parallel anyway when the engine fans out. A future
-optimization could have agents Read this file's discovery section once
-and use a shared resolved-path map — worth doing if a marketplace skill
-ever grows to >50 KB.
+Parallel inventories still live in `CLAUDE.md`, `README.md`, and
+`plugins/local/skills/setup/SKILL.md`. Those serve human readers and
+the `setup` skill's install loop. This file serves the agents at run
+time. They are not currently deduplicated — collapsing the three
+human-facing tables into pointer lines is a future cleanup that's
+worth doing once the rename / refinement churn settles. Until then,
+the four surfaces must stay in sync: any new marketplace prereq or
+agent rename has to land in all four places.
+
+The discovery snippet itself is not deduplicated either — each agent
+independently invokes `find ~/.claude -type f -name SKILL.md -path
+"*<skill-name>*"` for the marketplace skills it needs. The inline
+`find_skill` calls are kept because each agent's rubric narrows the
+marketplace skill to a specific surface, and the per-agent calls
+execute in parallel anyway when the engine fans out. A future
+optimization could have agents Read this file's discovery section
+once and use a shared resolved-path map — worth doing if a
+marketplace skill ever grows to >50 KB.
 
 The companion topic-specific references (`references/secrets.md`,
 `references/injection.md`, `references/effect-cleanup.md`) extract
