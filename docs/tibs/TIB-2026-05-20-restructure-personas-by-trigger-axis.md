@@ -1,11 +1,20 @@
 # TIB-2026-05-20: Restructure personas by trigger axis
 
-| Field             | Value                                              |
-| ----------------- | -------------------------------------------------- |
-| **Status**        | Proposed                                           |
-| **Date**          | 2026-05-20                                         |
-| **Author**        | @0xbulma                                           |
-| **Scope**         | Repo-wide (`plugins/local/personas/` + dispatcher) |
+| Field             | Value                                                                |
+| ----------------- | -------------------------------------------------------------------- |
+| **Status**        | Superseded                                                           |
+| **Date**          | 2026-05-20                                                           |
+| **Author**        | @0xbulma                                                             |
+| **Scope**         | Repo-wide (`plugins/local/personas/` + dispatcher)                   |
+| **Superseded by** | TIB-2026-05-20-pr-review-engine-skill                                |
+
+> **Note:** This proposal was superseded the same day after review of Anthropic's
+> official `anthropics/skills` repository revealed that several of its core
+> mechanisms (three-tier folder grouping, top-level `_shared/` directory,
+> frontmatter manifests with `owns:`/`defers:`/`fix-rubric:` keys, closed trigger
+> flag enum) conflict with Anthropic's documented conventions. The replacement TIB
+> adopts Anthropic's `skill-creator`-style layout (`SKILL.md` + `agents/` +
+> `references/`) inside a single new `pr-review-engine` skill.
 
 ---
 
