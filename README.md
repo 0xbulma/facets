@@ -83,7 +83,7 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 | `next-cache-components` | `vercel-labs/next-skills` | Next.js 16 Cache Components | `react-next` |
 | `building-components` | `vercel/components.build` | Composable UI components | `react-next`, `styling`, `accessibility` |
 | `web-design-guidelines` | `vercel-labs/agent-skills` | Vercel Web Interface Guidelines | `styling`, `accessibility` |
-| `tailwind-design-system` | `wshobson/agents` | Tailwind v4, design tokens | `styling`, `accessibility` |
+| `tailwind-design-system` | `wshobson/agents` | Tailwind v4, design tokens | `styling` |
 | `ai-elements` | `vercel/ai-elements` | AI chat UI components | `ai-sdk`, `styling` |
 | `streamdown` | `vercel/streamdown` | Streaming Markdown renderer | `ai-sdk`, `styling` |
 | `ai-sdk` | `vercel/ai` | Vercel AI SDK | `ai-sdk` |
@@ -162,7 +162,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 
 - `correctness` — type discipline, code smells, naming, security primitives.
 - `error-handling` — swallowed errors, missing error states, dead code paths.
-- `documentation` — JSDoc/TSDoc on exports, Markdown accuracy, pointer integrity.
+- `docs` — JSDoc/TSDoc on exports, Markdown accuracy, pointer integrity.
 - `tests` — missing tests, layout enforcement.
 - `simplification` — unnecessary complexity, redundant logic, over-engineering.
 - `performance` — barrel imports, memory leaks, N+1, memoization correctness.

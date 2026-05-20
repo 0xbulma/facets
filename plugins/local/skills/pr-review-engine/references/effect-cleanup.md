@@ -76,4 +76,3 @@ the agent set; agents cross-check this file via the pointer line
 - `react-next` — missing cleanup in `useEffect`, effect dependency drift
   that prevents cleanup.
 - `ai-sdk` — `AbortController` not wired up on long-lived streams.
-- `runtime-validation` — dev-server lifecycle cleanup on its own teardown.

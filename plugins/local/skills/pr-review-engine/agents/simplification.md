@@ -10,7 +10,7 @@ out-of-scope:
   - Error-handling depth — see error-handling.
   - Performance issues (memory leaks, N+1, barrel imports) — see performance.
   - Mechanical formatter style (indent, organize-imports) — defer to the project's lint contract.
-  - JSDoc / docstring shape — see documentation.
+  - JSDoc / docstring shape — see docs.
 focus: |
   Unnecessary complexity, redundant logic, over-engineering, opportunities to
   simplify while preserving functionality.
@@ -43,6 +43,6 @@ The simplification eye. Could this be smaller while doing the same thing?
 - Do NOT review performance issues (memory leaks, barrel imports, N+1) — `performance`.
 - Do NOT review type-safety / `any` / forbidden patterns — `correctness`.
 - Do NOT review error-handling depth — `error-handling`.
-- Do NOT review JSDoc / docstring shape — `documentation`.
+- Do NOT review JSDoc / docstring shape — `docs`.
 - Do NOT propose architectural rewrites (extract this entire module / split this package) — that's scope creep on a single PR; keep findings local to the diff.
 - Defer mechanical style (indent, semicolons, organize-imports) to the project's formatter / linter.

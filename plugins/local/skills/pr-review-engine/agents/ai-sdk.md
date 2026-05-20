@@ -50,7 +50,7 @@ For each non-empty path, Read the rubric in full and print `Loaded conditional s
 
 ### Provider configuration
 
-- Hardcoded API keys instead of `process.env.OPENAI_API_KEY` (or the provider's canonical env var). **Critical**.
+- Hardcoded API keys instead of `process.env.OPENAI_API_KEY` (or the provider's canonical env var). **Critical**. Cross-check `references/secrets.md` for the canonical fix patterns.
 - Provider instantiation inside a hot loop or on every render — should be module-scope. **High**.
 - Mixing providers without a clear abstraction when the project has more than one — flag any new direct provider import in a file that already imports a different provider, ask whether a shared client is intended.
 

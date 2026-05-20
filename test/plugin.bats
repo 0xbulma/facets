@@ -125,6 +125,17 @@ setup() {
   [ "$count" = "15" ]
 }
 
+@test "engine mode=fix filter set matches agents with ## Fix rubric" {
+  # Locks in the invariant the engine SKILL.md states in prose: mode=fix
+  # filters to web3, ci-security, release-integrity, dependencies, docs.
+  # Catches: a fix-rubric section accidentally removed, a fix-rubric
+  # section added to an agent that pr-fix doesn't expect, or a rename
+  # that desyncs the prose list from the on-disk filter set.
+  expected="ci-security dependencies docs release-integrity web3"
+  actual=$(grep -l '^## Fix rubric' "$AGENTS_DIR"/*.md | xargs -n1 basename | sed 's/\.md$//' | sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || { echo "engine prose lists: $expected"; echo "agents w/ section: $actual" >&2; return 1; }
+}
+
 @test "hooks.json and install-prereqs.sh exist and are wired up" {
   [ -f "$PLUGIN_DIR/hooks/hooks.json" ]
   [ -x "$PLUGIN_DIR/bin/install-prereqs.sh" ]

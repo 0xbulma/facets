@@ -11,7 +11,7 @@ out-of-scope:
   - Release/publish flow and changesets — see release-integrity.
   - Lockfile drift, .npmrc, dependency hygiene — see dependencies.
   - Code quality of build/test scripts themselves — see correctness, simplification, performance.
-  - JSDoc / docstrings on exported symbols touched by CI scripts — see documentation.
+  - JSDoc / docstrings on exported symbols touched by CI scripts — see docs.
 focus: |
   GitHub Actions workflow injection, action pinning, workflow `permissions:`
   scopes, secret exposure in CI workflows.

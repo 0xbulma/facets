@@ -9,7 +9,7 @@ out-of-scope:
   - Type discipline / forbidden patterns — see correctness.
   - Error-handling depth — see error-handling.
   - Simplification / over-engineering / redundant logic — see simplification.
-  - JSDoc / docstring shape — see documentation.
+  - JSDoc / docstring shape — see docs.
 focus: |
   Performance issues: memory leaks, N+1 patterns, barrel imports,
   memoization correctness, large objects created in hot paths.
@@ -47,5 +47,5 @@ The performance eye. Could this be faster while doing the same thing?
 - Do NOT review simplification / over-engineering / redundant logic — `simplification`.
 - Do NOT review type-safety / `any` / forbidden patterns — `correctness`.
 - Do NOT review error-handling depth — `error-handling`.
-- Do NOT review JSDoc / docstring shape — `documentation`.
+- Do NOT review JSDoc / docstring shape — `docs`.
 - Do NOT propose architectural rewrites (extract this entire module / split this package) — keep findings local to the diff.

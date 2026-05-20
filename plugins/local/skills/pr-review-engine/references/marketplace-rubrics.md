@@ -44,16 +44,25 @@ N agents on the same diff.
 
 ## Why this lives in `references/`
 
-When a marketplace rubric is referenced inline by multiple agent prompts, every
-agent that loads on the same diff independently fetches the skill file —
-duplicate work and duplicate tokens. This file is the single canonical
-inventory; agents reference it by name (e.g. "Discover marketplace rubric paths
-via Bash. See `references/marketplace-rubrics.md`."). The actual `find_skill`
-invocation still happens per-agent at run time, but the inventory of which
-agent uses which skill is recorded once here.
+This file is the single canonical inventory of which agent consumes which
+marketplace skill. It deduplicates the **inventory table** (previously
+restated in `CLAUDE.md`, `README.md`, `plugins/local/README.md`, and
+`setup/SKILL.md`); the inventory now lives here, with the other docs
+pointing at this file for ground truth.
 
-Future extension: if multiple agents need to share rubric **content** (not just
-the discovery list), add a topic-specific reference (`references/secrets.md`,
-`references/injection.md`, etc.) with the canonical rubric and have agents
-reference it by name. Not done yet — agents still own their inline rubric — but
-this directory is the home for that pattern when it becomes worth it.
+It does **not** currently deduplicate the **discovery snippet** —
+each agent still independently invokes `find ~/.claude -type f -name
+SKILL.md -path "*<skill-name>*"` for the marketplace skills it needs.
+The inline `find_skill` calls are kept because each agent's rubric
+narrows the marketplace skill to a specific surface, and the per-agent
+calls execute in parallel anyway when the engine fans out. A future
+optimization could have agents Read this file's discovery section once
+and use a shared resolved-path map — worth doing if a marketplace skill
+ever grows to >50 KB.
+
+The companion topic-specific references (`references/secrets.md`,
+`references/injection.md`, `references/effect-cleanup.md`) extract
+shared **rubric content** (not just discovery), eliminating cross-agent
+inline duplication for those three concerns. Consumer agents
+cross-check those files via prose pointer lines instead of restating
+the rubric.

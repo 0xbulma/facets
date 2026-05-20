@@ -28,7 +28,7 @@ A `SessionStart` hook also runs this in the background on every Claude Code sess
 | `next-cache-components` | `vercel-labs/next-skills` | `react-next` |
 | `building-components` | `vercel/components.build` | `react-next`, `styling`, `accessibility` |
 | `web-design-guidelines` | `vercel-labs/agent-skills` | `styling`, `accessibility` |
-| `tailwind-design-system` | `wshobson/agents` | `styling`, `accessibility` |
+| `tailwind-design-system` | `wshobson/agents` | `styling` |
 | `ai-elements` | `vercel/ai-elements` | `ai-sdk`, `styling` |
 | `streamdown` | `vercel/streamdown` | `ai-sdk`, `styling` |
 | `ai-sdk` | `vercel/ai` | `ai-sdk` |
