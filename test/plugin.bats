@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   PERSONAS_DIR="$PLUGIN_DIR/personas"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create extract-plan tib-create"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create extract-plan tib-create pr-switch"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,7 +37,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "seven skills exist at expected paths" {
+@test "eight skills exist at expected paths" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
   done
