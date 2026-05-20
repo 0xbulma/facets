@@ -2,7 +2,7 @@
 
 | Field              | Value                                                                          |
 | ------------------ | ------------------------------------------------------------------------------ |
-| **Status**         | In Progress                                                                    |
+| **Status**         | Shipped                                                                        |
 | **Date**           | 2026-05-20                                                                     |
 | **Author**         | @0xbulma                                                                       |
 | **Related TIB(s)** | [TIB-2026-05-20-pr-review-engine-skill](../tibs/TIB-2026-05-20-pr-review-engine-skill.md) |

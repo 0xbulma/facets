@@ -2,7 +2,7 @@
 
 | Field              | Value                                                                          |
 | ------------------ | ------------------------------------------------------------------------------ |
-| **Status**         | Draft                                                                          |
+| **Status**         | Shipped                                                                        |
 | **Date**           | 2026-05-20                                                                     |
 | **Author**         | @0xbulma                                                                       |
 | **Related TIB(s)** | [TIB-2026-05-20-pr-review-engine-skill](../tibs/TIB-2026-05-20-pr-review-engine-skill.md) |
@@ -39,7 +39,7 @@ follow the same pattern.
 | ------------------------------------------------- | -------------------------------------------------------------------- |
 | `plugins/local/skills/pr-review-gh/SKILL.md`      | Steps 3–6 delegate to `pr-review-engine/SKILL.md`                    |
 | `plugins/local/skills/pr-review-local/SKILL.md`   | Same                                                                 |
-| `plugins/local/skills/tib-ship/SKILL.md`          | Same (preserves `<EXCLUDE_PERSONAS>` pass-through for runtime-validation) |
+| `plugins/local/skills/tib-ship/SKILL.md`          | Same (preserves `<EXCLUDE_AGENTS>` pass-through for runtime-validation) |
 | `plugins/local/skills/pr-fix/SKILL.md`            | Step 6a.5 collapses from ~120 lines of hardcoded persona references to a single `mode=fix` engine invocation |
 
 ### New Files
@@ -51,12 +51,12 @@ None.
 ### Phase 3 — Migrate `pr-review-gh`
 
 - [ ] Replace the "delegate to `lib/pr-review-base.md`" stanza with "delegate to `skills/pr-review-engine/SKILL.md`."
-- [ ] Verify the consumer's Steps 1–2 (resolve branches, head SHA) still hand off the same caller-provided contract (`<OWNER>`, `<REPO>`, `<HEAD_BRANCH>`, `<BASE_BRANCH>`, `<HEAD_SHA>`, `<DIFF_SOURCE>`, `<HEAD_REF>`, `<EXCLUDE_PERSONAS>`).
+- [ ] Verify the consumer's Steps 1–2 (resolve branches, head SHA) still hand off the same caller-provided contract (`<OWNER>`, `<REPO>`, `<HEAD_BRANCH>`, `<BASE_BRANCH>`, `<HEAD_SHA>`, `<DIFF_SOURCE>`, `<HEAD_REF>`, `<EXCLUDE_AGENTS>`).
 
 ### Phase 4 — Migrate `pr-review-local` and `tib-ship`
 
 - [ ] Same pattern as Phase 3.
-- [ ] In `tib-ship`, confirm Step 5's `<EXCLUDE_PERSONAS>` mechanism is preserved (used to skip `runtime-validation` in the inner loop).
+- [ ] In `tib-ship`, confirm Step 5's `<EXCLUDE_AGENTS>` mechanism is preserved (used to skip `runtime-validation` in the inner loop).
 
 ### Phase 5 — Decouple `pr-fix`
 
