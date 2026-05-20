@@ -19,6 +19,7 @@ The base contract: callers pass resolved values into Steps 3–6 and consume the
 | `<HEAD_SHA>` | `gh pr view` → `headRefOid` (PR mode) OR `git rev-parse HEAD` (Local) |
 | `<DIFF_SOURCE>` | `pr` (use `origin/<BASE>...origin/<HEAD>`) OR `local` (use `origin/<BASE>...HEAD` and overlay uncommitted) |
 | `<HEAD_REF>` | `origin/<HEAD_BRANCH>` for `<DIFF_SOURCE>=pr`, `HEAD` for `<DIFF_SOURCE>=local` |
+| `<EXCLUDE_PERSONAS>` | Optional list of persona names to skip in Step 5 (e.g. `["runtime-validation"]` from `tib-ship` during iterations). Defaults to empty. |
 
 ## Step 3: Get the diff locally
 
@@ -88,6 +89,13 @@ Compute boolean flags from the diff and from changed files' content. These flags
 - `<HAS_STYLING>` — true if any changed file imports `styled-components`, `@emotion/*`, `tss-react`, `*.module.css`, `*.module.scss`, OR contains a11y attributes (`role=`, `aria-`, `tabIndex`).
 - `<HAS_CI_RELEASE>` — true if any changed file matches `.github/workflows/**`, `.github/actions/**`, `.changeset/**`, `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `pnpm-workspace.yaml`, `.npmrc` (any level), `turbo.json`, `vercel.json`, OR any `package.json` whose `scripts.*publish*` / `scripts.*release*` / `scripts.*deploy*` field is modified, OR any file containing `changeset publish`, `npm publish`, `pnpm publish`, `gh release create`, `vercel deploy`, or `vercel --prod`.
 - `<HAS_AI_SDK>` — true if any changed file imports `ai`, `@ai-sdk/*`, `@vercel/ai`, OR uses any of `streamText`, `generateText`, `streamObject`, `generateObject`, `embed`, `embedMany`, `useChat`, `useCompletion`, `useObject`, `ToolLoopAgent`, OR imports `ai-elements` or `streamdown`.
+- `<HAS_ROUTE_UI>` — true if any changed file is **route-reachable**, i.e. a page/layout/api-route/SPA entry. Intentionally narrower than `<HAS_REACT>` so we don't boot a dev server for arbitrary component or utility changes. Matches:
+  - **Next App Router:** `app/**/page.{tsx,jsx,ts,js}`, `app/**/layout.{tsx,jsx,ts,js}`, `app/**/template.{tsx,jsx}`, `app/**/loading.{tsx,jsx}`, `app/**/error.{tsx,jsx}`, `app/**/route.{ts,js}` (API routes).
+  - **Next Pages Router:** `pages/**/*.{tsx,jsx,ts,js}` excluding `pages/_*.{tsx,jsx}` (`_app`, `_document`), `pages/api/**/*.{ts,js}`.
+  - **SPA / Vite / Astro:** `src/pages/**/*.{tsx,jsx,astro,mdx}`, `src/routes/**/*.{tsx,jsx}`, `src/App.{tsx,jsx,ts,js}`, `src/main.{tsx,jsx,ts,js}`, `src/index.{tsx,jsx,ts,js}`, `index.html` at repo root.
+  - AND the repo has a discoverable dev-server script (`package.json` `scripts.dev` / `scripts.start` / first script matching `^(dev|start|serve)`). If no dev-server command, this flag is false even when route-level files change — the persona has nothing to boot.
+
+  Component-only changes (e.g. `components/Button.tsx`) intentionally do **not** trigger this flag. The persona would have nowhere obvious to navigate; users who want runtime validation in that case should run `/local:tib-ship` (which always runs runtime-validation after convergence).
 
 ### Print discovery
 
@@ -107,6 +115,7 @@ Conditional flags:
   Styling/a11y:   <HAS_STYLING>
   CI/release:     <HAS_CI_RELEASE>
   AI SDK:         <HAS_AI_SDK>
+  Route-UI:       <HAS_ROUTE_UI>
 ```
 
 ## Step 5: Launch parallel review personas
@@ -119,8 +128,9 @@ Persona specs live in `${CLAUDE_PLUGIN_ROOT}/personas/*.md`. Each file has front
 2. For each persona, decide whether to launch:
    - `kind: baseline` → always launch.
    - `kind: conditional` → launch only when the flag named in `trigger:` is true (see Step 4 for flag computation). Compound triggers like `<HAS_TAILWIND> OR <HAS_STYLING>` are evaluated as written.
-3. Launch ALL selected personas **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
-4. Track `<TOTAL_AGENTS_LAUNCHED>` = count of personas actually launched (baseline + any fired conditionals).
+3. **Apply the caller's exclusion list.** If the caller provided `<EXCLUDE_PERSONAS>` (a list of persona names), drop those from the launch set. Used by orchestrators like `/local:tib-ship` to suppress a persona during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
+4. Launch ALL selected personas **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
+5. Track `<TOTAL_AGENTS_LAUNCHED>` = count of personas actually launched (baseline + any fired conditionals − excluded).
 
 ### Shared per-agent contract (applied uniformly to every launched persona)
 
@@ -148,6 +158,7 @@ Conditional (fire only when their trigger flag is true):
 - `ui-styling-accessibility.md` — fires when `<HAS_TAILWIND>` OR `<HAS_STYLING>` is true. Loads `tailwind-design-system`, `web-design-guidelines`, `ai-elements`, `streamdown`, `building-components` as rubric when applicable.
 - `ci-release-security.md` — fires when `<HAS_CI_RELEASE>` is true. Workflow injection, action pinning, write-token hardening, lockfile drift, publish-flow integrity. Loads `github-actions-docs`, `turborepo`, `deploy-to-vercel`, `vercel-cli-with-tokens` as rubric.
 - `ai-sdk-best-practices.md` — fires when `<HAS_AI_SDK>` is true. Vercel AI SDK usage, streaming, tool calls, structured output, useChat/useCompletion. Loads `ai-sdk`, `ai-elements`, `streamdown` as rubric.
+- `runtime-validation.md` — fires when `<HAS_ROUTE_UI>` is true. Runs a browser via `agent-browser` / `mcp__claude-in-chrome__*` against the dev server: boots, navigates the changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/local:tib-ship` from its iteration loop and run once after static convergence so dev-server boot is paid 1×, not N×.
 
 Adding a new persona = drop a new file under `${CLAUDE_PLUGIN_ROOT}/personas/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection. No edit to caller skill files needed.
 
@@ -202,6 +213,6 @@ The caller (Step 7 of `/local:pr-review-gh` / `/local:pr-review-local`) consumes
 - `<FINDINGS>` — sorted, deduplicated array of `{severity, file, line, description}`.
 - `<FAILED_AGENTS>` — count + names of agents that returned `agent_error` or malformed output.
 - `<COUNTS>` — `{critical, high, medium, low}` totals.
-- `<TOTAL_AGENTS_LAUNCHED>` — 5 baseline + count of conditional personas that fired (`<HAS_WEB3>` + `<HAS_REACT>` + `(<HAS_TAILWIND> OR <HAS_STYLING>)` + `<HAS_CI_RELEASE>`). Used by the caller's report to phrase `<FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed`.
+- `<TOTAL_AGENTS_LAUNCHED>` — 5 baseline + count of conditional personas that fired (`<HAS_WEB3>` + `<HAS_REACT>` + `(<HAS_TAILWIND> OR <HAS_STYLING>)` + `<HAS_CI_RELEASE>` + `<HAS_AI_SDK>` + `<HAS_ROUTE_UI>`), minus anything in the caller's `<EXCLUDE_PERSONAS>` list. Used by the caller's report to phrase `<FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed`.
 
 The caller formats and routes these per its mode (GitHub COMMENT / terminal output).
