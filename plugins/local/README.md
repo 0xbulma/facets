@@ -1,8 +1,8 @@
 # local
 
-Eight slash-command skills for Claude Code.
+Ten slash-command skills for Claude Code.
 
-**PR navigation / review / fix** (review side delegates to the shared `lib/pr-review-base.md` + 10-persona library)
+**PR navigation / review / fix** (review side delegates to the shared `lib/pr-review-base.md` + 11-persona library)
 
 - **`/local:pr-switch <pr-url-or-num>`** — switch the local checkout to a PR's head branch. Accepts a full GitHub PR URL, `owner/repo#num` shorthand, or a bare number. Refuses cross-repo URLs; resolves a dirty tree interactively (stash/commit/discard/abort).
 - **`/local:pr-review-local`** — pre-PR review on the local branch (committed + uncommitted). Terminal-only output. `--fix` applies mechanical fixes.
@@ -14,6 +14,8 @@ Eight slash-command skills for Claude Code.
 - **`/local:pr-create`** — open a draft PR from the current diff. Branch, title, body, and label derived without asking.
 - **`/local:extract-plan <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan with milestones and dependency-aware issues.
 - **`/local:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
+- **`/local:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
+- **`/local:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; the user pushes and opens the PR manually.
 
 **Utility**
 

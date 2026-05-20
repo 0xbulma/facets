@@ -1,6 +1,6 @@
 # claude-skills
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with eight slash-command skills, a 10-persona review library, and a SessionStart hook that auto-installs 18 rubric skills (15 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 3 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten slash-command skills, an 11-persona review library (5 baseline + 6 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (15 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 3 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -20,9 +20,22 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │   ├── pr-create/SKILL.md        # /local:pr-create
 │   │   ├── extract-plan/SKILL.md     # /local:extract-plan <doc> [project]
 │   │   ├── tib-create/SKILL.md       # /local:tib-create <title>
+│   │   ├── tip-create/SKILL.md       # /local:tip-create <title> [--tib <path>]…
+│   │   ├── tib-ship/SKILL.md         # /local:tib-ship <tib-path> [--max-iters N] [--no-runtime]
 │   │   └── setup/SKILL.md            # /local:setup
 │   ├── lib/pr-review-base.md         # shared review base
-│   ├── personas/*.md                 # 10 reviewers (5 baseline + 5 conditional)
+│   ├── personas/                     # 11 reviewers (5 baseline + 6 conditional)
+│   │   ├── code-quality.md                   # baseline
+│   │   ├── code-simplifier-performance.md    # baseline
+│   │   ├── documentation.md                  # baseline
+│   │   ├── silent-failure-hunter.md          # baseline
+│   │   ├── test-coverage.md                  # baseline
+│   │   ├── react-next-best-practices.md      # conditional (<HAS_REACT>)
+│   │   ├── ui-styling-accessibility.md       # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
+│   │   ├── ai-sdk-best-practices.md          # conditional (<HAS_AI_SDK>)
+│   │   ├── ci-release-security.md            # conditional (<HAS_CI_RELEASE>)
+│   │   ├── web3-security.md                  # conditional (<HAS_WEB3>)
+│   │   └── runtime-validation.md             # conditional (<HAS_ROUTE_UI>)
 │   ├── hooks/hooks.json              # SessionStart auto-install
 │   ├── bin/install-prereqs.sh        # idempotent prereq installer
 │   └── README.md
@@ -44,6 +57,8 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 - **`/local:pr-create`** — open a draft PR from the current diff. Derives branch name, title, body, and label without asking.
 - **`/local:extract-plan <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan (milestones + issues with dependencies).
 - **`/local:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
+- **`/local:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
+- **`/local:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; does not push or open a PR.
 
 **Utility**
 
@@ -145,13 +160,14 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `test-coverage` — missing tests, layout enforcement.
 - `code-simplifier-performance` — unnecessary complexity, redundant logic, perf.
 
-5 conditional (fire only when their flag matches the diff):
+6 conditional (fire only when their flag matches the diff):
 
 - `react-next-best-practices` — `<HAS_REACT>` — Server Components, hooks, React 19 APIs, Next.js conventions, Cache Components. Loads `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` when RN code detected).
 - `ui-styling-accessibility` — `<HAS_TAILWIND> OR <HAS_STYLING>` — Tailwind, a11y, design tokens. Loads `tailwind-design-system`, `web-design-guidelines`, `building-components` (+ `ai-elements`/`streamdown` when their imports are present).
 - `ai-sdk-best-practices` — `<HAS_AI_SDK>` — Vercel AI SDK usage, streaming, tool calls, structured output, useChat. Loads `ai-sdk`, `ai-elements`, `streamdown`.
 - `web3-security` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling.
 - `ci-release-security` — `<HAS_CI_RELEASE>` — workflow injection, action pinning, lockfile drift, publish-flow. Loads `github-actions-docs`, `turborepo`, `deploy-to-vercel`, `vercel-cli-with-tokens`.
+- `runtime-validation` — `<HAS_ROUTE_UI>` — boots the dev server, navigates the changed route(s), captures console errors / network 4xx-5xx / screenshots. Loads `agent-browser`; `tib-ship` excludes it from its iteration loop and runs it once after static convergence.
 
 ## License
 
