@@ -94,7 +94,14 @@ If output is non-empty, **show the user a 4-way choice**. Wait for their answer 
 
 - **Stash** — run `git stash push -u -m "pr-switch: auto-stash before checkout of PR #<PR_NUMBER>"`. **Check the exit code**; if non-zero (e.g. rebase/merge in progress, partial index, detached HEAD edge case), abort the skill — do NOT proceed to Step 6, because `gh pr checkout` would otherwise clobber the still-dirty tree. After a successful checkout, remind the user of the stash message so they can `git stash list` / `git stash pop` later.
 - **Commit** — abort the skill cleanly with: _"Commit your changes, then re-run `/local:pr-switch <PR_NUMBER>`."_ Don't try to commit for them.
-- **Discard** — only after explicit confirmation (a second yes/no): `cd "$(git rev-parse --show-toplevel)"` first so the cleanup applies to the whole repo regardless of cwd, then run `git checkout -- .`, **check its exit code** (interrupted merges leave unmerged paths that this command can't restore — if non-zero, surface the error and stop **before** running `git clean -fd`), and finally run `git clean -fd` to remove untracked files. Warn this is destructive and that untracked files will be lost. If the user wavers, default to Abort.
+- **Discard** — only after explicit confirmation (a second yes/no): resolve the repo root into a variable and **verify it's non-empty before `cd`** (an empty subshell result would `cd ""` → `$HOME` and run the destructive commands against an unrelated tree):
+
+  ```bash
+  REPO_ROOT="$(git rev-parse --show-toplevel)" && [ -n "$REPO_ROOT" ] || { echo "pr-switch: cannot resolve repo root; aborting Discard" >&2; exit 1; }
+  cd "$REPO_ROOT"
+  ```
+
+  Then run `git checkout -- .`, **check its exit code** (interrupted merges leave unmerged paths that this command can't restore — if non-zero, surface the error and stop **before** running `git clean -fd`), and finally run `git clean -fd` to remove untracked files. Warn this is destructive and that untracked files will be lost. If the user wavers, default to Abort.
 - **Abort** — stop, change nothing.
 
 If the tree is clean, skip the prompt and go straight to Step 6.

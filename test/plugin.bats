@@ -137,10 +137,11 @@ setup() {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
-  # The 6 model-invokable skills should appear; `setup` is intentionally
+  # The 7 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
   run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." 2>&1
   [ "$status" -eq 0 ]
+  echo "$output" | grep -q "local:pr-switch"
   echo "$output" | grep -q "local:pr-fix"
   echo "$output" | grep -q "local:pr-review-gh"
   echo "$output" | grep -q "local:pr-review-local"
