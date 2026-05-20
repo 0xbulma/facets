@@ -132,8 +132,78 @@ setup() {
   # section added to an agent that pr-fix doesn't expect, or a rename
   # that desyncs the prose list from the on-disk filter set.
   expected="ci-security dependencies docs release-integrity web3"
-  actual=$(grep -l '^## Fix rubric' "$AGENTS_DIR"/*.md | xargs -n1 basename | sed 's/\.md$//' | sort | tr '\n' ' ' | sed 's/ $//')
+  actual=$(grep -l '^## Fix rubric$' "$AGENTS_DIR"/*.md | xargs -n1 basename | sed 's/\.md$//' | sort | tr '\n' ' ' | sed 's/ $//')
   [ "$actual" = "$expected" ] || { echo "engine prose lists: $expected"; echo "agents w/ section: $actual" >&2; return 1; }
+}
+
+@test "each agent has name matching its filename" {
+  # Mirrors the same invariant we enforce on top-level skills (line 46-52).
+  # Catches: a rename (like code-quality → correctness) that updates the
+  # filename but leaves the frontmatter `name:` at the old value.
+  for agent_file in "$AGENTS_DIR"/*.md; do
+    name=$(awk '/^---$/{f=!f; next} f && /^name:/{print $2; exit}' "$agent_file")
+    expected=$(basename "$agent_file" .md)
+    [ "$name" = "$expected" ] || { echo "agent=$expected got name=$name" >&2; return 1; }
+  done
+}
+
+@test "each conditional agent declares a trigger" {
+  # `kind: conditional` agents must have `trigger:` so the engine knows
+  # when to fire them. `kind: baseline` agents must not (they always fire).
+  for agent_file in "$AGENTS_DIR"/*.md; do
+    kind=$(awk '/^---$/{f=!f; next} f && /^kind:/{print $2; exit}' "$agent_file")
+    trigger=$(awk '/^---$/{f=!f; next} f && /^trigger:/{print; exit}' "$agent_file")
+    case "$kind" in
+      baseline)
+        [ -z "$trigger" ] || { echo "$agent_file: kind=baseline but has trigger=$trigger" >&2; return 1; }
+        ;;
+      conditional)
+        [ -n "$trigger" ] || { echo "$agent_file: kind=conditional but no trigger declared" >&2; return 1; }
+        ;;
+      *)
+        echo "$agent_file: kind=$kind is not baseline|conditional" >&2; return 1
+        ;;
+    esac
+  done
+}
+
+@test "engine and setup skills set disable-model-invocation: true" {
+  # These two skills are invoked by other skills (engine) or by the user
+  # via a separate path (setup). They must not appear in the slash-command
+  # menu — disable-model-invocation: true is what enforces that.
+  for skill in pr-review-engine setup; do
+    flag=$(awk '/^---$/{f=!f; next} f && /^disable-model-invocation:/{print $2; exit}' "$SKILLS_DIR/$skill/SKILL.md")
+    [ "$flag" = "true" ] || { echo "$skill/SKILL.md missing disable-model-invocation: true (got: $flag)" >&2; return 1; }
+  done
+}
+
+@test "every references/*.md pointer in agents resolves to a real file" {
+  REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
+  # Every "Cross-check `references/X.md`" pointer in an agent body must
+  # resolve to an actual file. Catches: a references file renamed or
+  # deleted without updating the citing agents.
+  missing=""
+  for ref in $(grep -rho 'references/[a-z-]*\.md' "$AGENTS_DIR" | sort -u); do
+    [ -f "$REFS_DIR/${ref#references/}" ] || missing="$missing $ref"
+  done
+  [ -z "$missing" ] || { echo "agents point at non-existent references:$missing" >&2; return 1; }
+}
+
+@test "references/*.md backlinks are bidirectional" {
+  REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
+  # Every agent listed in a references file's `## Consumers` section
+  # must actually carry a "Cross-check `references/X.md`" pointer line.
+  # Catches: a Consumers entry that survives a rename/refactor when
+  # the agent's pointer was removed.
+  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md; do
+    ref_name=$(basename "$ref_file")
+    # Extract consumer agent names from the `## Consumers` section
+    consumers=$(awk '/^## Consumers/,EOF' "$ref_file" | grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | sort -u)
+    for c in $consumers; do
+      grep -q "references/$ref_name" "$AGENTS_DIR/$c.md" 2>/dev/null \
+        || { echo "$ref_file lists $c as consumer but $AGENTS_DIR/$c.md has no 'references/$ref_name' pointer" >&2; return 1; }
+    done
+  done
 }
 
 @test "hooks.json and install-prereqs.sh exist and are wired up" {

@@ -409,7 +409,12 @@ For each file with findings, build a complete understanding:
      ```bash
      FIX_AGENTS=$(grep -l '^## Fix rubric$' \
        "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/"*.md 2>/dev/null)
+     if [ -z "$FIX_AGENTS" ]; then
+       echo "pr-fix: no fix-rubric agents discovered at ${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/ — confidence gate falls through to inline judgment for this fix" >&2
+     fi
      ```
+
+     If `$FIX_AGENTS` is empty (engine relocated, glob failed, or every `## Fix rubric` section was removed), the surrounding loop iterates over nothing and the confidence gate runs without a structured rubric. The degradation message tells the user that happened — mirrors the `Marketplace skill not found: <name> — degrading to inline rubric` pattern the marketplace-rubric loads above use.
 
      For each fix-applicable agent whose trigger condition matches the current file's surface, Read the agent file in full and use the body — particularly the `## Fix rubric` section — as the rubric for the confidence gate.
 

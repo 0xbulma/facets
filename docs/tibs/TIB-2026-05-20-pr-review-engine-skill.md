@@ -1,11 +1,12 @@
 # TIB-2026-05-20: Consolidate PR-review dispatcher and personas into a single Anthropic-pattern skill
 
-| Field             | Value                                                                  |
-| ----------------- | ---------------------------------------------------------------------- |
-| **Status**        | Proposed                                                               |
-| **Date**          | 2026-05-20                                                             |
-| **Author**        | @0xbulma                                                               |
-| **Scope**         | Repo-wide (`plugins/local/{lib,personas}/` + four consumer skills)     |
+| Field                | Value                                                                  |
+| -------------------- | ---------------------------------------------------------------------- |
+| **Status**           | Proposed                                                               |
+| **Date**             | 2026-05-20                                                             |
+| **Author**           | @0xbulma                                                               |
+| **Scope**            | Repo-wide (`plugins/local/{lib,personas}/` + four consumer skills)     |
+| **Companion TIP(s)** | [TIP-2026-05-20-engine-skill-and-persona-migration](../tips/TIP-2026-05-20-engine-skill-and-persona-migration.md), [TIP-2026-05-20-consumer-migration](../tips/TIP-2026-05-20-consumer-migration.md), [TIP-2026-05-20-delete-legacy-dispatcher](../tips/TIP-2026-05-20-delete-legacy-dispatcher.md), [TIP-2026-05-20-persona-refinement](../tips/TIP-2026-05-20-persona-refinement.md) |
 
 ---
 

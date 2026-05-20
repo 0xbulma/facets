@@ -28,11 +28,7 @@ The PR review/fix skills delegate Steps 3–6 to `skills/pr-review-engine/SKILL.
 - `gh` CLI authenticated (`gh auth status`) — for the GitHub skills.
 - `git` ≥ 2.30.
 
-Three Anthropic marketplace skills are *optional* — when installed, the React/Next and Tailwind conditional personas use them as rubric. When absent, the personas fall back to their built-in rubric:
-
-- `vercel-react-best-practices`
-- `vercel-composition-patterns`
-- `tailwind-design-system`
+18 rubric skills (from the [skills.sh](https://skills.sh) registry: 16 Vercel-published + 2 community) are *auto-installed* by the `SessionStart` hook the first time the plugin is loaded. See the root `README.md` / `CLAUDE.md` for the full inventory and per-agent attribution. When a skill is absent at review time, the consuming agent logs a degradation message and falls back to its inline rubric — no hard failure.
 
 ## Install (as a marketplace plugin)
 

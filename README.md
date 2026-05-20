@@ -152,7 +152,7 @@ The plugin's `version` field in `plugins/local/.claude-plugin/plugin.json` contr
 
 ## Local development
 
-After editing any file under `plugins/local/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/plugin.bats` to validate manifest, frontmatter, version fields, and hook wiring (19 cases).
+After editing any file under `plugins/local/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/plugin.bats` to validate manifest, frontmatter, version fields, hook wiring, agent inventory, and references/ bidirectional backlinks (25 cases).
 
 See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versioning rules, and forking notes.
 

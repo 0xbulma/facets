@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # /local:setup — Install Prereq Rubric Skills
 
-Installs the five rubric skills used by the conditional review personas. Skills already present are skipped. Failure on any one skill does not abort the others.
+Installs the 18 rubric skills used by the conditional review agents. Skills already present are skipped. Failure on any one skill does not abort the others.
 
 A `SessionStart` hook also runs this in the background on every Claude Code session, so this manual command is only needed when:
 
