@@ -6,7 +6,6 @@
 | **Date**          | 2026-05-20                                                             |
 | **Author**        | @0xbulma                                                               |
 | **Scope**         | Repo-wide (`plugins/local/{lib,personas}/` + four consumer skills)     |
-| **Supersedes**    | TIB-2026-05-20-restructure-personas-by-trigger-axis                    |
 
 ---
 
@@ -72,22 +71,16 @@ plugins/local/
    rename or split of those files requires editing `pr-fix/SKILL.md`. This blocks
    the persona restructure.
 
-### Why a prior TIB was superseded
+### Anthropic conventions that constrain the solution shape
 
-[TIB-2026-05-20-restructure-personas-by-trigger-axis](./TIB-2026-05-20-restructure-personas-by-trigger-axis.md)
-proposed a three-tier folder layout (`baseline/`, `stack/`, `workflow/`), a
-top-level `_shared/` directory for cross-cutting rubrics, structural trigger flag
-enums, and frontmatter manifests (`owns:`, `defers:`, `fix-rubric:`).
+The official `anthropics/skills` repository (`https://github.com/anthropics/skills`)
+follows four conventions that this TIB treats as binding:
 
-A subsequent review of Anthropic's official `anthropics/skills` repository
-(`https://github.com/anthropics/skills`) showed that proposal violated four
-conventions Anthropic deliberately follows:
-
-| First proposal | What Anthropic actually does |
+| Tempting design move | What Anthropic actually does |
 | --- | --- |
-| Three-tier folder grouping | **Flat.** 17 skills sit as siblings under `skills/`; no `baseline/`/`stack/` taxonomy. |
-| `_shared/` cross-cutting dir | **None.** No `_shared`, `common`, `lib`, or `rubrics` directory exists. Each skill is hermetic. |
-| Frontmatter manifests (`owns:`, `defers:`, `fix-rubric:`) | **Off-spec.** The Agent Skills spec mandates only `name` + `description`. `pdf/pptx/docx` add `license` informally. The harness ignores other keys. |
+| Folder grouping by category (e.g. `baseline/`/`stack/`/`workflow/`) | **Flat.** 17 skills sit as siblings under `skills/`; no taxonomy directories. |
+| Top-level `_shared/` / `common/` / `lib/` cross-cutting dir | **None.** No such directory exists. Each skill is hermetic. |
+| Frontmatter manifests (e.g. `owns:`/`defers:`/`fix-rubric:`) | **Off-spec.** The Agent Skills spec mandates only `name` + `description`. `pdf/pptx/docx` add `license` informally. The harness ignores other keys. |
 | Closed trigger flag enum (`react`, `web3`, …) | **Prose.** Triggers are free-text in the `description` field ("use when …"); they are not a typed dispatch layer. |
 
 Anthropic's `skill-creator` skill is the **only fan-out pattern** in their repo:
@@ -409,11 +402,11 @@ comparisons.
 
 ## Considered Alternatives
 
-### Alternative A: First TIB — 3-tier folders + `_shared/` + frontmatter manifests
+### Alternative A: Three-tier folders + `_shared/` + frontmatter manifests
 
-Three-tier folder layout (`baseline/`/`stack/`/`workflow/`), top-level `_shared/`
-for shared rubrics, frontmatter manifests (`owns:`, `defers:`, `fix-rubric:`),
-closed trigger flag enum.
+Three-tier persona folder layout (`baseline/`/`stack/`/`workflow/`), top-level
+`_shared/` for shared rubrics, frontmatter manifests (`owns:`, `defers:`,
+`fix-rubric:`), closed trigger flag enum.
 
 **Why rejected:** Violates four Anthropic conventions: flat layout, no
 `_shared/`, two-field frontmatter, prose triggers. Manifests would be documentation
@@ -549,6 +542,5 @@ rule is restated (and slightly inconsistently) in three personas.
   `https://agentskills.io/specification`
 - Audit reports (in conversation): skill audit (10 skills, top finding: pr-fix at
   831 lines) and persona scope map (11 files, four combos, dispatcher mechanism).
-- Superseded design: `TIB-2026-05-20-restructure-personas-by-trigger-axis.md`
 - Current dispatcher: `plugins/local/lib/pr-review-base.md`
 - Current coupling point: `plugins/local/skills/pr-fix/SKILL.md` Step 6a.5
