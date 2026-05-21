@@ -139,6 +139,46 @@ _jq_lines() {
   ! echo "$OUT" | _jq_has_key notes.md
 }
 
+@test "multi-rename: two renamed files appear as two distinct keys" {
+  # Regression test for the bash-3.2 NUL-stripping bug: command substitution
+  # of `git diff -z --name-only --diff-filter=R` strips embedded NULs, so two
+  # renames used to collapse into a single garbage key. The fix queries
+  # renames from Python subprocess instead (preserves NUL bytes).
+  printf 'a\n' > a.txt
+  printf 'b\n' > b.txt
+  git add a.txt b.txt
+  git commit -q -m "seed two files"
+  BASE=$(git rev-parse HEAD)
+
+  git mv a.txt renamed1.txt
+  git mv b.txt renamed2.txt
+  git commit -q -m "two renames"
+
+  OUT=$("$SCRIPT" --base "$BASE" --head HEAD)
+  echo "$OUT" | _jq_has_key renamed1.txt
+  echo "$OUT" | _jq_has_key renamed2.txt
+  # And specifically NOT the concatenated form.
+  ! echo "$OUT" | _jq_has_key renamed1.txtrenamed2.txt
+}
+
+@test "multi-rename union: committed + uncommitted both surface" {
+  printf 'a\n' > a.txt
+  printf 'b\n' > b.txt
+  git add a.txt b.txt
+  git commit -q -m "seed"
+  BASE=$(git rev-parse HEAD)
+
+  git mv a.txt renamed-committed.txt
+  git commit -q -m "committed rename"
+
+  # Now stage an uncommitted rename of the other file.
+  git mv b.txt renamed-staged.txt   # leaves it staged
+
+  OUT=$("$SCRIPT" --base "$BASE" --head HEAD --include-uncommitted)
+  echo "$OUT" | _jq_has_key renamed-committed.txt
+  echo "$OUT" | _jq_has_key renamed-staged.txt
+}
+
 @test "JSON output handles a payload with triple quotes safely" {
   # Triple quotes in file content shouldn't terminate the Python heredoc.
   printf 'literal triple quote: """ in content\n' > t.txt

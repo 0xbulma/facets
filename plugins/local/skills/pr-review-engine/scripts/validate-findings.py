@@ -100,7 +100,11 @@ def main() -> int:
     p.add_argument("--line-tolerance", type=int, default=LINE_TOLERANCE)
     args = p.parse_args()
 
-    findings_src = args.findings.read_text() if args.findings else sys.stdin.read()
+    try:
+        findings_src = args.findings.read_text() if args.findings else sys.stdin.read()
+    except OSError as e:
+        print(json.dumps({"error": f"cannot read findings file: {e}"}))
+        return 0
     try:
         findings = json.loads(findings_src)
     except json.JSONDecodeError as e:

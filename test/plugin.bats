@@ -125,6 +125,21 @@ setup() {
   [ "$count" = "15" ]
 }
 
+@test "list-fix-rubric-agents.sh returns exit 0 + empty stdout when no agent matches" {
+  # Regression test: the script wraps `grep -l ... | sort` in `{ ... || true; }`
+  # so a no-match doesn't propagate as a pipefail exit. A regression removing
+  # the `|| true` would crash every caller (pr-fix, bats invariant). This test
+  # locks the contract: empty agents dir → exit 0, empty stdout.
+  EMPTY_DIR="$BATS_TEST_TMPDIR/empty-agents"
+  mkdir -p "$EMPTY_DIR"
+  # An agents dir with .md files but no `## Fix rubric` sections.
+  printf '# placeholder\n' > "$EMPTY_DIR/placeholder.md"
+
+  run "$SKILLS_DIR/pr-review-engine/scripts/list-fix-rubric-agents.sh" "$EMPTY_DIR"
+  [ "$status" -eq 0 ] || { echo "expected exit 0; got $status" >&2; return 1; }
+  [ -z "$output" ]    || { echo "expected empty stdout; got: $output" >&2; return 1; }
+}
+
 @test "pr-fix fix-rubric agent set is exactly the five expected" {
   # pr-fix's confidence gate (Step 6a) walks $AGENTS_DIR for files with a
   # `## Fix rubric` section. Locks the set so a fix-rubric section can't

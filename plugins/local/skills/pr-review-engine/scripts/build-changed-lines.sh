@@ -103,46 +103,55 @@ parse_diff() {
 # Build from the committed range first.
 COMMITTED_LINES=$(git diff --unified=0 "$BASE..$HEAD" | parse_diff)
 
-# Also union renames: pure renames produce no hunks, so they're invisible to
-# the AWK above. Force a key (with an empty array) for renamed files so they
-# remain in scope for the file-level filter in Step 6. Use -z (NUL-separated)
-# so paths containing spaces or other whitespace survive intact.
-RENAMED_FILES=$(git diff -z --name-only --diff-filter=R "$BASE..$HEAD" 2>/dev/null || true)
-
-# Optionally union uncommitted work.
+# Optionally also union uncommitted work.
 if [ "$INCLUDE_UNCOMMITTED" -eq 1 ]; then
   UNCOMMITTED_LINES=$(git diff --unified=0 HEAD | parse_diff)
-  RENAMED_UNCOMMITTED=$(git diff -z --name-only --diff-filter=R HEAD 2>/dev/null || true)
 else
   UNCOMMITTED_LINES="{}"
-  RENAMED_UNCOMMITTED=""
 fi
 
-# Merge the two JSON maps + the rename lists via python (the only deterministic
-# JSON tool we can assume present on developer machines via PATH).
+# Merge the two JSON maps + discover renamed files via Python.
 #
-# Pass the four values via environment so they can contain ANY bytes — triple
-# quotes inside JSON or rename lists won't terminate a Python literal early,
-# and a single-quoted heredoc means shell never re-expands them. NUL-separated
-# rename lists are split on \0, preserving paths with embedded spaces.
+# Renames are queried by Python (subprocess to `git diff -z ...`) rather than
+# round-tripped through a bash variable, because macOS's default bash 3.2
+# strips NUL bytes from command substitution and environment variables —
+# multi-rename diffs would arrive with paths concatenated into a single
+# garbage key. Reading raw bytes from subprocess.run().stdout preserves NULs.
+#
+# Pure renames produce no hunks (so the AWK parser sees nothing); they need
+# to appear as keys with empty arrays so the engine's file-level filter
+# keeps them in scope while the line-level filter short-circuits.
 COMMITTED_LINES="$COMMITTED_LINES" \
 UNCOMMITTED_LINES="$UNCOMMITTED_LINES" \
-RENAMED_FILES="$RENAMED_FILES" \
-RENAMED_UNCOMMITTED="$RENAMED_UNCOMMITTED" \
+GIT_BASE="$BASE" \
+GIT_HEAD="$HEAD" \
+INCLUDE_UNCOMMITTED="$INCLUDE_UNCOMMITTED" \
 python3 - <<'PY'
 import json
 import os
+import subprocess
 import sys
 
 committed = json.loads(os.environ["COMMITTED_LINES"])
 uncommitted = json.loads(os.environ["UNCOMMITTED_LINES"])
 
-def split_nul(s: str) -> list[str]:
-    # `git diff -z --name-only` emits each path terminated by a NUL; trailing
-    # NUL produces an empty element, which we drop.
-    return [p for p in s.split("\0") if p]
+def get_renames(rev_range: str) -> list[str]:
+    """Return the list of NEW-side paths from a rename-only `git diff` view.
 
-renamed = split_nul(os.environ["RENAMED_FILES"]) + split_nul(os.environ["RENAMED_UNCOMMITTED"])
+    Uses raw bytes through subprocess so NUL separators survive — bash command
+    substitution and env vars cannot carry NULs on macOS bash 3.2.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "-z", "--name-only", "--diff-filter=R", rev_range],
+        capture_output=True, check=False,
+    )
+    # `git -z` emits each path terminated by a NUL; trailing NUL produces an
+    # empty element, which we drop.
+    return [p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p]
+
+renamed = get_renames(f"{os.environ['GIT_BASE']}..{os.environ['GIT_HEAD']}")
+if os.environ.get("INCLUDE_UNCOMMITTED") == "1":
+    renamed += get_renames("HEAD")
 
 merged: dict[str, set[int]] = {}
 for src in (committed, uncommitted):

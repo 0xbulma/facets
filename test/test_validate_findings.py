@@ -105,6 +105,31 @@ class ValidateFindingsTests(unittest.TestCase):
         out = _run(findings, {"src/X.ts": [10]})
         self.assertEqual(len(out["kept"]), 1)
 
+    def test_path_normalization_strips_absolute_repo_root_prefix(self):
+        # Agents sometimes emit absolute paths; the script strips the
+        # repo-root prefix via Path.relative_to(absroot).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            (root / "src").mkdir()
+            absolute_path = str(root / "src" / "X.ts")
+            findings = [{"severity": "medium", "file": absolute_path, "line": 10,
+                         "description": "WHAT: x. FIX: y."}]
+            out = _run(findings, {"src/X.ts": [10]}, repo_root=root)
+            self.assertEqual(len(out["kept"]), 1)
+
+    def test_absolute_path_outside_repo_root_is_dropped(self):
+        # An absolute path that doesn't share the repo-root prefix falls
+        # through to the file-out-of-scope path (the relative_to ValueError
+        # branch).
+        with tempfile.TemporaryDirectory() as outside_td, \
+             tempfile.TemporaryDirectory() as root_td:
+            stray = str(Path(outside_td) / "X.ts")
+            findings = [{"severity": "medium", "file": stray, "line": 10,
+                         "description": "WHAT: x. FIX: y."}]
+            out = _run(findings, {"src/X.ts": [10]}, repo_root=Path(root_td))
+            self.assertEqual(out["kept"], [])
+            self.assertEqual(out["dropped"][0]["drop_reason"], "file-out-of-scope")
+
     def test_path_normalization_strips_dot_slash(self):
         findings = [{"severity": "medium", "file": "./src/X.ts", "line": 10,
                      "description": "WHAT: x. FIX: y."}]
@@ -178,6 +203,23 @@ class ValidateFindingsTests(unittest.TestCase):
                    changed_lines_override="not json at all")
         self.assertIn("error", out)
         self.assertIn("invalid changed-lines JSON", out["error"])
+
+    def test_missing_findings_file_returns_structured_error(self):
+        # F2 regression guard: --findings <missing> must return JSON, not crash.
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT),
+                 "--findings", str(Path(td) / "does-not-exist.json"),
+                 "--changed-lines", str(cl),
+                 "--repo-root", td],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+            self.assertIn("cannot read findings file", out["error"])
 
     def test_missing_changed_lines_file_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as td:

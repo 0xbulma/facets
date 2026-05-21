@@ -270,7 +270,7 @@ Merge all agent results into a single list:
    - If `finding.line` is outside the set but within ±15 lines of any changed line → keep (adjacent-code tolerance).
    - Otherwise → **drop** and increment `DROPPED_PRE_EXISTING`. The finding is tagged with `distance_to_nearest_changed_line` for audit purposes.
 
-   The ±15 tolerance window is a fixed engine constant. See `references/calibration.md` for the rationale and follow-up plans (per-project tunability).
+   The ±15 tolerance window is a fixed engine constant. See `references/calibration.md` for the rationale.
 
    **Markdown documentation-example filter.** Drop findings on `.md` files whose `description` matches secret/injection FP-suspect patterns AND whose cited line falls inside a fenced code block. The full rule (CommonMark fence handling, off-by-one, limitations) lives in `references/scope-filter.md`. Implementation ships as a script:
 
@@ -383,7 +383,7 @@ Check `DIFF_SOURCE`. If `pr`, only committed changes count; uncommitted work-in-
 
 ### Symptom: too many findings dropped by the ±15 tolerance window
 
-The window is a fixed engine constant. See `references/calibration.md` for the rationale and the follow-up plan to expose it as a caller-tunable `LINE_TOLERANCE` input.
+The window is a fixed engine constant. See `references/calibration.md` for the rationale.
 
 ## Bundled scripts
 
