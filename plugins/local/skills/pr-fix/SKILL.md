@@ -404,17 +404,16 @@ For each file with findings, build a complete understanding:
 
    - **Engine fix-rubric agents (Web3, CI, release, dependencies, docs)**:
 
-     Instead of hardcoding agent filenames, discover the applicable rubric set from the engine: an agent is "fix-applicable" iff its body contains a `## Fix rubric` section. Walk the engine's agents directory once at the start of Step 6:
+     Instead of hardcoding agent filenames, discover the applicable rubric set from the engine: an agent is "fix-applicable" iff its body contains a `## Fix rubric` section. Use the engine's bundled discovery script so this skill and the bats invariant share one implementation:
 
      ```bash
-     FIX_AGENTS=$(grep -l '^## Fix rubric$' \
-       "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/"*.md 2>/dev/null)
+     FIX_AGENTS=$("${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/list-fix-rubric-agents.sh" 2>/dev/null || true)
      if [ -z "$FIX_AGENTS" ]; then
-       echo "pr-fix: no fix-rubric agents discovered at ${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/ — confidence gate falls through to inline judgment for this fix" >&2
+       echo "pr-fix: no fix-rubric agents discovered via list-fix-rubric-agents.sh — confidence gate falls through to inline judgment for this fix" >&2
      fi
      ```
 
-     If `$FIX_AGENTS` is empty (engine relocated, glob failed, or every `## Fix rubric` section was removed), the surrounding loop iterates over nothing and the confidence gate runs without a structured rubric. The degradation message tells the user that happened — mirrors the `Marketplace skill not found: <name> — degrading to inline rubric` pattern the marketplace-rubric loads above use.
+     If `$FIX_AGENTS` is empty (engine relocated, every `## Fix rubric` section was removed, or the script is missing), the surrounding loop iterates over nothing and the confidence gate runs without a structured rubric. The degradation message tells the user that happened — mirrors the `Marketplace skill not found: <name> — degrading to inline rubric` pattern the marketplace-rubric loads above use.
 
      For each fix-applicable agent whose trigger condition matches the current file's surface, Read the agent file in full and use the body — particularly the `## Fix rubric` section — as the rubric for the confidence gate.
 

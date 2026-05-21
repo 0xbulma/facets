@@ -105,13 +105,14 @@ COMMITTED_LINES=$(git diff --unified=0 "$BASE..$HEAD" | parse_diff)
 
 # Also union renames: pure renames produce no hunks, so they're invisible to
 # the AWK above. Force a key (with an empty array) for renamed files so they
-# remain in scope for the file-level filter in Step 6.
-RENAMED_FILES=$(git diff --name-only --diff-filter=R "$BASE..$HEAD" 2>/dev/null || true)
+# remain in scope for the file-level filter in Step 6. Use -z (NUL-separated)
+# so paths containing spaces or other whitespace survive intact.
+RENAMED_FILES=$(git diff -z --name-only --diff-filter=R "$BASE..$HEAD" 2>/dev/null || true)
 
 # Optionally union uncommitted work.
 if [ "$INCLUDE_UNCOMMITTED" -eq 1 ]; then
   UNCOMMITTED_LINES=$(git diff --unified=0 HEAD | parse_diff)
-  RENAMED_UNCOMMITTED=$(git diff --name-only --diff-filter=R HEAD 2>/dev/null || true)
+  RENAMED_UNCOMMITTED=$(git diff -z --name-only --diff-filter=R HEAD 2>/dev/null || true)
 else
   UNCOMMITTED_LINES="{}"
   RENAMED_UNCOMMITTED=""
@@ -119,19 +120,34 @@ fi
 
 # Merge the two JSON maps + the rename lists via python (the only deterministic
 # JSON tool we can assume present on developer machines via PATH).
-python3 - <<PY
-import json, sys
+#
+# Pass the four values via environment so they can contain ANY bytes — triple
+# quotes inside JSON or rename lists won't terminate a Python literal early,
+# and a single-quoted heredoc means shell never re-expands them. NUL-separated
+# rename lists are split on \0, preserving paths with embedded spaces.
+COMMITTED_LINES="$COMMITTED_LINES" \
+UNCOMMITTED_LINES="$UNCOMMITTED_LINES" \
+RENAMED_FILES="$RENAMED_FILES" \
+RENAMED_UNCOMMITTED="$RENAMED_UNCOMMITTED" \
+python3 - <<'PY'
+import json
+import os
+import sys
 
-committed = json.loads('''$COMMITTED_LINES''')
-uncommitted = json.loads('''$UNCOMMITTED_LINES''')
-renamed = """$RENAMED_FILES""".split() + """$RENAMED_UNCOMMITTED""".split()
+committed = json.loads(os.environ["COMMITTED_LINES"])
+uncommitted = json.loads(os.environ["UNCOMMITTED_LINES"])
 
-merged = {}
+def split_nul(s: str) -> list[str]:
+    # `git diff -z --name-only` emits each path terminated by a NUL; trailing
+    # NUL produces an empty element, which we drop.
+    return [p for p in s.split("\0") if p]
+
+renamed = split_nul(os.environ["RENAMED_FILES"]) + split_nul(os.environ["RENAMED_UNCOMMITTED"])
+
+merged: dict[str, set[int]] = {}
 for src in (committed, uncommitted):
     for path, lines in src.items():
-        if path not in merged:
-            merged[path] = set()
-        merged[path].update(lines)
+        merged.setdefault(path, set()).update(lines)
 
 # Pure renames: key present with empty list.
 for path in renamed:

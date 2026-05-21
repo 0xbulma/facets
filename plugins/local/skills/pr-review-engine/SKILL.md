@@ -375,7 +375,7 @@ The agent returned valid findings but at least one is missing the `WHAT:` or `FI
 
 ### Symptom: agent body talks about a deleted feature (e.g. `<MODE>=fix`)
 
-The engine no longer carries a `MODE` input. `pr-fix` uses its own grep loop over `agents/*.md` to find `## Fix rubric` sections — it does not delegate to the engine for the fix flow. If you see `<MODE>=fix` referenced anywhere, it's stale prose; remove it.
+The engine no longer carries a `MODE` input. `pr-fix` discovers fix-applicable agents via the bundled `scripts/list-fix-rubric-agents.sh` (any agent with a `## Fix rubric` section) — the dispatcher path is unused. If you see `<MODE>=fix` referenced anywhere, it's stale prose; remove it.
 
 ### Symptom: an obvious file is missing from `CHANGED_FILES`
 

@@ -110,7 +110,17 @@ def main() -> int:
         print(json.dumps({"error": "findings must be a JSON array"}))
         return 0
 
-    changed_lines_map = json.loads(args.changed_lines.read_text())
+    try:
+        changed_lines_map = json.loads(args.changed_lines.read_text())
+    except OSError as e:
+        print(json.dumps({"error": f"cannot read changed-lines file: {e}"}))
+        return 0
+    except json.JSONDecodeError as e:
+        print(json.dumps({"error": f"invalid changed-lines JSON: {e}"}))
+        return 0
+    if not isinstance(changed_lines_map, dict):
+        print(json.dumps({"error": "changed-lines must be a JSON object"}))
+        return 0
 
     kept: list[dict] = []
     dropped: list[dict] = []

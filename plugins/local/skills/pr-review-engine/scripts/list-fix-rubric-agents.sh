@@ -29,4 +29,7 @@ if [ ! -d "$AGENTS_DIR" ]; then
   exit 1
 fi
 
-grep -l '^## Fix rubric$' "$AGENTS_DIR"/*.md 2>/dev/null | sort
+# grep -l exits 1 when no file matches; under `set -euo pipefail` that would
+# propagate as a hard failure, which is wrong here — "no fix-applicable agents"
+# is a valid result that callers (pr-fix, bats invariant) handle gracefully.
+{ grep -l '^## Fix rubric$' "$AGENTS_DIR"/*.md 2>/dev/null || true; } | sort

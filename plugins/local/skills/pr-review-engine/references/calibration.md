@@ -22,16 +22,6 @@ Every finding dropped by the line-level filter is tagged with `distance_to_neare
 
 This is exposed in `DROPPED_FINDINGS` so reviewers can spot a window mis-tuned for their codebase. A consistent pattern of drops with `distance_to_nearest_changed_line` in 16–25 suggests ±15 is too tight; a pattern of kept findings with high distance suggests it's too loose.
 
-## Future: caller-tunable `LINE_TOLERANCE`
-
-The window may become a caller-tunable input (`LINE_TOLERANCE: integer`) if per-project metrics show calibration matters. Today it is a fixed engine constant — changing it requires editing `SKILL.md` and `scripts/validate-findings.py`.
-
-When/if exposed:
-
-- Engine input table gains a `LINE_TOLERANCE` row (default 15).
-- `scripts/validate-findings.py` accepts `--line-tolerance N`.
-- Consumer skills pass it through unchanged unless they have a reason to override.
-
 ## Short-circuit on empty sets
 
 If a file's `CHANGED_LINES` set is empty (pure rename — see `references/changed-lines.md`), the line-level filter is skipped entirely for that file. The file-level filter already kept the file in scope; double-dropping every finding on a rename-only diff would defeat the purpose of even running an agent against it.
