@@ -336,12 +336,13 @@ setup() {
   # exit 0 without installing and without touching the holder's lock.
   STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
   printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
-  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP/claude-local-install-prereqs.lock"
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  mkdir -p "$LOCK"
 
   TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"another install-prereqs run is active"* ]] || { echo "missing skip message: $output" >&2; return 1; }
-  [ -d "$TMP/claude-local-install-prereqs.lock" ] || { echo "active holder's lock was removed" >&2; return 1; }
+  [ -d "$LOCK" ] || { echo "active holder's lock was removed" >&2; return 1; }
 }
 
 @test "install-prereqs.sh lock: reclaims an expired lock and releases on exit" {
@@ -351,13 +352,38 @@ setup() {
   # full lock lifecycle. touch -t is POSIX (works on macOS BSD touch too).
   STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
   printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
-  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP/claude-local-install-prereqs.lock"
-  touch -t 202001010000 "$TMP/claude-local-install-prereqs.lock"   # far past TTL
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  mkdir -p "$LOCK"
+  touch -t 202001010000 "$LOCK"   # far past TTL
 
   TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"reclaiming stale lock"* ]] || { echo "expired lock was not reclaimed: $output" >&2; return 1; }
-  [ ! -d "$TMP/claude-local-install-prereqs.lock" ] || { echo "lock not released on exit" >&2; return 1; }
+  [ ! -d "$LOCK" ] || { echo "lock not released on exit" >&2; return 1; }
+}
+
+@test "install-prereqs.sh lock: SIGTERM terminates the run and releases the lock" {
+  # Regression guard for the signal-exit invariant: a non-exiting INT/TERM
+  # handler would delete the lock and keep installing (mutex defeated, then
+  # a double-free of the next holder's lock). Hermetic: HOME override makes
+  # every skill "missing" so the script blocks inside the slow npx stub —
+  # bash runs the signal trap after the foreground stub returns (~2s).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nsleep 2\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP"
+  FAKEHOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$FAKEHOME"
+  LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+
+  TMPDIR="$TMP" HOME="$FAKEHOME" VERBOSE=0 PATH="$STUB:$PATH" \
+    "$PLUGIN_DIR/bin/install-prereqs.sh" & SCRIPT_PID=$!
+  for _ in $(seq 1 50); do [ -d "$LOCK" ] && break; sleep 0.1; done
+  [ -d "$LOCK" ] || { echo "script never acquired the lock" >&2; return 1; }
+
+  kill -TERM "$SCRIPT_PID"
+  sig_status=0
+  wait "$SCRIPT_PID" || sig_status=$?   # || keeps bats' errexit from tripping on 143
+  [ "$sig_status" -eq 143 ] || { echo "expected exit 143 after SIGTERM, got $sig_status (handler did not exit?)" >&2; return 1; }
+  [ ! -d "$LOCK" ] || { echo "lock not released by the EXIT trap on the signal path" >&2; return 1; }
 }
 
 @test "no install.sh remaining at repo root" {
