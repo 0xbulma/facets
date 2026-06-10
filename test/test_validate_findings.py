@@ -254,6 +254,24 @@ class ValidateFindingsTests(unittest.TestCase):
         self.assertEqual(out["kept"], [])
         self.assertEqual(out["counts"]["schema"], 1)
 
+    def test_runtime_sentinel_negative_line_fails_schema(self):
+        # The sentinel's line rule is `line >= 0` — a negative line is still
+        # malformed even on file:"runtime".
+        findings = [{"severity": "high", "file": "runtime", "line": -1,
+                     "description": "WHAT: x. FIX: y."}]
+        out = _run(findings, {"src/X.ts": [10]})
+        self.assertEqual(out["kept"], [])
+        self.assertEqual(out["counts"]["schema"], 1)
+
+    def test_runtime_sentinel_positive_line_is_kept(self):
+        # A positive line on the sentinel is valid too (agent pinned a line
+        # but kept the runtime file label); it still bypasses scope filters.
+        findings = [{"severity": "high", "file": "runtime", "line": 7,
+                     "description": "WHAT: x. FIX: y."}]
+        out = _run(findings, {"src/X.ts": [10]})
+        self.assertEqual(len(out["kept"]), 1)
+        self.assertEqual(out["dropped"], [])
+
     def test_zero_line_still_fails_schema_for_real_files(self):
         # line: 0 is only valid on the "runtime" sentinel, never on a path.
         findings = [{"severity": "high", "file": "src/X.ts", "line": 0,

@@ -32,7 +32,7 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │       │   ├── error-handling.md          # baseline
 │   │       │   ├── simplification.md                 # baseline
 │   │       │   ├── tests.md                  # baseline
-│   │       │   ├── accessibility.md                  # conditional (<HAS_TAILWIND> OR <HAS_STYLING> OR <HAS_REACT>)
+│   │       │   ├── accessibility.md                  # conditional (<HAS_STYLING> OR <HAS_REACT>)
 │   │       │   ├── ai-sdk.md          # conditional (<HAS_AI_SDK>)
 │   │       │   ├── api-security.md    # conditional (<HAS_SERVER_API>)
 │   │       │   ├── ci-security.md                    # conditional (<HAS_WORKFLOWS>)
@@ -173,7 +173,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 
 - `react-next` — `<HAS_REACT>` — Server Components, hooks, React 19 APIs, Next.js conventions, Cache Components. Loads `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` when RN code detected).
 - `styling` — `<HAS_TAILWIND> OR <HAS_STYLING>` — Tailwind, design tokens, styling-architecture consistency. Loads `tailwind-design-system`, `web-design-guidelines`, `building-components` (+ `ai-elements`/`streamdown` when their imports are present).
-- `accessibility` — `<HAS_TAILWIND> OR <HAS_STYLING> OR <HAS_REACT>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
+- `accessibility` — `<HAS_STYLING> OR <HAS_REACT>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
 - `ai-sdk` — `<HAS_AI_SDK>` — Vercel AI SDK usage, streaming, tool calls, structured output, useChat. Loads `ai-sdk`, `ai-elements`, `streamdown`.
 - `api-security` — `<HAS_SERVER_API>` — authn/authz on routes and server actions, boundary input validation, webhook signature verification, SSRF, server-held signing keys.
 - `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling, vendored `.sol` diffs.

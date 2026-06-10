@@ -34,13 +34,9 @@ surface.
 
 ## Trigger
 
-Fires when `HAS_SERVER_API` is true — any changed file matches:
-
-- Next App Router route handlers: `app/**/route.{ts,js}`
-- Next Pages Router API routes: `pages/api/**`
-- Server actions: any changed file containing a `'use server'` directive
-- `middleware.{ts,js}` (root or `src/`)
-- Imports of a server framework: `next/server`, `express`, `fastify`, `hono`, `koa`, `@trpc/server`
+Fires when `HAS_SERVER_API` is true — route handlers, API routes, server
+actions, middleware, or server-framework imports. The detection patterns live
+in exactly one place: `pr-review-engine/SKILL.md` Step 4.
 
 ## What to flag
 

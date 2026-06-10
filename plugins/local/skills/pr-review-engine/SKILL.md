@@ -170,7 +170,7 @@ Agent specs live in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
    - `kind: baseline` → always launch.
    - `kind: conditional` → parse the `trigger:` value, look up each named flag from Step 4, evaluate the boolean expression. Compound triggers like `HAS_TAILWIND OR HAS_STYLING` are evaluated as written (split on whitespace, look up each flag, apply `OR` / `AND`).
 3. **Apply the caller's exclusion list.** If the caller provided `EXCLUDE_AGENTS` (a list of agent names), drop those from the launch set. Used by orchestrators like `/local:tib-ship` to suppress an agent during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
-3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs), and any conditional whose flag fired stays in (e.g. `release-integrity` when a doc embeds a publish command — the doc-example filter handles the false positives). Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
+3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs), and any conditional whose flag fired stays in (e.g. `release-integrity` when a doc embeds a publish command — each conditional's own scope rules tell it to return `[]` when no real surface of its domain changed). Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
 4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
 5. Track `TOTAL_AGENTS_LAUNCHED` = count of agents actually launched (baseline + any fired conditionals − excluded).
 
@@ -181,7 +181,7 @@ For every spawned sub-agent, the dispatcher **must** assemble the launch prompt 
 1. The agent file body, verbatim (its frontmatter + Markdown prose).
 2. `PROJECT_CONTEXT` from Step 4 (root + per-package docs, lint contract).
 3. The diff in full (committed + uncommitted when `DIFF_SOURCE=local`).
-4. The full content of changed files (read from local FS via the Read tool). **Exception — lockfiles and generated artifacts** (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb`, `*.min.js`, `*.map`, files in `dist/`/`build/`/`.next/`): inject their full content only into the `dependencies` agent; every other agent gets just the diff hunks for those files plus a one-line note (`<path>: content omitted — lockfile/generated`). These files are thousands of lines of no review value to non-dependency personas and dominate the per-agent token bill on routine dep bumps.
+4. The full content of changed files (read from local FS via the Read tool). **Exception — lockfiles and generated artifacts** (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb`, `*.min.js`, `*.map`, files in `dist/`/`build/`/`.next/`): never inject their full content into any agent — a monorepo lockfile is tens of thousands of lines and can blow a single agent's context on its own. Every agent, **including `dependencies`**, gets the diff hunks for those files plus a one-line note (`<path>: content omitted — lockfile/generated`); the changed entries are exactly what lockfile review needs, and the `dependencies` agent can Read specific resolved-entry blocks from disk if a hunk warrants it.
 5. The conditional flag values (`HAS_REACT`, `HAS_WEB3`, `HAS_WORKFLOWS`, etc.).
 6. `CHANGED_LINES` serialized as JSON: `{ "<path>": [<line>, <line>, ...] }`.
 7. **The "Shared per-agent contract" bullets below, copied verbatim into the prompt.** Without this injection, agents won't know to emit the schema and Step 6.2 will route every finding as malformed.
@@ -245,7 +245,7 @@ Conditional (fire only when their trigger flag is true, 10 agents):
 - `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation, vendored `.sol` diffs.
 - `react-next.md` — fires when `HAS_REACT`. Loads marketplace rubrics (see `references/marketplace-rubrics.md`).
 - `styling.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. Tailwind/tokens, styling-architecture consistency.
-- `accessibility.md` — fires when `HAS_TAILWIND OR HAS_STYLING OR HAS_REACT`. ARIA, keyboard, focus, alt text — a new interactive component needs the a11y eye even when no styling surface changed.
+- `accessibility.md` — fires when `HAS_STYLING OR HAS_REACT` (`HAS_TAILWIND` implies `HAS_REACT`, so it adds nothing here). ARIA, keyboard, focus, alt text — a new interactive component needs the a11y eye even when no styling surface changed.
 - `ci-security.md` — fires when `HAS_WORKFLOWS`. Workflow injection, action pinning, `permissions:` scopes, secret exposure.
 - `release-integrity.md` — fires when `HAS_RELEASE`. Publish flow, provenance, release-commit signing, Changesets wiring.
 - `dependencies.md` — fires when `HAS_DEPS`. Lockfile drift, dependency hygiene, `.npmrc`, typosquats.
@@ -253,7 +253,7 @@ Conditional (fire only when their trigger flag is true, 10 agents):
 - `api-security.md` — fires when `HAS_SERVER_API`. Authn/authz on routes and server actions, boundary input validation, webhook signatures, SSRF, server-held signing keys.
 - `runtime-validation.md` — fires when `HAS_ROUTE_UI`. Boots dev server, navigates changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/local:tib-ship` from its iteration loop.
 
-The dispatcher does not hardcode names — it discovers via `find`. Total: 16 agents (6 baseline + 10 conditional).
+The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 16 agents (6 baseline + 10 conditional).
 
 Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
 

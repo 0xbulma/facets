@@ -20,6 +20,19 @@ VERBOSE="${VERBOSE:-0}"
 
 log() { [ "$VERBOSE" = "1" ] && echo "[local setup] $*" >&2; return 0; }
 
+# Single-instance lock. The SessionStart hook backgrounds this script, so two
+# sessions starting close together would otherwise run duplicate npx installs
+# in parallel (both pass the per-skill existence check before either finishes).
+# mkdir is atomic and portable (no flock on macOS). A SIGKILL can leave a stale
+# lock in $TMPDIR until reboot/cleanup — worst case the next run skips; rerun
+# /local:setup after removing the dir if that happens.
+LOCKDIR="${TMPDIR:-/tmp}/claude-local-install-prereqs.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  log "another install-prereqs run is active — skipping"
+  exit 0
+fi
+trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+
 # Bail out gracefully if the user has no npx (no Node).
 if ! command -v npx >/dev/null 2>&1; then
   log "npx not on PATH — skipping prereq install. Skills will degrade to inline rubrics."

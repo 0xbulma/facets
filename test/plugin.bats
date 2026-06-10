@@ -323,6 +323,12 @@ setup() {
   [ -x "$PLUGIN_DIR/bin/install-prereqs.sh" ]
   run jq -e '.hooks.SessionStart' "$PLUGIN_DIR/hooks/hooks.json"
   [ "$status" -eq 0 ]
+  # Assert the command content, not just key presence: a typo'd script path
+  # or dropped backgrounding fails silently at runtime (prereqs never install,
+  # personas quietly degrade).
+  cmd=$(jq -re '.hooks.SessionStart[0].hooks[0].command' "$PLUGIN_DIR/hooks/hooks.json")
+  [[ "$cmd" == *'bin/install-prereqs.sh'* ]] || { echo "hook command does not reference install-prereqs.sh: $cmd" >&2; return 1; }
+  [[ "$cmd" == *'&' ]] || { echo "hook command is not backgrounded (must end in &): $cmd" >&2; return 1; }
 }
 
 @test "no install.sh remaining at repo root" {
@@ -332,18 +338,23 @@ setup() {
 @test "local plugin-dir smoke install (skipped if claude CLI absent)" {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
-  # Probe first: in some environments (CI, sandboxes that pass auth via an
-  # inherited file descriptor bats doesn't preserve) the CLI exists but
-  # can't authenticate. That's not a plugin-shape failure — skip.
-  # `</dev/null` is required: claude waits on stdin otherwise.
-  run claude -p "Say OK" </dev/null 2>&1
-  [ "$status" -eq 0 ] || skip "claude CLI present but not usable here (auth/network): $output"
-
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
   # The 9 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
+  # `</dev/null` is required: claude waits on stdin otherwise.
   run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
-  [ "$status" -eq 0 ]
+  if [ "$status" -ne 0 ]; then
+    # Disambiguate before failing: in some environments (CI, sandboxes that
+    # pass auth via an inherited file descriptor bats doesn't preserve) the
+    # CLI exists but can't authenticate at all. Probe without the plugin —
+    # if that also fails, it's the environment, not the plugin shape: skip.
+    # Probing only on failure keeps the happy path at one model invocation.
+    smoke_output="$output"
+    run claude -p "Say OK" </dev/null 2>&1
+    [ "$status" -ne 0 ] && skip "claude CLI present but not usable here (auth/network): $output"
+    echo "plugin-dir smoke failed but bare claude works — plugin shape problem: $smoke_output" >&2
+    return 1
+  fi
   echo "$output" | grep -q "local:pr-switch"
   echo "$output" | grep -q "local:pr-fix"
   echo "$output" | grep -q "local:pr-review-gh"

@@ -140,7 +140,7 @@ After all phases for a TIP are green, set the TIP `Status` row from `Draft` to `
 For `i = 1..MAX_ITERS`:
 
 1. Run the equivalent of `/local:pr-review-local` (delegate to `skills/pr-review-engine/SKILL.md` with `<DIFF_SOURCE>=local` and `<EXCLUDE_AGENTS>=["runtime-validation"]`). The exclusion prevents the dev server from booting once per iteration — Step 6 runs `runtime-validation` exactly once after the static loop converges. Do **not** pass `--fix`; we handle fixes ourselves so we can track convergence.
-2. Collect findings into a list. If empty → **break, success**.
+2. Collect findings into a list. If empty, **or every remaining finding is `low` severity** → **break, success** (carry the lows forward to Step 7's triage list — Step 5.4 never fixes them, so requiring an empty list here would loop a low-only residue straight into the stuck detector).
 3. Compute a stable hash of the findings (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash`:
    - Same findings as last iteration → **stuck**. Stop and ask the user (do not silently retry).
 4. Group findings by severity. Apply fixes in this order: `critical` → `high` → `medium`. Skip `low` findings — they are listed in the Step 7 summary for the user to triage, not auto-fixed.
@@ -190,6 +190,10 @@ Review iters:     <i> (clean on iteration <i>)
 Low findings:     <N> (not auto-fixed — listed below for manual triage)
 Runtime check:    passed | skipped | failed-then-fixed
 Commits:          <N> (<feat: …> ×K, <fix(review): …> ×M)
+
+Low findings (manual triage — omit this block when N=0):
+  <file>:<line> — <description>
+  ...
 
 Local branch is ready. Next steps (manual):
   git push -u origin <branch>
