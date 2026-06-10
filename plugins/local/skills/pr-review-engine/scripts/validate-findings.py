@@ -94,27 +94,52 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
     return min(abs(line - cl) for cl in changed_lines)
 
 
+# An array that opens a line — the calibrated agent output shape. Used to
+# distinguish a real (possibly empty) findings array from prose-internal
+# brackets like `string[]`.
+ARRAY_OPENS_LINE_RE = re.compile(r"(?m)^\s*\[")
+
+
 def _parse_findings_text(text: str):
     """Parse agent output tolerantly.
 
     Agents are contracted to return a bare JSON array, but models given
     verification-style context tend to wrap it in prose (observed in 6 of 26
-    dogfood runs, persisting across prompt-hardening attempts). Try a strict
-    parse first; on failure, slice from the first '[' to the last ']' and
-    retry, so a prose-wrapped array is recovered instead of routing the whole
-    agent to the partial-failure path. Returns the parsed value or None.
+    dogfood runs, persisting across prompt-hardening attempts). Strategy:
+
+    1. Strict parse. A list, or the {"agent_error": ...} sentinel, wins.
+    2. Otherwise slice from the first '[' to the last ']' and retry —
+       recovers prose-wrapped arrays AND object-wrapped ones like
+       {"findings": [...]}.
+    3. Guard against false-clean recovery: prose such as "the string[] type
+       failed" slices to a valid empty array. Accept a non-empty slice only
+       when every element is an object; accept an empty array only when a
+       '[' opens a line somewhere in the text. Anything else returns the
+       strict-parse value (None or a non-array for main() to reject) so a
+       failed agent stays failed — a false failure is recoverable, a false
+       clean is not.
     """
+    parsed = None
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         pass
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict) and "agent_error" in parsed:
+        return parsed
     start, end = text.find("["), text.rfind("]")
     if start != -1 and end > start:
         try:
-            return json.loads(text[start:end + 1])
+            sliced = json.loads(text[start:end + 1])
         except json.JSONDecodeError:
-            pass
-    return None
+            sliced = None
+        if isinstance(sliced, list):
+            if sliced and all(isinstance(x, dict) for x in sliced):
+                return sliced
+            if not sliced and ARRAY_OPENS_LINE_RE.search(text):
+                return []
+    return parsed
 
 
 def main() -> int:

@@ -218,6 +218,55 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertEqual(out["failed"], [])
             self.assertNotIn("error", out)
 
+    def test_object_wrapped_array_is_recovered(self):
+        # {"findings": [...]} strict-parses as a dict; the slice fallback
+        # must still recover the inner array instead of failing the agent.
+        wrapped = json.dumps({"findings": [
+            {"severity": "high", "file": "src/X.ts", "line": 10,
+             "description": "WHAT: thing. FIX: change."}]})
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=wrapped, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertEqual(len(out["kept"]), 1)
+
+    def test_incidental_brackets_in_failure_prose_do_not_recover_as_clean(self):
+        # Failure prose containing `string[]` slices to a valid empty array;
+        # accepting it would report a failed agent as a clean zero-finding
+        # run. The empty-array recovery requires a '[' that opens a line.
+        prose = "I could not complete the review: the string[] type in the diff failed to parse."
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=prose, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_truncated_array_returns_structured_error(self):
+        # Brackets present but the slice still doesn't parse (token-limit
+        # truncation): must hit the error path, never a silent clean.
+        truncated = 'Truncated: [{"severity": "high", "file": "x.ts", "line": 1]'
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=truncated, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+            self.assertIn("invalid findings JSON", out["error"])
+
     def test_invalid_findings_json_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as td:
             cl = Path(td) / "cl.json"
