@@ -243,7 +243,7 @@ For each unique package directory among the files with unresolved comments, read
 
 Detect from the codebase (not just the diff — fixes may need to read non-diff files):
 
-- `<HAS_WEB3>` — true if any file in the repo (focus on files with unresolved comments and their imports) imports `viem`, `wagmi`, `ethers` (extend this union with any project-specific Web3 SDK imports — e.g. `@your-org/*`), or contains contract address constants (`0x[a-fA-F0-9]{40}`) or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`).
+- `<HAS_WEB3>` — true if any file in the repo (focus on files with unresolved comments and their imports) imports `viem`, `wagmi`, `ethers` (extend this union with any project-specific Web3 SDK imports — e.g. `@your-org/*`), contains contract address constants (`0x[a-fA-F0-9]{40}`) or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`), or has the `.sol` extension.
 - `<HAS_REACT>` — true if any file with an unresolved comment has extension `.jsx`/`.tsx`, OR imports `react`, `react-dom`, `next/*`, `@tanstack/react-*`, `@apollo/client`, OR contains `'use client'` / `'use server'` directives.
 - `<HAS_TAILWIND>` — true if `<HAS_REACT>` AND any file with an unresolved comment contains a Tailwind-shaped class string in JSX.
 

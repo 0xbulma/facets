@@ -26,7 +26,7 @@ Users install via `/plugin marketplace add 0xbulma/claude-skills` → `/plugin i
                           │   │    pr-create,extract-plan,tib-create,tip-create,tib-ship}/SKILL.md
                           │   └─ pr-review-engine/
                           │       ├─ SKILL.md             ← shared Steps 3–6 (the dispatcher)
-                          │       ├─ agents/*.md          ← 15 versioned reviewers (6 baseline + 9 conditional)
+                          │       ├─ agents/*.md          ← 16 versioned reviewers (6 baseline + 10 conditional)
                           │       ├─ references/*.md      ← shared rubrics loaded on demand by agents
                           │       └─ scripts/             ← deterministic helpers (changed-lines build, finding validation, fix-rubric discovery)
                           ├─ hooks/hooks.json            ← SessionStart auto-install

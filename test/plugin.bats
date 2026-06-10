@@ -117,12 +117,13 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "agent inventory is exactly 15 files" {
-  # 6 baseline + 9 conditional. Three combos (ci-release-security,
+@test "agent inventory is exactly 16 files" {
+  # 6 baseline + 10 conditional. Three combos (ci-release-security,
   # ui-styling-accessibility, code-simplifier-performance) split per
-  # TIP-2026-05-20-persona-refinement: 11 - 3 + 7 = 15.
+  # TIP-2026-05-20-persona-refinement (11 - 3 + 7 = 15); api-security
+  # added for the server-side trust boundary: 15 + 1 = 16.
   count=$(find "$AGENTS_DIR" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  [ "$count" = "15" ]
+  [ "$count" = "16" ]
 }
 
 @test "list-fix-rubric-agents.sh returns exit 0 + empty stdout when no agent matches" {

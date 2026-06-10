@@ -73,7 +73,7 @@ First, sniff the project's commands once per TIP using the same logic as `tip-cr
 
 #### Load stack rubric (implementation parity with review)
 
-Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REACT` / `HAS_TAILWIND` / `HAS_STYLING` / `HAS_AI_SDK` / `HAS_WEB3` / `HAS_WORKFLOWS` / `HAS_RELEASE` / `HAS_DEPS` flags described in `skills/pr-review-engine/SKILL.md` Step 4 — but over the TIP's *declared* Files-to-Modify set (anticipated diff) rather than the actual diff. For every flag that's true, attach the corresponding marketplace skill bodies to the sub-agent's prompt so the implementation is written to the same rubric the review will then check against. Discovery is identical to the agent side — run-time `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` per skill:
+Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REACT` / `HAS_TAILWIND` / `HAS_STYLING` / `HAS_AI_SDK` / `HAS_WEB3` / `HAS_WORKFLOWS` / `HAS_RELEASE` / `HAS_DEPS` / `HAS_SERVER_API` flags described in `skills/pr-review-engine/SKILL.md` Step 4 — but over the TIP's *declared* Files-to-Modify set (anticipated diff) rather than the actual diff. For every flag that's true, attach the corresponding marketplace skill bodies to the sub-agent's prompt so the implementation is written to the same rubric the review will then check against. Discovery is identical to the agent side — run-time `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` per skill:
 
 | Flag                              | Rubric skills to load                                                                  |
 | --------------------------------- | -------------------------------------------------------------------------------------- |
@@ -84,6 +84,7 @@ Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REA
 | `HAS_RELEASE`                     | `deploy-to-vercel`, `vercel-cli-with-tokens`                                           |
 | `HAS_DEPS`                        | (no marketplace skill — `dependencies` agent body is the rubric)                       |
 | `HAS_WEB3`                        | (no marketplace skill — the `web3` agent body acts as both review and implementation rubric)         |
+| `HAS_SERVER_API`                  | (no marketplace skill — the `api-security` agent body acts as both review and implementation rubric) |
 
 Skills absent from `~/.claude/skills/` are skipped silently (the implementation sub-agent falls back to its general knowledge). This mirrors the persona side's degrade-gracefully behavior. The goal is implementation/review parity: writing to the same rubric that will judge the work avoids predictable review-loop iterations.
 

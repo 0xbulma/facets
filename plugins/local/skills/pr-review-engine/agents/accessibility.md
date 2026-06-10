@@ -1,8 +1,8 @@
 ---
 name: accessibility
-version: 1.0.0
+version: 1.1.0
 kind: conditional
-trigger: HAS_TAILWIND OR HAS_STYLING
+trigger: HAS_TAILWIND OR HAS_STYLING OR HAS_REACT
 applies: |
   WCAG 2.1 AA + the project's a11y spec, if any.
 out-of-scope:
@@ -20,7 +20,7 @@ canonical-rules: |
 
 # Accessibility
 
-Fires alongside `styling` when the diff touches UI surfaces (Tailwind classes in JSX, styling-library imports, or a11y attributes — `role=`, `aria-`, `tabIndex`). Accessibility is reviewed even if no a11y attribute is changed: a new interactive component without keyboard support is the kind of thing this agent must catch.
+Fires when the diff touches UI surfaces: Tailwind classes in JSX, styling-library imports, a11y attributes (`role=`, `aria-`, `tabIndex`) — or **any React code at all** (`HAS_REACT`). The React leg matters: a new interactive component without keyboard support has no styling surface and no ARIA attributes — exactly the markup this agent must catch — so the trigger cannot depend on styling signals alone. If the diff turns out to contain no markup or interaction surface (pure hooks/logic), return `[]` rather than inventing findings.
 
 ## Run-time setup
 

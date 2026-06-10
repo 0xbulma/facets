@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.3.0
+version: 0.4.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -27,7 +27,7 @@ How a caller knows the engine is working (rough targets, not hard thresholds):
 - **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. The structural invariants (trigger flags declared and detected, schema, scope filters) are locked by the suites under `test/`.
 - **False-positive ceiling** — ≤ 10% of agent findings dropped by the scope filter on a healthy diff. If consistently higher, the diff path normalization or `CHANGED_LINES` build is wrong.
 - **0 failed agents on a clean diff** — `FAILED_AGENTS` is empty when every agent's JSON parses and matches the WHAT/FIX schema. If non-zero, check schema injection in Step 5.
-- **Bounded cost** — typical review fans out 6 baseline + 0–9 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
+- **Bounded cost** — typical review fans out 6 baseline + 0–10 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
 
 ## Inputs (from caller's Steps 1–2)
 
@@ -119,7 +119,7 @@ Use the Glob tool: `**/AGENTS.md` and `**/CLAUDE.md`. Filter to paths that prefi
 
 Compute boolean flags from the diff and from changed files' content. Flag names are bare (no `< >`); they're variable identifiers, not template placeholders:
 
-- `HAS_WEB3` — true if any changed file imports a contract-interaction library (`viem`, `wagmi`, `ethers`, `web3.js`), contains contract address constants (`0x[a-fA-F0-9]{40}`), or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`, `signTypedData`, `permit*`).
+- `HAS_WEB3` — true if any changed file imports a contract-interaction library (`viem`, `wagmi`, `ethers`, `web3.js`), contains contract address constants (`0x[a-fA-F0-9]{40}`), contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`, `signTypedData`, `permit*`), OR has the `.sol` extension (vendored Solidity contracts).
 - `HAS_REACT` — true if any changed file has extension `.jsx`/`.tsx`, OR imports `react`, `react-dom`, `next/*`, `@tanstack/react-*`, `@apollo/client`, OR contains `'use client'` / `'use server'` directives.
 - `HAS_TAILWIND` — true if `HAS_REACT` AND any changed file contains a Tailwind-shaped class string in JSX (`flex`, `grid`, `p-N`, `m-N`, `text-`, `bg-`, `border-`, `rounded-`).
 - `HAS_STYLING` — true if any changed file imports `styled-components`, `@emotion/*`, `tss-react`, `*.module.css`, `*.module.scss`, OR contains a11y attributes (`role=`, `aria-`, `tabIndex`).
@@ -127,6 +127,7 @@ Compute boolean flags from the diff and from changed files' content. Flag names 
 - `HAS_RELEASE` — true if any changed file matches `.changeset/**`, `vercel.json`, OR any `package.json` whose `scripts.*publish*` / `scripts.*release*` / `scripts.*deploy*` field is modified, OR any file containing `changeset publish`, `npm publish`, `pnpm publish`, `gh release create`, `vercel deploy`, or `vercel --prod`. Fires `release-integrity`.
 - `HAS_DEPS` — true if any changed file matches `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `pnpm-workspace.yaml`, or `.npmrc` (any level). Fires `dependencies`.
 - `HAS_AI_SDK` — true if any changed file imports `ai`, `@ai-sdk/*`, `@vercel/ai`, OR uses `streamText`, `generateText`, `streamObject`, `generateObject`, `embed`, `embedMany`, `useChat`, `useCompletion`, `useObject`, `ToolLoopAgent`, OR imports `ai-elements` or `streamdown`.
+- `HAS_SERVER_API` — true if any changed file matches `app/**/route.{ts,js}` (Next App Router handlers), `pages/api/**` (Pages Router API routes), `middleware.{ts,js}` (root or `src/`), contains a `'use server'` directive, OR imports a server framework (`next/server`, `express`, `fastify`, `hono`, `koa`, `@trpc/server`). Fires `api-security`.
 - `HAS_ROUTE_UI` — true if any changed file is **route-reachable**, i.e. a page/layout/api-route/SPA entry, AND the repo has a discoverable dev-server script. Intentionally narrower than `HAS_REACT` so we don't boot a dev server for arbitrary component changes. Matches:
   - **Next App Router:** `app/**/page.{tsx,jsx,ts,js}`, `app/**/layout.{tsx,jsx,ts,js}`, `app/**/template.{tsx,jsx}`, `app/**/loading.{tsx,jsx}`, `app/**/error.{tsx,jsx}`, `app/**/route.{ts,js}`.
   - **Next Pages Router:** `pages/**/*.{tsx,jsx,ts,js}` excluding `pages/_*.{tsx,jsx}`, `pages/api/**/*.{ts,js}`.
@@ -154,6 +155,7 @@ Conditional flags:
   Release:        HAS_RELEASE=<bool>
   Dependencies:   HAS_DEPS=<bool>
   AI SDK:         HAS_AI_SDK=<bool>
+  Server API:     HAS_SERVER_API=<bool>
   Route-UI:       HAS_ROUTE_UI=<bool>
 ```
 
@@ -168,6 +170,7 @@ Agent specs live in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
    - `kind: baseline` → always launch.
    - `kind: conditional` → parse the `trigger:` value, look up each named flag from Step 4, evaluate the boolean expression. Compound triggers like `HAS_TAILWIND OR HAS_STYLING` are evaluated as written (split on whitespace, look up each flag, apply `OR` / `AND`).
 3. **Apply the caller's exclusion list.** If the caller provided `EXCLUDE_AGENTS` (a list of agent names), drop those from the launch set. Used by orchestrators like `/local:tib-ship` to suppress an agent during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
+3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs), and any conditional whose flag fired stays in (e.g. `release-integrity` when a doc embeds a publish command — the doc-example filter handles the false positives). Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
 4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
 5. Track `TOTAL_AGENTS_LAUNCHED` = count of agents actually launched (baseline + any fired conditionals − excluded).
 
@@ -237,19 +240,20 @@ Baseline (always fire, 6 agents):
 - `simplification.md` — unnecessary complexity, redundant logic, dead branches.
 - `performance.md` — barrel imports, memory leaks, N+1, memoization correctness.
 
-Conditional (fire only when their trigger flag is true, 9 agents):
+Conditional (fire only when their trigger flag is true, 10 agents):
 
-- `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation.
+- `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation, vendored `.sol` diffs.
 - `react-next.md` — fires when `HAS_REACT`. Loads marketplace rubrics (see `references/marketplace-rubrics.md`).
 - `styling.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. Tailwind/tokens, styling-architecture consistency.
-- `accessibility.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. ARIA, keyboard, focus, alt text.
+- `accessibility.md` — fires when `HAS_TAILWIND OR HAS_STYLING OR HAS_REACT`. ARIA, keyboard, focus, alt text — a new interactive component needs the a11y eye even when no styling surface changed.
 - `ci-security.md` — fires when `HAS_WORKFLOWS`. Workflow injection, action pinning, `permissions:` scopes, secret exposure.
 - `release-integrity.md` — fires when `HAS_RELEASE`. Publish flow, provenance, release-commit signing, Changesets wiring.
 - `dependencies.md` — fires when `HAS_DEPS`. Lockfile drift, dependency hygiene, `.npmrc`, typosquats.
 - `ai-sdk.md` — fires when `HAS_AI_SDK`. Vercel AI SDK usage, streaming, tool calls, structured output.
+- `api-security.md` — fires when `HAS_SERVER_API`. Authn/authz on routes and server actions, boundary input validation, webhook signatures, SSRF, server-held signing keys.
 - `runtime-validation.md` — fires when `HAS_ROUTE_UI`. Boots dev server, navigates changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/local:tib-ship` from its iteration loop.
 
-The dispatcher does not hardcode names — it discovers via `find`. Total: 15 agents (6 baseline + 9 conditional).
+The dispatcher does not hardcode names — it discovers via `find`. Total: 16 agents (6 baseline + 10 conditional).
 
 Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
 

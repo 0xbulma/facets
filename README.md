@@ -1,6 +1,6 @@
 # claude-skills
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 15-agent review library (6 baseline + 9 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -25,15 +25,16 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │   ├── setup/SKILL.md            # /local:setup
 │   │   └── pr-review-engine/         # shared review engine (was lib/ + personas/)
 │   │       ├── SKILL.md                          # dispatcher: Steps 3–6
-│   │       ├── agents/                           # 15 reviewers (6 baseline + 9 conditional)
+│   │       ├── agents/                           # 16 reviewers (6 baseline + 10 conditional)
 │   │       │   ├── correctness.md                   # baseline
 │   │       │   ├── docs.md                            # baseline
 │   │       │   ├── performance.md                    # baseline
 │   │       │   ├── error-handling.md          # baseline
 │   │       │   ├── simplification.md                 # baseline
 │   │       │   ├── tests.md                  # baseline
-│   │       │   ├── accessibility.md                  # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
+│   │       │   ├── accessibility.md                  # conditional (<HAS_TAILWIND> OR <HAS_STYLING> OR <HAS_REACT>)
 │   │       │   ├── ai-sdk.md          # conditional (<HAS_AI_SDK>)
+│   │       │   ├── api-security.md    # conditional (<HAS_SERVER_API>)
 │   │       │   ├── ci-security.md                    # conditional (<HAS_WORKFLOWS>)
 │   │       │   ├── dependencies.md                   # conditional (<HAS_DEPS>)
 │   │       │   ├── react-next.md      # conditional (<HAS_REACT>)
@@ -168,13 +169,14 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `simplification` — unnecessary complexity, redundant logic, over-engineering.
 - `performance` — barrel imports, memory leaks, N+1, memoization correctness.
 
-9 conditional (fire only when their flag matches the diff):
+10 conditional (fire only when their flag matches the diff):
 
 - `react-next` — `<HAS_REACT>` — Server Components, hooks, React 19 APIs, Next.js conventions, Cache Components. Loads `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` when RN code detected).
 - `styling` — `<HAS_TAILWIND> OR <HAS_STYLING>` — Tailwind, design tokens, styling-architecture consistency. Loads `tailwind-design-system`, `web-design-guidelines`, `building-components` (+ `ai-elements`/`streamdown` when their imports are present).
-- `accessibility` — `<HAS_TAILWIND> OR <HAS_STYLING>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
+- `accessibility` — `<HAS_TAILWIND> OR <HAS_STYLING> OR <HAS_REACT>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
 - `ai-sdk` — `<HAS_AI_SDK>` — Vercel AI SDK usage, streaming, tool calls, structured output, useChat. Loads `ai-sdk`, `ai-elements`, `streamdown`.
-- `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling.
+- `api-security` — `<HAS_SERVER_API>` — authn/authz on routes and server actions, boundary input validation, webhook signature verification, SSRF, server-held signing keys.
+- `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling, vendored `.sol` diffs.
 - `ci-security` — `<HAS_WORKFLOWS>` — workflow injection, action pinning, `permissions:` scopes, secret exposure. Loads `github-actions-docs`, `turborepo`.
 - `release-integrity` — `<HAS_RELEASE>` — publish flow, provenance, release-commit signing, Changesets wiring. Loads `deploy-to-vercel`, `vercel-cli-with-tokens`.
 - `dependencies` — `<HAS_DEPS>` — lockfile drift, `.npmrc` hygiene, typosquats, postinstall scripts.
