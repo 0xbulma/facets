@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# install-prereqs.sh — idempotently install the 5 prereq skills used by the
-# local conditional personas.
+# install-prereqs.sh — idempotently install the prereq rubric skills used by
+# the local conditional personas. The PREREQS list below is the source of
+# truth for what gets installed; skills/setup/SKILL.md documents the same set.
 #
 # Safe to run repeatedly. Each skill is only fetched if not already present
 # at ~/.claude/skills/<name>/SKILL.md.

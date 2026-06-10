@@ -27,7 +27,8 @@ Users install via `/plugin marketplace add 0xbulma/claude-skills` → `/plugin i
                           │   └─ pr-review-engine/
                           │       ├─ SKILL.md             ← shared Steps 3–6 (the dispatcher)
                           │       ├─ agents/*.md          ← 15 versioned reviewers (6 baseline + 9 conditional)
-                          │       └─ references/*.md      ← shared rubrics loaded on demand by agents
+                          │       ├─ references/*.md      ← shared rubrics loaded on demand by agents
+                          │       └─ scripts/             ← deterministic helpers (changed-lines build, finding validation, fix-rubric discovery)
                           ├─ hooks/hooks.json            ← SessionStart auto-install
                           └─ bin/install-prereqs.sh      ← idempotent prereq install
 ```
@@ -36,7 +37,7 @@ One-way arrow: the four PR-flow skills (`pr-review-gh`, `pr-review-local`, `pr-f
 
 ## Rubric prereqs (auto-installed)
 
-18 external skills from the [skills.sh](https://skills.sh) registry serve as runtime rubric for the conditional personas (15 from Vercel, 2 community, plus tailwind/github-actions). They are *not* Claude Code plugin dependencies (the `dependencies` field in `plugin.json` only resolves other plugins) — they're standalone skills installed via `npx skills add`.
+18 external skills from the [skills.sh](https://skills.sh) registry serve as runtime rubric for the conditional personas (16 Vercel-published, 2 community: `tailwind-design-system`, `github-actions-docs`). They are *not* Claude Code plugin dependencies (the `dependencies` field in `plugin.json` only resolves other plugins) — they're standalone skills installed via `npx skills add`.
 
 | Skill | Source | Backs persona |
 |---|---|---|
@@ -114,10 +115,10 @@ applies: |
 out-of-scope:
   - <what to defer to other personas, by name>
 focus: <one-line scope>
-severity-guidance: |
-  <how this persona calibrates severity>
 ---
 ```
+
+Severity calibration lives in the body as a `## Severity guidance` section (a few agents carry it as `severity-guidance:` frontmatter instead — either is fine, but every agent must have one).
 
 Adding an agent = drop a new file in `plugins/local/skills/pr-review-engine/agents/`. If `kind: conditional`, also extend the flag-detection block in Step 4 of `plugins/local/skills/pr-review-engine/SKILL.md`. **Bump the plugin `version`** in `plugins/local/.claude-plugin/plugin.json` (see Versioning above) — without it, existing installs will never see the new agent.
 
@@ -129,10 +130,13 @@ Adding an agent = drop a new file in `plugins/local/skills/pr-review-engine/agen
 ## Testing
 
 ```bash
-bats test/plugin.bats
+bats test/                                              # plugin.bats + test_build_changed_lines.bats
+(cd test && python3 -m unittest test_validate_findings) # finding-validator unit tests
 ```
 
-Validates manifest shape, skill discovery, frontmatter (including the `version:` field), no leaked legacy paths, hook + bin presence, and (if `claude` CLI is on PATH) a local plugin-dir smoke install.
+- `test/plugin.bats` — manifest shape, skill discovery, frontmatter (including the `version:` field), agent/trigger invariants, no leaked legacy paths, hook + bin presence, and (if `claude` CLI is on PATH) a local plugin-dir smoke install.
+- `test/test_build_changed_lines.bats` — the `CHANGED_LINES` builder script (hunk parsing, deletions, renames).
+- `test/test_validate_findings.py` — the finding validator (WHAT/FIX schema, ±15 window, doc-example filter, runtime sentinel).
 
 ## Common gotchas
 

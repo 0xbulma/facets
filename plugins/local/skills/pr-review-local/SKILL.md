@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.0.0
+version: 2.0.1
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree). Use when user says /local:pr-review-local, "review my changes", "review before PR", "local review", or "deep review".
 ---
 
@@ -41,7 +41,7 @@ Idempotency: re-running with no diff change produces the same sentinel + same co
 ## Step 1: Validate environment + arguments
 
 ```bash
-if [ "$CI" = "true" ] || [ "$GITHUB_ACTIONS" = "true" ]; then
+if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "WARNING: local:pr-review-local is for pre-PR local review; this skill family does not ship a CI variant." >&2
 fi
 ```

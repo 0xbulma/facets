@@ -185,6 +185,23 @@ setup() {
   done
 }
 
+@test "every conditional trigger flag is defined in the engine's Step 4 detection block" {
+  # A conditional agent only fires if the engine's Step 4 computes its
+  # trigger flag. A new agent with a typo'd or undeclared flag would
+  # silently never launch — no error, just a missing reviewer. This locks
+  # every HAS_* token in agent `trigger:` lines to a `- \`HAS_*\`` flag
+  # definition bullet in the engine SKILL.md.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  for agent_file in "$AGENTS_DIR"/*.md; do
+    trigger=$(awk '/^---$/{f=!f; next} f && /^trigger:/{sub(/^trigger: */,""); print; exit}' "$agent_file")
+    [ -n "$trigger" ] || continue
+    for flag in $(printf '%s\n' "$trigger" | grep -oE 'HAS_[A-Z0-9_]+' | sort -u); do
+      grep -q -- "- \`$flag\`" "$engine" \
+        || { echo "$agent_file trigger flag $flag has no definition bullet in engine Step 4" >&2; return 1; }
+    done
+  done
+}
+
 @test "no XML angle brackets anywhere in skill or agent frontmatter" {
   # Anthropic Skills guide, Reference B: "Forbidden in frontmatter: XML
   # angle brackets (< >) - security restriction". The engine and consumer
@@ -288,6 +305,18 @@ setup() {
   done
 }
 
+@test "install-prereqs.sh PREREQS list matches the setup skill's documented table" {
+  # bin/install-prereqs.sh is the source of truth for what gets installed;
+  # skills/setup/SKILL.md documents the same set in its table. The two have
+  # drifted before (header said 5, list had 18) — lock them together.
+  installer_names=$(sed -n "/^PREREQS=/,/'\$/p" "$PLUGIN_DIR/bin/install-prereqs.sh" | sed "s/^PREREQS='//" | awk 'NF{print $1}' | sort -u)
+  setup_names=$(grep -oE '^\| `[a-z0-9-]+`' "$SKILLS_DIR/setup/SKILL.md" | tr -d '|` ' | sort -u)
+  [ -n "$installer_names" ] || { echo "could not extract PREREQS names from install-prereqs.sh" >&2; return 1; }
+  [ -n "$setup_names" ]     || { echo "could not extract table names from setup/SKILL.md" >&2; return 1; }
+  diff <(printf '%s\n' "$installer_names") <(printf '%s\n' "$setup_names") \
+    || { echo "PREREQS list and setup table disagree (see diff above)" >&2; return 1; }
+}
+
 @test "hooks.json and install-prereqs.sh exist and are wired up" {
   [ -f "$PLUGIN_DIR/hooks/hooks.json" ]
   [ -x "$PLUGIN_DIR/bin/install-prereqs.sh" ]
@@ -302,10 +331,17 @@ setup() {
 @test "local plugin-dir smoke install (skipped if claude CLI absent)" {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
+  # Probe first: in some environments (CI, sandboxes that pass auth via an
+  # inherited file descriptor bats doesn't preserve) the CLI exists but
+  # can't authenticate. That's not a plugin-shape failure — skip.
+  # `</dev/null` is required: claude waits on stdin otherwise.
+  run claude -p "Say OK" </dev/null 2>&1
+  [ "$status" -eq 0 ] || skip "claude CLI present but not usable here (auth/network): $output"
+
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
   # The 9 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
-  run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." 2>&1
+  run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "local:pr-switch"
   echo "$output" | grep -q "local:pr-fix"

@@ -71,7 +71,14 @@ def _schema_ok(finding: dict) -> bool:
     if not isinstance(file, str) or not file:
         return False
     line = finding.get("line")
-    if not isinstance(line, int) or line <= 0:
+    # `file: "runtime", line: 0` is the runtime-validation sentinel for
+    # findings that can't be pinned to a source line (dev-server boot
+    # failure, route-level console error). It bypasses the line rule here
+    # and the scope filters in main().
+    if file == "runtime":
+        if not isinstance(line, int) or line < 0:
+            return False
+    elif not isinstance(line, int) or line <= 0:
         return False
     desc = finding.get("description")
     if not isinstance(desc, str) or not desc:
@@ -138,6 +145,12 @@ def main() -> int:
             continue
 
         if args.schema_only:
+            kept.append(f)
+            continue
+
+        # Runtime-validation sentinel: not a source file, so the file/line
+        # scope filters don't apply. Keep as-is.
+        if f["file"] == "runtime":
             kept.append(f)
             continue
 

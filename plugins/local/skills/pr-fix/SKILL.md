@@ -1,6 +1,6 @@
 ---
 name: pr-fix
-version: 2.0.0
+version: 2.1.0
 description: Apply fixes for PR review findings and resolve merge conflicts. Reads unresolved review comments from a pull request, applies the fixes locally, detects and resolves merge conflicts with the base branch, commits, pushes, and resolves the threads. Use when user says /local:pr-fix, "fix PR comments", "apply review fixes", "address PR feedback", or "fix conflicts". Takes a PR number as argument.
 ---
 
@@ -143,7 +143,7 @@ Resolved merge conflicts in:
 - <file1>
 - <file2>
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 
@@ -518,7 +518,7 @@ fix: address PR review findings
 Applied fixes for <N> review comments:
 - <brief summary of key fixes>
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -693,9 +693,9 @@ If `--watch` WAS passed, **you MUST proceed to Step 12**.
 
 **If `--watch` was passed, you MUST call `CronCreate` now.** Do not skip this step.
 
-Use `CronCreate` to schedule a recurring job every 2 minutes:
+Use `CronCreate` to schedule a recurring job every 5 minutes (`*/5 * * * *`):
 
-- cron: `*/2 * * * *`
+- cron: `*/5 * * * *`
 - recurring: true
 - prompt: The prompt below, with all `<PLACEHOLDERS>` replaced with actual values from Steps 1-2:
 
@@ -705,7 +705,7 @@ Repo path: <REPO_PATH>
 Head branch: <HEAD_BRANCH>
 Base branch: <BASE_BRANCH>
 
-This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 2 minutes.
+This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 5 minutes.
 
 CYCLE START:
 
@@ -784,7 +784,7 @@ CYCLE START:
       git commit -m "$(cat <<'INNEREOF'
 fix: address PR review findings
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 INNEREOF
 )"
    e. Push: `git push origin <HEAD_BRANCH>`
@@ -800,7 +800,7 @@ REPLYEOF
    h. For skipped findings, reply with skip reason (using heredoc) but do NOT resolve the thread.
    i. Say "Assessed <N> comments: fixed <X>, skipped <Y> (questions/stale/low-confidence). Pushed commit <sha>, resolved <X> threads."
 
-CYCLE END — the cron scheduler will run this again in 2 minutes.
+CYCLE END — the cron scheduler will run this again in 5 minutes.
 ```
 
 **After CronCreate returns the job ID:**
@@ -828,7 +828,7 @@ CYCLE END — the cron scheduler will run this again in 2 minutes.
 - **Conflict-aware**: Detects merge conflicts with the base branch before applying review fixes. Resolves conflicts intelligently by reading both sides and merging logically. Conflicts that can't be safely resolved are reported for human intervention.
 - **Quality gates**: Discovers and runs project linters/formatters after each file fix and broader quality checks (typecheck, lint) after all fixes. Ensures fixes don't introduce new issues.
 - **Self-contained watcher**: The cron watcher does actual work inline (resolves conflicts, applies fixes, replies to threads, resolves threads) rather than re-invoking the skill. This avoids recursive watcher creation and ensures each cron tick is a complete fix cycle. The watcher also performs relevance assessment on every cycle — it never blindly fixes.
-- **Pairs with `/local:pr-review-gh`**: `/local:pr-review-gh` posts findings (from parallel Claude agents + optional Codex), `/local:pr-fix` applies fixes. With both using `--watch`, they form a fully autonomous review-fix loop.
+- **Pairs with `/local:pr-review-gh`**: `/local:pr-review-gh` posts findings (from parallel Claude agents + optional Codex), `/local:pr-fix` applies fixes. **Do NOT run both watchers on the same PR** — each fix push re-triggers the review watcher and each new finding re-triggers this watcher: an unattended ping-pong loop. Watch with one skill at a time and run the other on demand.
 - Fixes are applied to the PR branch, not main/dev
 - One commit for all fixes — keeps the PR history clean
 - Each reply includes the commit SHA for traceability

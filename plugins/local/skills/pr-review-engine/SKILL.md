@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.2.0
+version: 0.3.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -24,7 +24,7 @@ deduplicated findings list + `FAILED_AGENTS` count produced by Step 6.
 
 How a caller knows the engine is working (rough targets, not hard thresholds):
 
-- **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. Verify via the per-fixture tests under `test/fixtures/`.
+- **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. The structural invariants (trigger flags declared and detected, schema, scope filters) are locked by the suites under `test/`.
 - **False-positive ceiling** — ≤ 10% of agent findings dropped by the scope filter on a healthy diff. If consistently higher, the diff path normalization or `CHANGED_LINES` build is wrong.
 - **0 failed agents on a clean diff** — `FAILED_AGENTS` is empty when every agent's JSON parses and matches the WHAT/FIX schema. If non-zero, check schema injection in Step 5.
 - **Bounded cost** — typical review fans out 6 baseline + 0–9 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
@@ -193,7 +193,7 @@ The dispatcher should NOT paraphrase or summarize these parts — copy them. Dri
 - Agents must analyze the **full diff**, not just the latest commit.
 - Each agent **must return** a JSON array `[{severity: "critical"|"high"|"medium"|"low", file: "path", line: number, description: "WHAT: ... FIX: ..."}]` OR an explicit error sentinel `{"agent_error": "<reason>"}` if it could not complete.
 - **`description` schema.** Every finding's `description` MUST contain both a `WHAT:` clause naming the specific problem AND a `FIX:` clause stating the specific change. Recommended format: `WHAT: <one sentence>. FIX: <one sentence>.` Free-form prose otherwise. Findings without both clauses are rejected as malformed in Step 6 sub-step 2.
-- **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15.
+- **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15. **Exception:** the `runtime-validation` agent may emit the sentinel shape `file: "runtime", line: 0` for findings that can't be pinned to a source line; these pass the schema check and bypass the scope filters.
 - **Stay in scope (avoid scope creep).** Focus on the diff: flag issues introduced by these changes, and issues in adjacent code only when the diff makes that adjacent code materially worse. Do NOT flag pre-existing issues, propose unrelated refactors, suggest new features, or recommend cleanups outside the PR's intent. When in doubt, omit.
 - **Don't nitpick.** Polish, wording, naming preferences, stylistic alternatives, and "you could also" suggestions are not findings — omit them regardless of severity label.
 - Only **actionable** findings — no praise, no summaries.
@@ -261,7 +261,7 @@ Merge all agent results into a single list:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
    - plus uncommitted: `git diff --name-only HEAD` (only when `DIFF_SOURCE=local`)
 
-   For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
+   For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. If `finding.file` is the literal string `"runtime"` (the `runtime-validation` sentinel for findings with no source location), **keep it** — skip both the file-level and line-level scope filters for that finding. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
 
    If `finding.file` is not in `CHANGED_FILES`, **drop the finding** and increment `DROPPED_OUT_OF_SCOPE`.
 
@@ -291,7 +291,7 @@ Merge all agent results into a single list:
    - Returned an array containing one or more objects missing required fields:
      - `severity` not in `critical`/`high`/`medium`/`low`
      - missing or non-string `file`
-     - missing or non-positive-integer `line`
+     - missing or non-positive-integer `line` (exception: `line: 0` is valid when `file` is `"runtime"`)
      - missing or empty `description`
      - `description` lacks a `WHAT:` substring OR lacks a `FIX:` substring
      Count the agent as **partially failed**: keep the valid findings from that agent, but include it in `FAILED_AGENTS`.

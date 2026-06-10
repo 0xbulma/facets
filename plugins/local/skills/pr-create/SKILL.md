@@ -1,6 +1,6 @@
 ---
 name: pr-create
-version: 1.0.0
+version: 1.1.0
 description: Create a draft PR (and a new branch if needed) from the current changes. Use when user says /local:pr-create, "create a draft PR", "open a PR for these changes", "draft PR from this branch", or "push and open a draft". Derives title, description, branch name, and label from the diff — no questions asked.
 ---
 
@@ -64,12 +64,19 @@ git push -u origin <branch-name>
 
 Then proceed to Step 3.
 
-### Step 3: Commit All Changes
+### Step 3: Commit the Changes
 
-Before creating the PR, commit all uncommitted changes (staged and unstaged). The repo's `.gitignore` is responsible for keeping `.env`, key material, and other untracked artefacts out — trust it:
+Before creating the PR, commit the uncommitted changes — but stage deliberately, not blindly:
 
 ```bash
-git add -A
+git status --porcelain
+```
+
+- **Tracked modifications** (`M`/`D`/staged entries): stage them all with `git add -u`.
+- **Untracked files** (`??`): stage each one only if it belongs to this change (a new source/test/doc file the diff references or that matches its scope). Leave out anything that looks like scratch work, local config, or secret material (`*.local`, `.env*`, `*.key`, `*.pem`, editor swap files, ad-hoc notes) even if `.gitignore` missed it — list what you left out in one line so the user knows.
+
+```bash
+git add <untracked files that belong to the change>
 git commit -m "<type>: <short description>"
 git push
 ```
@@ -134,7 +141,7 @@ PR created: https://github.com/<owner>/<repo>/pull/<number>
 ### Important Notes
 
 - Do NOT ask the user any questions — derive everything from the changes.
-- Always commit ALL uncommitted changes before creating the PR; rely on `.gitignore` to keep secrets and scratch files out.
+- Commit all tracked modifications, but stage untracked files selectively (Step 3) — never `git add -A` blind. `.gitignore` is the first line of defense, not the only one.
 - If on the default branch, create a new branch from HEAD before creating the PR.
 - If not on the default branch, use the current branch as-is.
 - The PR targets the repo's default branch (`$DEFAULT_BRANCH`).

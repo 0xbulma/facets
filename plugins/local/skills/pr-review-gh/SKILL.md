@@ -1,12 +1,12 @@
 ---
 name: pr-review-gh
-version: 2.0.0
+version: 2.1.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /local:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
 # review-gh — Local PR Review (post to GitHub)
 
-Reviews a GitHub Pull Request locally using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md`, posts findings as inline review comments with `event="COMMENT"`. Never auto-approves or requests changes — leaves the verdict to humans. Optionally schedules a 2-minute watcher cron via `--watch`.
+Reviews a GitHub Pull Request locally using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md`, posts findings as inline review comments with `event="COMMENT"`. Never auto-approves or requests changes — leaves the verdict to humans. Optionally schedules a 5-minute watcher cron via `--watch`.
 
 ## Usage
 
@@ -42,7 +42,7 @@ if [ -z "${1:-}" ]; then
   echo "local:pr-review-gh requires a PR number." >&2
   exit 1
 fi
-if [ "$CI" = "true" ] || [ "$GITHUB_ACTIONS" = "true" ]; then
+if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "WARNING: local:pr-review-gh runs locally; this skill family does not ship a CI variant. Use the repo-level pr-review-ci instead if you need CI verdicts." >&2
 fi
 ```
@@ -154,7 +154,7 @@ If `--watch` was NOT passed, the skill is complete here. If `--watch` WAS passed
 
 ## Step 9: Schedule the watcher (only with --watch)
 
-Use `CronCreate` to schedule a recurring job every 2 minutes (`*/2 * * * *`, recurring: true).
+Use `CronCreate` to schedule a recurring job every 5 minutes (`*/5 * * * *`, recurring: true). Each cycle that detects a new commit runs a full multi-agent review, so a tighter interval mostly burns tokens re-checking an unchanged SHA. `CronCreate` is environment-specific — if it is not available (see Error handling), `--watch` degrades to a one-shot review.
 
 ### Placeholder discipline (CRITICAL)
 
@@ -186,7 +186,7 @@ Head branch: <HEAD_BRANCH>
 Base branch: <BASE_BRANCH>
 Bot login: <BOT_LOGIN>
 
-This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 2 minutes.
+This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 5 minutes.
 
 Every shell command below must be checked for non-zero exit. On ANY non-zero exit, say "Sentinel: WATCH_TRANSIENT_ERROR — step <N> (<command>): <stderr>" and end this cycle.
 
@@ -229,7 +229,7 @@ CYCLE START:
 
 7. Say "Sentinel: WATCH_REVIEW_DONE — PR #<PR_NUMBER> commit ${CYCLE_HEAD_SHA_SHORT}: <N> findings (X critical, Y high, Z medium, W low)."
 
-CYCLE END — the cron scheduler will run this again in 2 minutes.
+CYCLE END — the cron scheduler will run this again in 5 minutes.
 ```
 
 After CronCreate returns the job ID:
@@ -248,8 +248,8 @@ After CronCreate returns the job ID:
 ## Notes
 
 - **`COMMENT` event only** — never auto-approve or request changes. The user reviews findings and decides.
-- **`--watch` semantics**: 2-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs.
-- **Pairs with `/local:pr-fix`**: this skill posts findings; `/local:pr-fix` applies them. With both using `--watch`, they form a fully autonomous review-fix loop.
+- **`--watch` semantics**: 5-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs.
+- **Pairs with `/local:pr-fix`**: this skill posts findings; `/local:pr-fix` applies them. **Do NOT run both watchers on the same PR** — the fix watcher's pushes re-trigger the review watcher, and any new finding re-triggers the fix watcher: an unattended ping-pong loop that burns tokens and spams the PR. Watch with one skill at a time and run the other on demand.
 
 ## Sentinel grammar
 

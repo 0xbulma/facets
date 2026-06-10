@@ -235,6 +235,33 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertIn("error", out)
             self.assertIn("cannot read changed-lines file", out["error"])
 
+    def test_runtime_sentinel_is_kept_and_bypasses_scope_filters(self):
+        # runtime-validation emits file:"runtime", line:0 for findings with
+        # no source location (dev-server boot failure, route-level console
+        # error). The sentinel must pass the schema check AND bypass the
+        # file/line scope filters.
+        findings = [{"severity": "critical", "file": "runtime", "line": 0,
+                     "description": "WHAT: /dashboard 500s on load. FIX: check the new loader."}]
+        out = _run(findings, {"src/X.ts": [10]})
+        self.assertEqual(len(out["kept"]), 1)
+        self.assertEqual(out["counts"]["schema"], 0)
+        self.assertEqual(out["dropped"], [])
+
+    def test_runtime_sentinel_still_requires_what_fix_clauses(self):
+        findings = [{"severity": "high", "file": "runtime", "line": 0,
+                     "description": "the page looked broken"}]
+        out = _run(findings, {"src/X.ts": [10]})
+        self.assertEqual(out["kept"], [])
+        self.assertEqual(out["counts"]["schema"], 1)
+
+    def test_zero_line_still_fails_schema_for_real_files(self):
+        # line: 0 is only valid on the "runtime" sentinel, never on a path.
+        findings = [{"severity": "high", "file": "src/X.ts", "line": 0,
+                     "description": "WHAT: x. FIX: y."}]
+        out = _run(findings, {"src/X.ts": [10]})
+        self.assertEqual(out["kept"], [])
+        self.assertEqual(out["counts"]["schema"], 1)
+
     def test_custom_line_tolerance(self):
         findings = [{"severity": "low", "file": "src/X.ts", "line": 30,
                      "description": "WHAT: x. FIX: y."}]

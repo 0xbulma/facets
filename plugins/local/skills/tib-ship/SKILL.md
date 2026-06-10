@@ -1,6 +1,6 @@
 ---
 name: tib-ship
-version: 0.2.0
+version: 0.2.1
 description: Execute a TIB end-to-end (yolo). Plans TIPs, branches, implements per-block test-driven (format → lint → typecheck → test → commit per phase), then loops `pr-review-local` → fix → re-review until the branch is clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops short of pushing — the user creates the PR. Use when user says /local:tib-ship, "ship this TIB", "yolo this TIB", "implement and self-review", or "execute the TIB end to end".
 ---
 
@@ -142,7 +142,7 @@ For `i = 1..MAX_ITERS`:
 2. Collect findings into a list. If empty → **break, success**.
 3. Compute a stable hash of the findings (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash`:
    - Same findings as last iteration → **stuck**. Stop and ask the user (do not silently retry).
-4. Group findings by severity. Apply fixes in this order: `critical` → `high` → `medium`. Skip `low` unless `<LOW_FIXES>` is requested.
+4. Group findings by severity. Apply fixes in this order: `critical` → `high` → `medium`. Skip `low` findings — they are listed in the Step 7 summary for the user to triage, not auto-fixed.
 5. For each finding:
    - Read the file at the cited line.
    - Apply the smallest change that addresses the finding's `description`.
@@ -186,6 +186,7 @@ Phases shipped:   <list>
 Gating tests:     <new tests added> (added/extended across phases)
 Block gates:      format ✓  lint ✓  typecheck ✓  tests ✓   (per-phase, end state)
 Review iters:     <i> (clean on iteration <i>)
+Low findings:     <N> (not auto-fixed — listed below for manual triage)
 Runtime check:    passed | skipped | failed-then-fixed
 Commits:          <N> (<feat: …> ×K, <fix(review): …> ×M)
 
