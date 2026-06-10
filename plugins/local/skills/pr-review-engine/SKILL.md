@@ -293,9 +293,9 @@ Merge all agent results into a single list:
    `Scope filter: dropped <N> file-level + <N> line-level + <N> doc-example finding(s).`
 
 2. **Count agent failures.** An agent counts as failed if any of these hold:
-   - Returned `{"agent_error": "..."}` (the explicit sentinel from Step 5).
-   - Returned text with no parseable JSON array. (The validator parses tolerantly first — a prose-wrapped array is recovered by slicing from the first `[` to the last `]` — so only output containing no extractable array counts as a failure.)
-   - Returned a JSON value that is not an array (e.g. an object that is not the error sentinel).
+   - Returned `{"agent_error": "..."}` (the explicit sentinel from Step 5). A sentinel payload is never mined for embedded findings — a declared failure stays a failure.
+   - Returned text from which no findings array can be **safely** recovered. The validator parses tolerantly first: a prose-wrapped array is recovered by slicing from the first `[` to the last `]`, and an object wrapping exactly one list value (e.g. `{"findings": [...]}`) is unwrapped structurally. But recovery is guarded — a non-empty slice must be a list of objects, and an empty array is accepted only as a literal `[]` standing alone on a line — so ambiguous output (incidental brackets like `string[]` or `[ ]` checkboxes, citation lists, truncated arrays) still counts as a failure. The bias is deliberate: a false failure is recoverable, a false clean is not.
+   - Returned a JSON value that is not an array and could not be unwrapped per the rule above (e.g. an object with zero or multiple list values that is not the error sentinel).
    - Returned an array containing one or more objects missing required fields:
      - `severity` not in `critical`/`high`/`medium`/`low`
      - missing or non-string `file`

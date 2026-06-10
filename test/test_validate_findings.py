@@ -267,6 +267,86 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertIn("error", out)
             self.assertIn("invalid findings JSON", out["error"])
 
+    def test_checkbox_line_does_not_recover_as_clean(self):
+        # A markdown checkbox opening a line slices to `[ ]` (a valid empty
+        # array) — the literal-standalone-[] rule must reject it, or failure
+        # prose becomes a clean zero-finding run.
+        prose = "I could not complete the review. Remaining work:\n[ ] parse the diff hunks"
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=prose, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_agent_error_payload_is_never_recovered_as_findings(self):
+        # The sentinel wins over every recovery path: a declared failure
+        # carrying an embedded findings-shaped array must stay a failure.
+        payload = json.dumps({"agent_error": "context overflow", "partial": [
+            {"severity": "high", "file": "src/X.ts", "line": 10,
+             "description": "WHAT: x. FIX: y."}]})
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_non_object_array_slice_is_rejected(self):
+        # Citation-style brackets slice to a valid array of non-objects
+        # ([1, 2]); the all-object rule must route this to the error path.
+        prose = "I checked lines [1, 2] and the run failed midway."
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=prose, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+            self.assertIn("invalid findings JSON", out["error"])
+
+    def test_object_wrapped_empty_array_is_recovered_as_clean(self):
+        # {"findings": []} is a fully valid clean result; the structural
+        # unwrap must recover it instead of failing the agent.
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input='{"findings": []}', capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertNotIn("error", out)
+            self.assertEqual(out["kept"], [])
+            self.assertEqual(out["failed"], [])
+
+    def test_ambiguous_multi_list_dict_is_rejected(self):
+        # A dict with several list values is ambiguous — no guessing which
+        # one is the findings array; reject toward agent-failed.
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input='{"findings": [], "skipped": []}', capture_output=True,
+                text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
     def test_invalid_findings_json_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as td:
             cl = Path(td) / "cl.json"

@@ -94,10 +94,11 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
     return min(abs(line - cl) for cl in changed_lines)
 
 
-# An array that opens a line — the calibrated agent output shape. Used to
-# distinguish a real (possibly empty) findings array from prose-internal
-# brackets like `string[]`.
-ARRAY_OPENS_LINE_RE = re.compile(r"(?m)^\s*\[")
+# A literal empty array standing alone on a line — the calibrated agent
+# output shape for a clean run. Deliberately strict: a markdown checkbox
+# (`[ ] do the thing`) or any other whitespace-padded bracket pair must NOT
+# qualify, or failure prose gets recovered as a clean zero-finding run.
+EMPTY_ARRAY_LINE_RE = re.compile(r"(?m)^\s*\[\]\s*$")
 
 
 def _parse_findings_text(text: str):
@@ -107,17 +108,18 @@ def _parse_findings_text(text: str):
     verification-style context tend to wrap it in prose (observed in 6 of 26
     dogfood runs, persisting across prompt-hardening attempts). Strategy:
 
-    1. Strict parse. A list, or the {"agent_error": ...} sentinel, wins.
-    2. Otherwise slice from the first '[' to the last ']' and retry —
-       recovers prose-wrapped arrays AND object-wrapped ones like
-       {"findings": [...]}.
-    3. Guard against false-clean recovery: prose such as "the string[] type
-       failed" slices to a valid empty array. Accept a non-empty slice only
-       when every element is an object; accept an empty array only when a
-       '[' opens a line somewhere in the text. Anything else returns the
-       strict-parse value (None or a non-array for main() to reject) so a
-       failed agent stays failed — a false failure is recoverable, a false
-       clean is not.
+    1. Strict parse. A list wins. The {"agent_error": ...} sentinel also
+       wins — a declared failure is never mined for recoverable findings.
+    2. Any other dict is unwrapped structurally: when exactly one of its
+       values is a list (e.g. {"findings": [...]}, empty or not), that list
+       is the result. Ambiguous dicts fall through to rejection.
+    3. Unparseable text: slice from the first '[' to the last ']' and retry.
+       Accept a non-empty slice only when every element is an object; accept
+       an empty array only when a literal `[]` stands alone on a line.
+       Everything else (incidental brackets like `string[]` or `[ ]`
+       checkboxes, citation lists like `[1, 2]`, truncated arrays) returns
+       the strict-parse value (None or a non-array for main() to reject) —
+       a false failure is recoverable, a false clean is not.
     """
     parsed = None
     try:
@@ -126,7 +128,12 @@ def _parse_findings_text(text: str):
         pass
     if isinstance(parsed, list):
         return parsed
-    if isinstance(parsed, dict) and "agent_error" in parsed:
+    if isinstance(parsed, dict):
+        if "agent_error" in parsed:
+            return parsed
+        lists = [v for v in parsed.values() if isinstance(v, list)]
+        if len(lists) == 1:
+            return lists[0]
         return parsed
     start, end = text.find("["), text.rfind("]")
     if start != -1 and end > start:
@@ -137,7 +144,7 @@ def _parse_findings_text(text: str):
         if isinstance(sliced, list):
             if sliced and all(isinstance(x, dict) for x in sliced):
                 return sliced
-            if not sliced and ARRAY_OPENS_LINE_RE.search(text):
+            if not sliced and EMPTY_ARRAY_LINE_RE.search(text):
                 return []
     return parsed
 
