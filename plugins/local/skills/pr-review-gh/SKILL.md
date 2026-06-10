@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.1.0
+version: 2.2.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /local:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -13,7 +13,10 @@ Reviews a GitHub Pull Request locally using parallel specialized agents from `${
 ```
 /local:pr-review-gh <PR_NUMBER>
 /local:pr-review-gh <PR_NUMBER> --watch
+/local:pr-review-gh <PR_NUMBER> --fast    # skip the docs agent (cheapest meaningful cut)
 ```
+
+`--fast` excludes the `docs` agent via the engine's `EXCLUDE_AGENTS` input (most expensive agent per launch, most likely clean on code-focused diffs — see pr-review-local's usage notes for the dogfood data). `--fast` applies to the immediate review only; a `--watch` watcher always runs the full panel, since unattended re-reviews favor coverage over cost.
 
 ## Pre-conditions
 
@@ -69,6 +72,7 @@ Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that a
 
 - `DIFF_SOURCE` = `pr`
 - `HEAD_REF` = `origin/<HEAD_BRANCH>`
+- `EXCLUDE_AGENTS` = `["docs"]` when `--fast` was passed, otherwise empty
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 

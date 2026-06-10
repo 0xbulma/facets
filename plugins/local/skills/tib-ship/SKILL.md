@@ -1,6 +1,6 @@
 ---
 name: tib-ship
-version: 0.2.1
+version: 0.2.2
 description: Execute a TIB end-to-end (yolo). Plans TIPs, branches, implements per-block test-driven (format → lint → typecheck → test → commit per phase), then loops `pr-review-local` → fix → re-review until the branch is clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops short of pushing — the user creates the PR. Use when user says /local:tib-ship, "ship this TIB", "yolo this TIB", "implement and self-review", or "execute the TIB end to end".
 ---
 
@@ -136,6 +136,8 @@ After all phases for a TIP are green, set the TIP `Status` row from `Draft` to `
 ### Step 5: Review → fix loop
 
 `MAX_ITERS = $ARGUMENTS --max-iters` (default 5). `prev_findings_hash = ""`.
+
+The default is a ceiling, not a target: dogfood data (four full review→fix passes over a 20-file branch) shows iteration 1 carries most of the value, iteration 2 catches second-order bugs in iteration 1's fixes, and later passes mostly review the fixes themselves. Expect convergence by iteration 2–3; budget beyond that only when the fixes touch treacherous surfaces (concurrency, signing, money paths).
 
 For `i = 1..MAX_ITERS`:
 

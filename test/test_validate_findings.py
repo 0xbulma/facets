@@ -184,6 +184,40 @@ class ValidateFindingsTests(unittest.TestCase):
         self.assertEqual(len(out["kept"]), 1)
         self.assertEqual(out["dropped"], [])
 
+    def test_prose_wrapped_array_is_recovered(self):
+        # Agents sometimes wrap their JSON array in narrative despite the
+        # output contract (6 of 26 dogfood runs). The tolerant parser slices
+        # from the first '[' to the last ']' so the findings still count.
+        wrapped = ('Analysis complete. I verified everything carefully.\n\n'
+                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: thing. FIX: change."}]\n\nDone.')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=wrapped, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertEqual(len(out["kept"]), 1)
+            self.assertEqual(out["counts"]["schema"], 0)
+
+    def test_prose_wrapped_empty_array_is_recovered(self):
+        wrapped = "All checks pass, nothing to report.\n\n[]\n"
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=wrapped, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["kept"], [])
+            self.assertEqual(out["failed"], [])
+            self.assertNotIn("error", out)
+
     def test_invalid_findings_json_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as td:
             cl = Path(td) / "cl.json"

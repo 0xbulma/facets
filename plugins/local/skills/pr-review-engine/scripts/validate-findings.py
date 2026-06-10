@@ -94,6 +94,29 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
     return min(abs(line - cl) for cl in changed_lines)
 
 
+def _parse_findings_text(text: str):
+    """Parse agent output tolerantly.
+
+    Agents are contracted to return a bare JSON array, but models given
+    verification-style context tend to wrap it in prose (observed in 6 of 26
+    dogfood runs, persisting across prompt-hardening attempts). Try a strict
+    parse first; on failure, slice from the first '[' to the last ']' and
+    retry, so a prose-wrapped array is recovered instead of routing the whole
+    agent to the partial-failure path. Returns the parsed value or None.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("["), text.rfind("]")
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--findings", type=Path,
@@ -112,10 +135,9 @@ def main() -> int:
     except OSError as e:
         print(json.dumps({"error": f"cannot read findings file: {e}"}))
         return 0
-    try:
-        findings = json.loads(findings_src)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"invalid findings JSON: {e}"}))
+    findings = _parse_findings_text(findings_src)
+    if findings is None:
+        print(json.dumps({"error": "invalid findings JSON: no parseable JSON array in input"}))
         return 0
     if not isinstance(findings, list):
         print(json.dumps({"error": "findings must be a JSON array"}))

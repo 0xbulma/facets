@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.4.0
+version: 0.5.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -189,6 +189,8 @@ For every spawned sub-agent, the dispatcher **must** assemble the launch prompt 
 7. **The "Shared per-agent contract" bullets below, copied verbatim into the prompt.** Without this injection, agents won't know to emit the schema and Step 6.2 will route every finding as malformed.
 8. **The calibration example pair** (the kept-finding + dropped-finding pair below), copied verbatim. Anchors the agent's output shape.
 
+**Ordering rule:** any extra caller-supplied context (an orchestrator's iteration history, exclusion rationale, TIP excerpts) goes between items 6 and 7 — items 7–8 must be the **final** content of the prompt. Dogfood data: agents given verification-style context narrate their answer unless the output contract is the last instruction they read (6 of 26 runs wrapped their JSON in prose when the contract sat mid-prompt).
+
 The dispatcher should NOT paraphrase or summarize these parts — copy them. Drift between the dispatcher's notion of the contract and what the agent receives is exactly the failure mode the engine's schema check is supposed to prevent.
 
 ### Shared per-agent contract (applied uniformly to every launched agent)
@@ -292,7 +294,7 @@ Merge all agent results into a single list:
 
 2. **Count agent failures.** An agent counts as failed if any of these hold:
    - Returned `{"agent_error": "..."}` (the explicit sentinel from Step 5).
-   - Returned text that is not parseable as JSON.
+   - Returned text with no parseable JSON array. (The validator parses tolerantly first — a prose-wrapped array is recovered by slicing from the first `[` to the last `]` — so only output containing no extractable array counts as a failure.)
    - Returned a JSON value that is not an array (e.g. an object that is not the error sentinel).
    - Returned an array containing one or more objects missing required fields:
      - `severity` not in `critical`/`high`/`medium`/`low`
