@@ -331,6 +331,35 @@ setup() {
   [[ "$cmd" == *'&' ]] || { echo "hook command is not backgrounded (must end in &): $cmd" >&2; return 1; }
 }
 
+@test "install-prereqs.sh lock: skips when a live holder owns the lock" {
+  # A lock held by a live process must make the script exit 0 without
+  # installing (and without removing the other holder's lock).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP/claude-local-install-prereqs.lock"
+  echo $$ > "$TMP/claude-local-install-prereqs.lock/pid"   # bats PID — alive
+
+  TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"another install-prereqs run is active"* ]] || { echo "missing skip message: $output" >&2; return 1; }
+  [ -d "$TMP/claude-local-install-prereqs.lock" ] || { echo "live holder's lock was removed" >&2; return 1; }
+}
+
+@test "install-prereqs.sh lock: recovers a stale lock and releases on exit" {
+  # A lock whose recorded holder is dead must be reclaimed (self-heal), and
+  # the EXIT trap must release it afterwards. Stub npx fails fast: the run
+  # is hermetic (no network), exercising the full lock lifecycle.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP/claude-local-install-prereqs.lock"
+  echo 99999999 > "$TMP/claude-local-install-prereqs.lock/pid"   # dead PID
+
+  TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing stale lock"* ]] || { echo "stale lock was not reclaimed: $output" >&2; return 1; }
+  [ ! -d "$TMP/claude-local-install-prereqs.lock" ] || { echo "lock not released on exit" >&2; return 1; }
+}
+
 @test "no install.sh remaining at repo root" {
   [ ! -f "$REPO_ROOT/install.sh" ]
 }

@@ -20,7 +20,7 @@ canonical-rules: |
 
 # Accessibility
 
-Fires when the diff touches UI surfaces: Tailwind classes in JSX, styling-library imports, a11y attributes (`role=`, `aria-`, `tabIndex`) — or **any React code at all** (`HAS_REACT`). The React leg matters: a new interactive component without keyboard support has no styling surface and no ARIA attributes — exactly the markup this agent must catch — so the trigger cannot depend on styling signals alone. If the diff turns out to contain no markup or interaction surface (pure hooks/logic), return `[]` rather than inventing findings.
+Fires when `HAS_STYLING OR HAS_REACT` is true (detection patterns live in exactly one place: `pr-review-engine/SKILL.md` Step 4). The React leg matters: a new interactive component without keyboard support has no styling surface and no ARIA attributes — exactly the markup this agent must catch — so the trigger cannot depend on styling signals alone. If the diff turns out to contain no markup or interaction surface (pure hooks/logic), return `[]` rather than inventing findings.
 
 ## Run-time setup
 

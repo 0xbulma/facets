@@ -18,11 +18,6 @@ focus: |
   The server-side trust boundary: authn/authz on API routes and server
   actions, input validation at the boundary, webhook signature verification,
   SSRF, CORS, response/log data leaks, and server-held signing keys.
-severity-guidance: |
-  Unauthenticated mutating endpoint, server key signing unvalidated client
-  input, or state-mutating webhook without signature verification → critical.
-  IDOR, unvalidated body/params feeding a DB or chain call, SSRF → high.
-  Missing rate limit on an expensive endpoint, permissive CORS → medium.
 ---
 
 # API Security

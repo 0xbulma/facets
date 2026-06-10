@@ -23,15 +23,30 @@ log() { [ "$VERBOSE" = "1" ] && echo "[local setup] $*" >&2; return 0; }
 # Single-instance lock. The SessionStart hook backgrounds this script, so two
 # sessions starting close together would otherwise run duplicate npx installs
 # in parallel (both pass the per-skill existence check before either finishes).
-# mkdir is atomic and portable (no flock on macOS). A SIGKILL can leave a stale
-# lock in $TMPDIR until reboot/cleanup — worst case the next run skips; rerun
-# /local:setup after removing the dir if that happens.
+# mkdir is atomic and portable (no flock on macOS). Stale locks self-heal:
+# a lock whose recorded holder PID is dead, or whose mtime is >60 min old
+# (SIGKILL/crash leaves no trap), is removed and re-taken — so a later
+# SessionStart or /local:setup run recovers without manual cleanup.
 LOCKDIR="${TMPDIR:-/tmp}/claude-local-install-prereqs.lock"
-if ! mkdir "$LOCKDIR" 2>/dev/null; then
+acquire_lock() {
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    echo $$ > "$LOCKDIR/pid"
+    return 0
+  fi
+  holder=$(cat "$LOCKDIR/pid" 2>/dev/null)
+  if { [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; } \
+     || [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    log "removing stale lock (holder ${holder:-unknown} gone or lock expired)"
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null && echo $$ > "$LOCKDIR/pid" && return 0
+  fi
+  return 1
+}
+if ! acquire_lock; then
   log "another install-prereqs run is active — skipping"
   exit 0
 fi
-trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
 # Bail out gracefully if the user has no npx (no Node).
 if ! command -v npx >/dev/null 2>&1; then

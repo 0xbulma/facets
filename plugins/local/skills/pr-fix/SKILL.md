@@ -330,6 +330,7 @@ When `<HAS_WEB3>` is true (from Step 4.5), bump severity to **CRITICAL** for any
 - Hex calldata (`0x[a-fA-F0-9]{8,}`) outside an obvious test fixture.
 - An import of `viem`, `wagmi`, `ethers`, or any project-specific Web3 SDK adjacent to the commented line.
 - A contract interaction call (`readContract`, `writeContract`, `simulateContract`, `useContractRead`, `useContractWrite`, `signTypedData`, `permit*`).
+- A target file with the `.sol` extension (vendored Solidity contract surface).
 
 Exception: if the comment language clearly says **"nit"**, **"consider"**, **"optional"**, or **"style"**, do NOT bump — keep the parsed severity. The bump is for substantive comments touching contract surface area.
 
@@ -417,7 +418,7 @@ For each file with findings, build a complete understanding:
 
      For each fix-applicable agent whose trigger condition matches the current file's surface, Read the agent file in full and use the body — particularly the `## Fix rubric` section — as the rubric for the confidence gate.
 
-     Today this set is `web3.md` (when `<HAS_WEB3>` and the file imports a contract-interaction library or contains contract addresses/calldata), `ci-security.md` (when `<HAS_WORKFLOWS>`), `release-integrity.md` (when `<HAS_RELEASE>`), `dependencies.md` (when `<HAS_DEPS>`), and `docs.md` (when the fix touches `AGENTS.md` / `CLAUDE.md` itself, or any file under `.agents/personas/` / `.claude/agents/` / similar). As new fix-applicable agents land in the engine, this loop picks them up automatically — no edit to this skill required.
+     Today this set is `web3.md` (when `<HAS_WEB3>` and the file imports a contract-interaction library, contains contract addresses/calldata, or has the `.sol` extension), `ci-security.md` (when `<HAS_WORKFLOWS>`), `release-integrity.md` (when `<HAS_RELEASE>`), `dependencies.md` (when `<HAS_DEPS>`), and `docs.md` (when the fix touches `AGENTS.md` / `CLAUDE.md` itself, or any file under `.agents/personas/` / `.claude/agents/` / similar). As new fix-applicable agents land in the engine, this loop picks them up automatically — no edit to this skill required.
 
      For Web3 fixes specifically, also re-read the Web3 portion of `<PROJECT_CONTEXT>` plus any `SECURITY.md` / `audits/*.md` discovered. For doc / spec-layering fixes, also confirm the bidirectional-backlink invariant: changes to a persona's `applies:` frontmatter must atomically update the corresponding callout in the spec, and vice versa. A one-sided fix is incomplete.
 

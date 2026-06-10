@@ -94,6 +94,8 @@ Build a JSON object at `/tmp/local:pr-review-gh-<PR_NUMBER>-comments.json`:
 
 Always use `"event": "COMMENT"` — never auto-approve or request changes.
 
+**Runtime-sentinel findings never go in `comments[]`.** A finding with `file: "runtime"` (the `runtime-validation` sentinel for issues with no source location) has no valid `path`/`line` for the GitHub reviews API — including one would 422 the entire POST and collapse every inline comment into the fallback. Route those findings into the review `body` instead, as a `### Runtime findings` section (one `**[SEVERITY]** <description>` line each); only real-path findings go inline.
+
 ### Body format
 
 ```
@@ -222,7 +224,7 @@ CYCLE START:
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
 6. POST REVIEW to GitHub as a single atomic call:
-   Build a JSON file at /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array.
+   Build a JSON file at /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Findings with file=="runtime" go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path 422s the whole POST).
    If ${CYCLE_FAILED_AGENTS} > 0, prepend "> WARNING: ${CYCLE_FAILED_AGENTS} of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete." to the body.
    Run: gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/reviews --method POST --input /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json — abort cycle if non-zero exit.
    Clean up: rm -f /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json
