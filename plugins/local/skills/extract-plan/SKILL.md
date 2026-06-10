@@ -13,6 +13,10 @@ Read a technical document (TIB, ADR, RFC, design doc, etc.) and generate a Linea
 - `$ARGUMENTS` should contain: `<doc-file-path> [linear-project-name-or-id]`
 - Example: `/local:extract-plan docs/tibs/TIB-2026-04-30-rate-limiting.md "Rate Limiting"`
 
+## Pre-conditions
+
+Requires the **Linear MCP server** (`mcp__linear__*` tools). If those tools are not available in the session, stop before Step 3 and tell the user to connect Linear (e.g. `claude mcp add linear`) — do not fabricate issue IDs or fall back to another tracker.
+
 ## Instructions
 
 You are converting a technical document into an actionable Linear project plan with milestones and issues. The goal is to bridge the gap between a written decision or design and trackable implementation work.

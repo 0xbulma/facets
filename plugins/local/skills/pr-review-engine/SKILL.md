@@ -178,7 +178,7 @@ For every spawned sub-agent, the dispatcher **must** assemble the launch prompt 
 1. The agent file body, verbatim (its frontmatter + Markdown prose).
 2. `PROJECT_CONTEXT` from Step 4 (root + per-package docs, lint contract).
 3. The diff in full (committed + uncommitted when `DIFF_SOURCE=local`).
-4. The full content of changed files (read from local FS via the Read tool).
+4. The full content of changed files (read from local FS via the Read tool). **Exception — lockfiles and generated artifacts** (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb`, `*.min.js`, `*.map`, files in `dist/`/`build/`/`.next/`): inject their full content only into the `dependencies` agent; every other agent gets just the diff hunks for those files plus a one-line note (`<path>: content omitted — lockfile/generated`). These files are thousands of lines of no review value to non-dependency personas and dominate the per-agent token bill on routine dep bumps.
 5. The conditional flag values (`HAS_REACT`, `HAS_WEB3`, `HAS_WORKFLOWS`, etc.).
 6. `CHANGED_LINES` serialized as JSON: `{ "<path>": [<line>, <line>, ...] }`.
 7. **The "Shared per-agent contract" bullets below, copied verbatim into the prompt.** Without this injection, agents won't know to emit the schema and Step 6.2 will route every finding as malformed.
