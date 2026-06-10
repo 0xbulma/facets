@@ -117,7 +117,9 @@ Use the Glob tool: `**/AGENTS.md` and `**/CLAUDE.md`. Filter to paths that prefi
 
 ### Detect framework / domain signals (used by Step 5 conditional agents)
 
-Compute boolean flags from the diff and from changed files' content. Flag names are bare (no `< >`); they're variable identifiers, not template placeholders:
+Compute boolean flags from the diff and from changed files' content. Flag names are bare (no `< >`); they're variable identifiers, not template placeholders.
+
+**Doc files are prose, not surfaces:** content-based detector legs (import / string / pattern matches like "any file containing `npm publish`" or a `0x…` address) never count matches found inside `*.md` / `*.mdx` / `*.txt` files — a documented example command must not launch an agent whose own scope rules will predictably return `[]`. Path-based legs (file-path patterns like `.github/workflows/**`, lockfiles, `vercel.json`, `.sol`) are unaffected.
 
 - `HAS_WEB3` — true if any changed file imports a contract-interaction library (`viem`, `wagmi`, `ethers`, `web3.js`), contains contract address constants (`0x[a-fA-F0-9]{40}`), contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`, `signTypedData`, `permit*`), OR has the `.sol` extension (vendored Solidity contracts).
 - `HAS_REACT` — true if any changed file has extension `.jsx`/`.tsx`, OR imports `react`, `react-dom`, `next/*`, `@tanstack/react-*`, `@apollo/client`, OR contains `'use client'` / `'use server'` directives.
@@ -170,7 +172,7 @@ Agent specs live in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
    - `kind: baseline` → always launch.
    - `kind: conditional` → parse the `trigger:` value, look up each named flag from Step 4, evaluate the boolean expression. Compound triggers like `HAS_TAILWIND OR HAS_STYLING` are evaluated as written (split on whitespace, look up each flag, apply `OR` / `AND`).
 3. **Apply the caller's exclusion list.** If the caller provided `EXCLUDE_AGENTS` (a list of agent names), drop those from the launch set. Used by orchestrators like `/local:tib-ship` to suppress an agent during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
-3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs). Conditionals are kept only when their flag fired from a **path-based** detector (e.g. a changed `.changeset/**`, `vercel.json`, lockfile, workflow, or `.sol` path); a flag whose only evidence is a content match inside the doc files themselves (a fenced `npm publish` example, a documented `0x…` address, a `streamText` mention) does NOT count as fired on a doc-only diff — documented example commands are prose, not surfaces, and launching an agent to receive a predictable `[]` is pure cost. Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
+3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs). Conditionals need no special handling here: Step 4's content-based detectors already ignore matches inside doc files, so on a doc-only diff only path-based triggers can fire. Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
 4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
 5. Track `TOTAL_AGENTS_LAUNCHED` = count of agents actually launched (baseline + any fired conditionals − excluded).
 
@@ -245,7 +247,7 @@ Conditional (fire only when their trigger flag is true, 10 agents):
 - `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation, vendored `.sol` diffs.
 - `react-next.md` — fires when `HAS_REACT`. Loads marketplace rubrics (see `references/marketplace-rubrics.md`).
 - `styling.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. Tailwind/tokens, styling-architecture consistency.
-- `accessibility.md` — fires when `HAS_STYLING OR HAS_REACT` (`HAS_TAILWIND` implies `HAS_REACT`, so it adds nothing here). ARIA, keyboard, focus, alt text — a new interactive component needs the a11y eye even when no styling surface changed.
+- `accessibility.md` — fires when `HAS_STYLING OR HAS_REACT`. ARIA, keyboard, focus, alt text.
 - `ci-security.md` — fires when `HAS_WORKFLOWS`. Workflow injection, action pinning, `permissions:` scopes, secret exposure.
 - `release-integrity.md` — fires when `HAS_RELEASE`. Publish flow, provenance, release-commit signing, Changesets wiring.
 - `dependencies.md` — fires when `HAS_DEPS`. Lockfile drift, dependency hygiene, `.npmrc`, typosquats.

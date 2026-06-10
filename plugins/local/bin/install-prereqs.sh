@@ -23,22 +23,20 @@ log() { [ "$VERBOSE" = "1" ] && echo "[local setup] $*" >&2; return 0; }
 # Single-instance lock. The SessionStart hook backgrounds this script, so two
 # sessions starting close together would otherwise run duplicate npx installs
 # in parallel (both pass the per-skill existence check before either finishes).
-# mkdir is atomic and portable (no flock on macOS). Stale locks self-heal:
-# a lock whose recorded holder PID is dead, or whose mtime is >60 min old
-# (SIGKILL/crash leaves no trap), is removed and re-taken — so a later
-# SessionStart or /local:setup run recovers without manual cleanup.
+# mkdir is atomic and portable (no flock on macOS). Staleness is TTL-only: a
+# lock older than 60 minutes (crashed / SIGKILLed holder — no trap runs on
+# SIGKILL) is reclaimed by atomically renaming it away, so exactly one
+# contender can win the reclaim; everyone else skips. Worst case after a
+# crash: installs are delayed one TTL, then self-heal.
 LOCKDIR="${TMPDIR:-/tmp}/claude-local-install-prereqs.lock"
 acquire_lock() {
-  if mkdir "$LOCKDIR" 2>/dev/null; then
-    echo $$ > "$LOCKDIR/pid"
-    return 0
-  fi
-  holder=$(cat "$LOCKDIR/pid" 2>/dev/null)
-  if { [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; } \
-     || [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
-    log "removing stale lock (holder ${holder:-unknown} gone or lock expired)"
-    rm -rf "$LOCKDIR"
-    mkdir "$LOCKDIR" 2>/dev/null && echo $$ > "$LOCKDIR/pid" && return 0
+  mkdir "$LOCKDIR" 2>/dev/null && return 0
+  if [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    log "reclaiming stale lock (older than 60 min)"
+    # Atomic claim: only one racer's mv succeeds; losers skip.
+    mv "$LOCKDIR" "$LOCKDIR.stale.$$" 2>/dev/null || return 1
+    rm -rf "$LOCKDIR.stale.$$"
+    mkdir "$LOCKDIR" 2>/dev/null && return 0
   fi
   return 1
 }
@@ -46,7 +44,11 @@ if ! acquire_lock; then
   log "another install-prereqs run is active — skipping"
   exit 0
 fi
-trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT INT TERM
+# Cleanup exactly once, via EXIT; signal traps must terminate (a non-exiting
+# signal handler would resume the script after deleting the lock).
+trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Bail out gracefully if the user has no npx (no Node).
 if ! command -v npx >/dev/null 2>&1; then
