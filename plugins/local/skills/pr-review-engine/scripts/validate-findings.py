@@ -101,6 +101,23 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
 EMPTY_ARRAY_LINE_RE = re.compile(r"(?m)^\s*\[\]\s*$")
 
 
+def _unwrap_dict(d: dict):
+    """The dict rules, in exactly one place (both the strict-parse and the
+    object-led branches route here — a one-sided amendment of these rules
+    is how false-clean/false-fail asymmetries are born):
+
+    - the {"agent_error": ...} sentinel stays a failure;
+    - a dict whose sole value is a list unwraps to that list;
+    - anything else (sibling keys may be declaring failure) is returned
+      as-is for main() to reject toward agent-failed.
+    """
+    if "agent_error" not in d and len(d) == 1:
+        (sole,) = d.values()
+        if isinstance(sole, list):
+            return sole
+    return d
+
+
 def _parse_findings_text(text: str):
     """Parse agent output tolerantly.
 
@@ -108,26 +125,25 @@ def _parse_findings_text(text: str):
     verification-style context tend to wrap it in prose (observed in 6 of 26
     dogfood runs, persisting across prompt-hardening attempts). Strategy:
 
-    1. Strict parse. A list wins. The {"agent_error": ...} sentinel also
-       wins — a declared failure is never mined for recoverable findings.
-       The sentinel wins even when prose-wrapped: any `"agent_error":` in
-       the raw text blocks the slice fallback entirely.
-    2. Any other dict is unwrapped only when the list is its SOLE value
-       (e.g. {"findings": [...]}, empty or not). Dicts with sibling keys
-       are rejected — a sibling like {"error": ..., "findings": []} may be
-       declaring failure, and ambiguity must fail toward agent-failed.
-    3. Unparseable text whose first JSON-ish character is '{' (object-led)
-       gets the dict rules applied to the outermost {...} slice — and never
-       falls through to the array slice, because mining an embedded array
-       out of an object wrapper is exactly how a prose-wrapped
-       {"error": ..., "partial_findings": [...]} would masquerade as clean.
-    4. Otherwise: slice from the first '[' to the last ']' and retry.
-       Accept a non-empty slice only when every element is an object; accept
-       an empty array only when a literal `[]` stands alone on a line.
-       Everything else (incidental brackets like `string[]` or `[ ]`
-       checkboxes, citation lists like `[1, 2]`, truncated arrays) returns
-       the strict-parse value (None or a non-array for main() to reject) —
-       a false failure is recoverable, a false clean is not.
+    1. Strict parse. A list wins. Dicts go through the _unwrap_dict rules
+       (sentinel stays a failure; sole-list value unwraps; sibling keys
+       reject). The sentinel wins even when prose-wrapped: any
+       `"agent_error":` in the raw text blocks the slice fallback entirely.
+    2. Unparseable text whose first JSON-ish character is '{' (object-led)
+       gets the same _unwrap_dict rules applied to the outermost {...}
+       slice — and never falls through to the array slice, because mining
+       an embedded array out of an object wrapper is exactly how a
+       prose-wrapped {"error": ..., "partial_findings": [...]} would
+       masquerade as clean.
+    3. Otherwise (array-led): slice from the first '[' to the last ']' and
+       retry — but an object trailing the array ('[...]\\n{"error": ...}')
+       makes the payload ambiguous and rejects. Accept a non-empty slice
+       only when every element is an object; accept an empty array only
+       when a literal `[]` stands alone on a line. Everything else
+       (incidental brackets like `string[]` or `[ ]` checkboxes, citation
+       lists like `[1, 2]`, truncated arrays) returns the strict-parse
+       value (None or a non-array for main() to reject) — a false failure
+       is recoverable, a false clean is not.
     """
     parsed = None
     try:
@@ -137,13 +153,7 @@ def _parse_findings_text(text: str):
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):
-        if "agent_error" in parsed:
-            return parsed
-        if len(parsed) == 1:
-            (sole,) = parsed.values()
-            if isinstance(sole, list):
-                return sole
-        return parsed
+        return _unwrap_dict(parsed)
     # A prose-wrapped sentinel is still a declared failure — never mine it
     # for embedded findings.
     if re.search(r'"agent_error"\s*:', text):
@@ -161,14 +171,14 @@ def _parse_findings_text(text: str):
             except json.JSONDecodeError:
                 pass
         if isinstance(obj, dict):
-            if "agent_error" not in obj and len(obj) == 1:
-                (sole,) = obj.values()
-                if isinstance(sole, list):
-                    return sole
-            return obj
+            return _unwrap_dict(obj)
         return parsed
     start, end = astart, text.rfind("]")
     if start != -1 and end > start:
+        # Mirror of the object-led rule: an object trailing the accepted
+        # array may be declaring failure — ambiguity rejects.
+        if text.find("{", end + 1) != -1:
+            return parsed
         try:
             sliced = json.loads(text[start:end + 1])
         except json.JSONDecodeError:

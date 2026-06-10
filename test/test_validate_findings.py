@@ -442,6 +442,58 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertEqual(len(out["kept"]), 1)
             self.assertNotIn("error", out)
 
+    def test_trailing_failure_object_after_empty_array_is_rejected(self):
+        # Mirror of the object-led rule: a failure object TRAILING the array
+        # must not be dropped — '[]\n{"error": ...}' is a declared failure,
+        # not a clean run.
+        payload = '[]\n{"error": "context limit reached, review incomplete"}'
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_trailing_failure_object_after_findings_array_is_rejected(self):
+        # Partial findings followed by a declared failure must not be
+        # reported as a complete successful run with the error discarded.
+        payload = ('[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: x. FIX: y."}]\n'
+                   '{"error": "ran out of context after file 3 of 21"}')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_object_led_unparseable_outer_slice_is_never_mined(self):
+        # Pins the never-fall-through guarantee on the parse-FAILURE path:
+        # a stray brace makes the outer {...} slice unparseable, and the
+        # embedded partials must still not be mined by the array slice.
+        payload = ('I ran out {of context} midway.\n'
+                   '{"error": "x", "partial_findings": '
+                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: x. FIX: y."}]}')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
     def test_ambiguous_multi_list_dict_is_rejected(self):
         # A dict with several list values is ambiguous — no guessing which
         # one is the findings array; reject toward agent-failed.
