@@ -219,8 +219,9 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertNotIn("error", out)
 
     def test_object_wrapped_array_is_recovered(self):
-        # {"findings": [...]} strict-parses as a dict; the slice fallback
-        # must still recover the inner array instead of failing the agent.
+        # {"findings": [...]} strict-parses as a dict; the structural unwrap
+        # (sole-list-value rule) must recover the inner array instead of
+        # failing the agent.
         wrapped = json.dumps({"findings": [
             {"severity": "high", "file": "src/X.ts", "line": 10,
              "description": "WHAT: thing. FIX: change."}]})
@@ -238,7 +239,8 @@ class ValidateFindingsTests(unittest.TestCase):
     def test_incidental_brackets_in_failure_prose_do_not_recover_as_clean(self):
         # Failure prose containing `string[]` slices to a valid empty array;
         # accepting it would report a failed agent as a clean zero-finding
-        # run. The empty-array recovery requires a '[' that opens a line.
+        # run. The empty-array recovery requires a literal `[]` standing
+        # alone on a line.
         prose = "I could not complete the review: the string[] type in the diff failed to parse."
         with tempfile.TemporaryDirectory() as td:
             cl = Path(td) / "cl.json"
@@ -331,6 +333,58 @@ class ValidateFindingsTests(unittest.TestCase):
             self.assertNotIn("error", out)
             self.assertEqual(out["kept"], [])
             self.assertEqual(out["failed"], [])
+
+    def test_dict_with_failure_sibling_is_rejected(self):
+        # {"error": ..., "findings": []} must NOT unwrap as clean — the
+        # sibling key may be declaring failure; only a sole-list dict
+        # qualifies for the structural unwrap.
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input='{"error": "could not parse the diff", "findings": []}',
+                capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_dict_with_failure_sibling_and_partials_is_rejected(self):
+        # A declared failure carrying partial findings must stay a failure,
+        # not get mined as a successful run.
+        payload = json.dumps({"error": "ran out of context", "partial_findings": [
+            {"severity": "high", "file": "src/X.ts", "line": 10,
+             "description": "WHAT: x. FIX: y."}]})
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_prose_wrapped_agent_error_is_never_mined(self):
+        # The sentinel must win even when prose-wrapped: strict parse fails
+        # on the prose, but the text-level "agent_error": detection blocks
+        # the slice fallback from mining the embedded array.
+        payload = ('I hit a context overflow partway through.\n\n'
+                   '{"agent_error": "context overflow", "partial": '
+                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: x. FIX: y."}]}')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
 
     def test_ambiguous_multi_list_dict_is_rejected(self):
         # A dict with several list values is ambiguous — no guessing which

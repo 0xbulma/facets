@@ -110,9 +110,12 @@ def _parse_findings_text(text: str):
 
     1. Strict parse. A list wins. The {"agent_error": ...} sentinel also
        wins — a declared failure is never mined for recoverable findings.
-    2. Any other dict is unwrapped structurally: when exactly one of its
-       values is a list (e.g. {"findings": [...]}, empty or not), that list
-       is the result. Ambiguous dicts fall through to rejection.
+       The sentinel wins even when prose-wrapped: any `"agent_error":` in
+       the raw text blocks the slice fallback entirely.
+    2. Any other dict is unwrapped only when the list is its SOLE value
+       (e.g. {"findings": [...]}, empty or not). Dicts with sibling keys
+       are rejected — a sibling like {"error": ..., "findings": []} may be
+       declaring failure, and ambiguity must fail toward agent-failed.
     3. Unparseable text: slice from the first '[' to the last ']' and retry.
        Accept a non-empty slice only when every element is an object; accept
        an empty array only when a literal `[]` stands alone on a line.
@@ -131,9 +134,14 @@ def _parse_findings_text(text: str):
     if isinstance(parsed, dict):
         if "agent_error" in parsed:
             return parsed
-        lists = [v for v in parsed.values() if isinstance(v, list)]
-        if len(lists) == 1:
-            return lists[0]
+        if len(parsed) == 1:
+            (sole,) = parsed.values()
+            if isinstance(sole, list):
+                return sole
+        return parsed
+    # A prose-wrapped sentinel is still a declared failure — never mine it
+    # for embedded findings.
+    if re.search(r'"agent_error"\s*:', text):
         return parsed
     start, end = text.find("["), text.rfind("]")
     if start != -1 and end > start:
