@@ -116,7 +116,12 @@ def _parse_findings_text(text: str):
        (e.g. {"findings": [...]}, empty or not). Dicts with sibling keys
        are rejected — a sibling like {"error": ..., "findings": []} may be
        declaring failure, and ambiguity must fail toward agent-failed.
-    3. Unparseable text: slice from the first '[' to the last ']' and retry.
+    3. Unparseable text whose first JSON-ish character is '{' (object-led)
+       gets the dict rules applied to the outermost {...} slice — and never
+       falls through to the array slice, because mining an embedded array
+       out of an object wrapper is exactly how a prose-wrapped
+       {"error": ..., "partial_findings": [...]} would masquerade as clean.
+    4. Otherwise: slice from the first '[' to the last ']' and retry.
        Accept a non-empty slice only when every element is an object; accept
        an empty array only when a literal `[]` stands alone on a line.
        Everything else (incidental brackets like `string[]` or `[ ]`
@@ -143,7 +148,26 @@ def _parse_findings_text(text: str):
     # for embedded findings.
     if re.search(r'"agent_error"\s*:', text):
         return parsed
-    start, end = text.find("["), text.rfind("]")
+    # Object-led wrapped payload: apply the dict rules to the outermost
+    # {...} slice, and never fall through to the array slice — mining an
+    # embedded array out of an object wrapper is the false-clean route.
+    ostart, astart = text.find("{"), text.find("[")
+    if ostart != -1 and (astart == -1 or ostart < astart):
+        oend = text.rfind("}")
+        obj = None
+        if oend > ostart:
+            try:
+                obj = json.loads(text[ostart:oend + 1])
+            except json.JSONDecodeError:
+                pass
+        if isinstance(obj, dict):
+            if "agent_error" not in obj and len(obj) == 1:
+                (sole,) = obj.values()
+                if isinstance(sole, list):
+                    return sole
+            return obj
+        return parsed
+    start, end = astart, text.rfind("]")
     if start != -1 and end > start:
         try:
             sliced = json.loads(text[start:end + 1])

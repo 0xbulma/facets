@@ -386,6 +386,62 @@ class ValidateFindingsTests(unittest.TestCase):
             out = json.loads(proc.stdout)
             self.assertIn("error", out)
 
+    def test_prose_wrapped_failure_sibling_dict_is_never_mined(self):
+        # Composition gap closed in iteration 8: a prose-wrapped dict with a
+        # failure sibling (no agent_error key) must not have its embedded
+        # partials mined by the array slice — object-led payloads get the
+        # dict rules and never fall through.
+        payload = ('I ran out of context.\n'
+                   '{"error": "ran out of context", "partial_findings": '
+                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: x. FIX: y."}]}')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_fenced_failure_sibling_dict_is_never_mined(self):
+        # Same payload inside a markdown code fence — identical rule.
+        payload = ('Partial results below.\n```json\n'
+                   '{"error": "truncated", "partial_findings": '
+                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
+                   '"description": "WHAT: x. FIX: y."}]}\n```\n')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
+    def test_prose_wrapped_sole_list_dict_is_recovered(self):
+        # The object-led rule cuts both ways: a prose-wrapped
+        # {"findings": [...]} (sole list value, no failure sibling) is
+        # recovered via the same dict rules.
+        payload = ('Here are my results.\n'
+                   '{"findings": [{"severity": "high", "file": "src/X.ts", '
+                   '"line": 10, "description": "WHAT: x. FIX: y."}]}')
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text(json.dumps({"src/X.ts": [10]}))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertEqual(len(out["kept"]), 1)
+            self.assertNotIn("error", out)
+
     def test_ambiguous_multi_list_dict_is_rejected(self):
         # A dict with several list values is ambiguous — no guessing which
         # one is the findings array; reject toward agent-failed.
