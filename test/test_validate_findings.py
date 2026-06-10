@@ -494,6 +494,39 @@ class ValidateFindingsTests(unittest.TestCase):
             out = json.loads(proc.stdout)
             self.assertIn("error", out)
 
+    def test_failure_named_sole_key_is_never_unwrapped(self):
+        # {"error": []} / {"partial_findings": [...]} ARE the failure
+        # declaration — the sole-key unwrap must not launder them clean.
+        for payload in ('{"error": []}',
+                        '{"errors": []}',
+                        '{"partial_findings": [{"severity": "high", '
+                        '"file": "src/X.ts", "line": 10, '
+                        '"description": "WHAT: x. FIX: y."}]}'):
+            with tempfile.TemporaryDirectory() as td:
+                cl = Path(td) / "cl.json"
+                cl.write_text(json.dumps({"src/X.ts": [10]}))
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                     "--repo-root", td],
+                    input=payload, capture_output=True, text=True, check=False,
+                )
+                out = json.loads(proc.stdout)
+                self.assertIn("error", out, f"payload not rejected: {payload}")
+
+    def test_prose_wrapped_failure_named_sole_key_is_never_unwrapped(self):
+        # Same rule on the object-led path.
+        payload = 'Hit the limit.\n{"partial_findings": []}'
+        with tempfile.TemporaryDirectory() as td:
+            cl = Path(td) / "cl.json"
+            cl.write_text("{}")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
+                 "--repo-root", td],
+                input=payload, capture_output=True, text=True, check=False,
+            )
+            out = json.loads(proc.stdout)
+            self.assertIn("error", out)
+
     def test_ambiguous_multi_list_dict_is_rejected(self):
         # A dict with several list values is ambiguous — no guessing which
         # one is the findings array; reject toward agent-failed.

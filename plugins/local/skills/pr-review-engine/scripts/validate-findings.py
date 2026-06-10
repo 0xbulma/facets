@@ -101,19 +101,29 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
 EMPTY_ARRAY_LINE_RE = re.compile(r"(?m)^\s*\[\]\s*$")
 
 
+# Keys whose NAME declares failure or partiality: {"error": []} or
+# {"partial_findings": [...]} IS the failure declaration — unwrapping it
+# would launder a declared failure into a clean run.
+FAILURE_KEY_RE = re.compile(r"error|fail|partial|incomplete|truncat|skip",
+                            re.IGNORECASE)
+
+
 def _unwrap_dict(d: dict):
     """The dict rules, in exactly one place (both the strict-parse and the
     object-led branches route here — a one-sided amendment of these rules
     is how false-clean/false-fail asymmetries are born):
 
     - the {"agent_error": ...} sentinel stays a failure;
-    - a dict whose sole value is a list unwraps to that list;
+    - a dict whose sole value is a list unwraps to that list — unless the
+      sole key's own name signals failure/partiality (FAILURE_KEY_RE), in
+      which case the dict IS the failure declaration and stays one;
     - anything else (sibling keys may be declaring failure) is returned
       as-is for main() to reject toward agent-failed.
     """
     if "agent_error" not in d and len(d) == 1:
+        (key,) = d.keys()
         (sole,) = d.values()
-        if isinstance(sole, list):
+        if isinstance(sole, list) and not FAILURE_KEY_RE.search(key):
             return sole
     return d
 
