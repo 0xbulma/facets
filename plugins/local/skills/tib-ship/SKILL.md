@@ -1,6 +1,6 @@
 ---
 name: tib-ship
-version: 0.2.2
+version: 0.3.0
 description: Execute a TIB end-to-end (yolo). Plans TIPs, branches, implements per-block test-driven (format → lint → typecheck → test → commit per phase), then loops `pr-review-local` → fix → re-review until the branch is clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops short of pushing — the user creates the PR. Use when user says /local:tib-ship, "ship this TIB", "yolo this TIB", "implement and self-review", or "execute the TIB end to end".
 ---
 
