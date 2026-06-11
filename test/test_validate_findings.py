@@ -46,6 +46,32 @@ def _run(findings, changed_lines, repo_root=None, schema_only=False,
         return json.loads(proc.stdout)
 
 
+def _run_text(text, changed_lines, repo_root=None):
+    """Invoke validate-findings.py with RAW stdin text (no json.dumps) and
+    return its parsed JSON output. The tolerant-parser tests feed prose /
+    malformed payloads that must reach the script verbatim."""
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        cl_path = td_path / "cl.json"
+        cl_path.write_text(json.dumps(changed_lines))
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT),
+             "--changed-lines", str(cl_path),
+             "--repo-root", str(repo_root or td_path)],
+            input=text, capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(f"non-zero exit: {proc.stderr}")
+        return json.loads(proc.stdout)
+
+
+# Shared fixtures for the tolerant-parser tests: one valid finding (as a JSON
+# fragment) and the changed-lines map that keeps it in scope.
+FINDING = ('{"severity": "high", "file": "src/X.ts", "line": 10, '
+           '"description": "WHAT: x. FIX: y."}')
+CL_X = {"src/X.ts": [10]}
+
+
 class ValidateFindingsTests(unittest.TestCase):
 
     def test_kept_finding_with_valid_schema_and_in_range_line(self):
@@ -188,359 +214,162 @@ class ValidateFindingsTests(unittest.TestCase):
         # Agents sometimes wrap their JSON array in narrative despite the
         # output contract (6 of 26 dogfood runs). The tolerant parser slices
         # from the first '[' to the last ']' so the findings still count.
-        wrapped = ('Analysis complete. I verified everything carefully.\n\n'
-                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: thing. FIX: change."}]\n\nDone.')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=wrapped, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertEqual(len(out["kept"]), 1)
-            self.assertEqual(out["counts"]["schema"], 0)
+        out = _run_text('Analysis complete. I verified everything carefully.'
+                        f'\n\n[{FINDING}]\n\nDone.', CL_X)
+        self.assertEqual(len(out["kept"]), 1)
+        self.assertEqual(out["counts"]["schema"], 0)
 
     def test_prose_wrapped_empty_array_is_recovered(self):
-        wrapped = "All checks pass, nothing to report.\n\n[]\n"
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=wrapped, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertEqual(out["kept"], [])
-            self.assertEqual(out["failed"], [])
-            self.assertNotIn("error", out)
+        out = _run_text("All checks pass, nothing to report.\n\n[]\n", {})
+        self.assertEqual(out["kept"], [])
+        self.assertEqual(out["failed"], [])
+        self.assertNotIn("error", out)
 
     def test_object_wrapped_array_is_recovered(self):
         # {"findings": [...]} strict-parses as a dict; the structural unwrap
         # (sole-list-value rule) must recover the inner array instead of
         # failing the agent.
-        wrapped = json.dumps({"findings": [
-            {"severity": "high", "file": "src/X.ts", "line": 10,
-             "description": "WHAT: thing. FIX: change."}]})
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=wrapped, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertEqual(len(out["kept"]), 1)
+        out = _run_text('{"findings": [' + FINDING + ']}', CL_X)
+        self.assertEqual(len(out["kept"]), 1)
 
     def test_incidental_brackets_in_failure_prose_do_not_recover_as_clean(self):
         # Failure prose containing `string[]` slices to a valid empty array;
         # accepting it would report a failed agent as a clean zero-finding
         # run. The empty-array recovery requires a literal `[]` standing
         # alone on a line.
-        prose = "I could not complete the review: the string[] type in the diff failed to parse."
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=prose, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text("I could not complete the review: the string[] type "
+                        "in the diff failed to parse.", {})
+        self.assertIn("error", out)
 
     def test_truncated_array_returns_structured_error(self):
         # Brackets present but the slice still doesn't parse (token-limit
         # truncation): must hit the error path, never a silent clean.
-        truncated = 'Truncated: [{"severity": "high", "file": "x.ts", "line": 1]'
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=truncated, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
-            self.assertIn("invalid findings JSON", out["error"])
+        out = _run_text(
+            'Truncated: [{"severity": "high", "file": "x.ts", "line": 1]', {})
+        self.assertIn("error", out)
+        self.assertIn("invalid findings JSON", out["error"])
 
     def test_checkbox_line_does_not_recover_as_clean(self):
         # A markdown checkbox opening a line slices to `[ ]` (a valid empty
         # array) — the literal-standalone-[] rule must reject it, or failure
         # prose becomes a clean zero-finding run.
-        prose = "I could not complete the review. Remaining work:\n[ ] parse the diff hunks"
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=prose, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text("I could not complete the review. Remaining work:\n"
+                        "[ ] parse the diff hunks", {})
+        self.assertIn("error", out)
 
     def test_agent_error_payload_is_never_recovered_as_findings(self):
         # The sentinel wins over every recovery path: a declared failure
         # carrying an embedded findings-shaped array must stay a failure.
-        payload = json.dumps({"agent_error": "context overflow", "partial": [
-            {"severity": "high", "file": "src/X.ts", "line": 10,
-             "description": "WHAT: x. FIX: y."}]})
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('{"agent_error": "context overflow", "partial": ['
+                        + FINDING + ']}', CL_X)
+        self.assertIn("error", out)
 
     def test_non_object_array_slice_is_rejected(self):
         # Citation-style brackets slice to a valid array of non-objects
         # ([1, 2]); the all-object rule must route this to the error path.
-        prose = "I checked lines [1, 2] and the run failed midway."
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=prose, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
-            self.assertIn("invalid findings JSON", out["error"])
+        out = _run_text("I checked lines [1, 2] and the run failed midway.", {})
+        self.assertIn("error", out)
+        self.assertIn("invalid findings JSON", out["error"])
 
     def test_object_wrapped_empty_array_is_recovered_as_clean(self):
         # {"findings": []} is a fully valid clean result; the structural
         # unwrap must recover it instead of failing the agent.
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input='{"findings": []}', capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertNotIn("error", out)
-            self.assertEqual(out["kept"], [])
-            self.assertEqual(out["failed"], [])
+        out = _run_text('{"findings": []}', {})
+        self.assertNotIn("error", out)
+        self.assertEqual(out["kept"], [])
+        self.assertEqual(out["failed"], [])
 
     def test_dict_with_failure_sibling_is_rejected(self):
         # {"error": ..., "findings": []} must NOT unwrap as clean — the
         # sibling key may be declaring failure; only a sole-list dict
         # qualifies for the structural unwrap.
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input='{"error": "could not parse the diff", "findings": []}',
-                capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('{"error": "could not parse the diff", "findings": []}', {})
+        self.assertIn("error", out)
 
     def test_dict_with_failure_sibling_and_partials_is_rejected(self):
         # A declared failure carrying partial findings must stay a failure,
         # not get mined as a successful run.
-        payload = json.dumps({"error": "ran out of context", "partial_findings": [
-            {"severity": "high", "file": "src/X.ts", "line": 10,
-             "description": "WHAT: x. FIX: y."}]})
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('{"error": "ran out of context", "partial_findings": ['
+                        + FINDING + ']}', CL_X)
+        self.assertIn("error", out)
 
     def test_prose_wrapped_agent_error_is_never_mined(self):
         # The sentinel must win even when prose-wrapped: strict parse fails
         # on the prose, but the text-level "agent_error": detection blocks
         # the slice fallback from mining the embedded array.
-        payload = ('I hit a context overflow partway through.\n\n'
-                   '{"agent_error": "context overflow", "partial": '
-                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: x. FIX: y."}]}')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('I hit a context overflow partway through.\n\n'
+                        '{"agent_error": "context overflow", "partial": ['
+                        + FINDING + ']}', CL_X)
+        self.assertIn("error", out)
 
     def test_prose_wrapped_failure_sibling_dict_is_never_mined(self):
         # Composition gap closed in iteration 8: a prose-wrapped dict with a
         # failure sibling (no agent_error key) must not have its embedded
         # partials mined by the array slice — object-led payloads get the
         # dict rules and never fall through.
-        payload = ('I ran out of context.\n'
-                   '{"error": "ran out of context", "partial_findings": '
-                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: x. FIX: y."}]}')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('I ran out of context.\n'
+                        '{"error": "ran out of context", "partial_findings": ['
+                        + FINDING + ']}', CL_X)
+        self.assertIn("error", out)
 
     def test_fenced_failure_sibling_dict_is_never_mined(self):
         # Same payload inside a markdown code fence — identical rule.
-        payload = ('Partial results below.\n```json\n'
-                   '{"error": "truncated", "partial_findings": '
-                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: x. FIX: y."}]}\n```\n')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('Partial results below.\n```json\n'
+                        '{"error": "truncated", "partial_findings": ['
+                        + FINDING + ']}\n```\n', CL_X)
+        self.assertIn("error", out)
 
     def test_prose_wrapped_sole_list_dict_is_recovered(self):
         # The object-led rule cuts both ways: a prose-wrapped
         # {"findings": [...]} (sole list value, no failure sibling) is
         # recovered via the same dict rules.
-        payload = ('Here are my results.\n'
-                   '{"findings": [{"severity": "high", "file": "src/X.ts", '
-                   '"line": 10, "description": "WHAT: x. FIX: y."}]}')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertEqual(len(out["kept"]), 1)
-            self.assertNotIn("error", out)
+        out = _run_text('Here are my results.\n{"findings": [' + FINDING + ']}',
+                        CL_X)
+        self.assertEqual(len(out["kept"]), 1)
+        self.assertNotIn("error", out)
 
     def test_trailing_failure_object_after_empty_array_is_rejected(self):
         # Mirror of the object-led rule: a failure object TRAILING the array
         # must not be dropped — '[]\n{"error": ...}' is a declared failure,
         # not a clean run.
-        payload = '[]\n{"error": "context limit reached, review incomplete"}'
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('[]\n{"error": "context limit reached, review incomplete"}', {})
+        self.assertIn("error", out)
 
     def test_trailing_failure_object_after_findings_array_is_rejected(self):
         # Partial findings followed by a declared failure must not be
         # reported as a complete successful run with the error discarded.
-        payload = ('[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: x. FIX: y."}]\n'
-                   '{"error": "ran out of context after file 3 of 21"}')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('[' + FINDING + ']\n'
+                        '{"error": "ran out of context after file 3 of 21"}', CL_X)
+        self.assertIn("error", out)
 
     def test_object_led_unparseable_outer_slice_is_never_mined(self):
         # Pins the never-fall-through guarantee on the parse-FAILURE path:
         # a stray brace makes the outer {...} slice unparseable, and the
         # embedded partials must still not be mined by the array slice.
-        payload = ('I ran out {of context} midway.\n'
-                   '{"error": "x", "partial_findings": '
-                   '[{"severity": "high", "file": "src/X.ts", "line": 10, '
-                   '"description": "WHAT: x. FIX: y."}]}')
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text(json.dumps({"src/X.ts": [10]}))
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('I ran out {of context} midway.\n'
+                        '{"error": "x", "partial_findings": [' + FINDING + ']}',
+                        CL_X)
+        self.assertIn("error", out)
 
     def test_failure_named_sole_key_is_never_unwrapped(self):
         # {"error": []} / {"partial_findings": [...]} ARE the failure
         # declaration — the sole-key unwrap must not launder them clean.
         for payload in ('{"error": []}',
                         '{"errors": []}',
-                        '{"partial_findings": [{"severity": "high", '
-                        '"file": "src/X.ts", "line": 10, '
-                        '"description": "WHAT: x. FIX: y."}]}'):
-            with tempfile.TemporaryDirectory() as td:
-                cl = Path(td) / "cl.json"
-                cl.write_text(json.dumps({"src/X.ts": [10]}))
-                proc = subprocess.run(
-                    [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                     "--repo-root", td],
-                    input=payload, capture_output=True, text=True, check=False,
-                )
-                out = json.loads(proc.stdout)
-                self.assertIn("error", out, f"payload not rejected: {payload}")
+                        '{"partial_findings": [' + FINDING + ']}'):
+            out = _run_text(payload, CL_X)
+            self.assertIn("error", out, f"payload not rejected: {payload}")
 
     def test_prose_wrapped_failure_named_sole_key_is_never_unwrapped(self):
         # Same rule on the object-led path.
-        payload = 'Hit the limit.\n{"partial_findings": []}'
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input=payload, capture_output=True, text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('Hit the limit.\n{"partial_findings": []}', {})
+        self.assertIn("error", out)
 
     def test_ambiguous_multi_list_dict_is_rejected(self):
         # A dict with several list values is ambiguous — no guessing which
         # one is the findings array; reject toward agent-failed.
-        with tempfile.TemporaryDirectory() as td:
-            cl = Path(td) / "cl.json"
-            cl.write_text("{}")
-            proc = subprocess.run(
-                [sys.executable, str(SCRIPT), "--changed-lines", str(cl),
-                 "--repo-root", td],
-                input='{"findings": [], "skipped": []}', capture_output=True,
-                text=True, check=False,
-            )
-            out = json.loads(proc.stdout)
-            self.assertIn("error", out)
+        out = _run_text('{"findings": [], "skipped": []}', {})
+        self.assertIn("error", out)
 
     def test_invalid_findings_json_returns_structured_error(self):
         with tempfile.TemporaryDirectory() as td:
