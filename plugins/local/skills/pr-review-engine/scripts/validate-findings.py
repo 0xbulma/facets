@@ -136,9 +136,10 @@ def _parse_findings_text(text: str):
     dogfood runs, persisting across prompt-hardening attempts). Strategy:
 
     1. Strict parse. A list wins. Dicts go through the _unwrap_dict rules
-       (sentinel stays a failure; sole-list value unwraps; sibling keys
-       reject). The sentinel wins even when prose-wrapped: any
-       `"agent_error":` in the raw text blocks the slice fallback entirely.
+       (sentinel stays a failure; sole-list value unwraps unless the key is
+       failure-named per FAILURE_KEY_RE; sibling keys reject). The sentinel
+       wins even when prose-wrapped: any `"agent_error":` in the raw text
+       blocks the slice fallback entirely.
     2. Unparseable text whose first JSON-ish character is '{' (object-led)
        gets the same _unwrap_dict rules applied to the outermost {...}
        slice — and never falls through to the array slice, because mining
