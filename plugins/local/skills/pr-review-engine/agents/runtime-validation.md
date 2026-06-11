@@ -1,6 +1,6 @@
 ---
 name: runtime-validation
-version: 0.2.0
+version: 0.3.0
 kind: conditional
 trigger: HAS_ROUTE_UI
 applies: |
@@ -94,12 +94,14 @@ Same JSON shape as the static review personas:
     "severity": "critical" | "high" | "medium" | "low",
     "file": "<path or 'runtime'>",
     "line": <number or 0>,
-    "description": "<what happened + the route URL + a one-line fix hint>"
+    "description": "WHAT: <what happened + the route URL>. FIX: <one-line fix hint>."
   }
 ]
 ```
 
-For runtime findings whose root cause is hard to pin to one file/line, use `file: "runtime"`, `line: 0`, and put the route + symptom in the description.
+For runtime findings whose root cause is hard to pin to one file/line, use `file: "runtime"`, `line: 0`, and put the route + symptom in the description. This sentinel shape is recognized by the engine's schema check and bypasses its file/line scope filters — prefer a real `file`/`line` whenever you can pin one, since sentinel findings can't be auto-fixed in place.
+
+Every `description` must still carry the `WHAT:` and `FIX:` clauses the shared per-agent contract requires.
 
 ### 5. Tear down
 

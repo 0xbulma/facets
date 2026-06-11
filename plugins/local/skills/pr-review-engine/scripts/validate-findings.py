@@ -71,7 +71,14 @@ def _schema_ok(finding: dict) -> bool:
     if not isinstance(file, str) or not file:
         return False
     line = finding.get("line")
-    if not isinstance(line, int) or line <= 0:
+    # `file: "runtime", line: 0` is the runtime-validation sentinel for
+    # findings that can't be pinned to a source line (dev-server boot
+    # failure, route-level console error). It bypasses the line rule here
+    # and the scope filters in main().
+    if file == "runtime":
+        if not isinstance(line, int) or line < 0:
+            return False
+    elif not isinstance(line, int) or line <= 0:
         return False
     desc = finding.get("description")
     if not isinstance(desc, str) or not desc:
@@ -85,6 +92,114 @@ def _distance_to_nearest(line: int, changed_lines: list[int]) -> int | None:
     if not changed_lines:
         return None
     return min(abs(line - cl) for cl in changed_lines)
+
+
+# A literal empty array standing alone on a line — the calibrated agent
+# output shape for a clean run. Deliberately strict: a markdown checkbox
+# (`[ ] do the thing`) or any other whitespace-padded bracket pair must NOT
+# qualify, or failure prose gets recovered as a clean zero-finding run.
+EMPTY_ARRAY_LINE_RE = re.compile(r"(?m)^\s*\[\]\s*$")
+
+
+# Keys whose NAME declares failure or partiality: {"error": []} or
+# {"partial_findings": [...]} IS the failure declaration — unwrapping it
+# would launder a declared failure into a clean run.
+FAILURE_KEY_RE = re.compile(r"error|fail|partial|incomplete|truncat|skip",
+                            re.IGNORECASE)
+
+
+def _unwrap_dict(d: dict):
+    """The dict rules, in exactly one place (both the strict-parse and the
+    object-led branches route here — a one-sided amendment of these rules
+    is how false-clean/false-fail asymmetries are born):
+
+    - the {"agent_error": ...} sentinel stays a failure;
+    - a dict whose sole value is a list unwraps to that list — unless the
+      sole key's own name signals failure/partiality (FAILURE_KEY_RE), in
+      which case the dict IS the failure declaration and stays one;
+    - anything else (sibling keys may be declaring failure) is returned
+      as-is for main() to reject toward agent-failed.
+    """
+    if "agent_error" not in d and len(d) == 1:
+        (key,) = d.keys()
+        (sole,) = d.values()
+        if isinstance(sole, list) and not FAILURE_KEY_RE.search(key):
+            return sole
+    return d
+
+
+def _parse_findings_text(text: str):
+    """Parse agent output tolerantly.
+
+    Agents are contracted to return a bare JSON array, but models given
+    verification-style context tend to wrap it in prose (observed in 6 of 26
+    dogfood runs, persisting across prompt-hardening attempts). Strategy:
+
+    1. Strict parse. A list wins. Dicts go through the _unwrap_dict rules
+       (sentinel stays a failure; sole-list value unwraps unless the key is
+       failure-named per FAILURE_KEY_RE; sibling keys reject). The sentinel
+       wins even when prose-wrapped: any `"agent_error":` in the raw text
+       blocks the slice fallback entirely.
+    2. Unparseable text whose first JSON-ish character is '{' (object-led)
+       gets the same _unwrap_dict rules applied to the outermost {...}
+       slice — and never falls through to the array slice, because mining
+       an embedded array out of an object wrapper is exactly how a
+       prose-wrapped {"error": ..., "partial_findings": [...]} would
+       masquerade as clean.
+    3. Otherwise (array-led): slice from the first '[' to the last ']' and
+       retry — but an object trailing the array ('[...]\\n{"error": ...}')
+       makes the payload ambiguous and rejects. Accept a non-empty slice
+       only when every element is an object; accept an empty array only
+       when a literal `[]` stands alone on a line. Everything else
+       (incidental brackets like `string[]` or `[ ]` checkboxes, citation
+       lists like `[1, 2]`, truncated arrays) returns the strict-parse
+       value (None or a non-array for main() to reject) — a false failure
+       is recoverable, a false clean is not.
+    """
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        return _unwrap_dict(parsed)
+    # A prose-wrapped sentinel is still a declared failure — never mine it
+    # for embedded findings.
+    if re.search(r'"agent_error"\s*:', text):
+        return parsed
+    # Object-led wrapped payload: apply the dict rules to the outermost
+    # {...} slice, and never fall through to the array slice — mining an
+    # embedded array out of an object wrapper is the false-clean route.
+    ostart, astart = text.find("{"), text.find("[")
+    if ostart != -1 and (astart == -1 or ostart < astart):
+        oend = text.rfind("}")
+        obj = None
+        if oend > ostart:
+            try:
+                obj = json.loads(text[ostart:oend + 1])
+            except json.JSONDecodeError:
+                pass
+        if isinstance(obj, dict):
+            return _unwrap_dict(obj)
+        return parsed
+    start, end = astart, text.rfind("]")
+    if start != -1 and end > start:
+        # Mirror of the object-led rule: an object trailing the accepted
+        # array may be declaring failure — ambiguity rejects.
+        if text.find("{", end + 1) != -1:
+            return parsed
+        try:
+            sliced = json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            sliced = None
+        if isinstance(sliced, list):
+            if sliced and all(isinstance(x, dict) for x in sliced):
+                return sliced
+            if not sliced and EMPTY_ARRAY_LINE_RE.search(text):
+                return []
+    return parsed
 
 
 def main() -> int:
@@ -105,10 +220,9 @@ def main() -> int:
     except OSError as e:
         print(json.dumps({"error": f"cannot read findings file: {e}"}))
         return 0
-    try:
-        findings = json.loads(findings_src)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"invalid findings JSON: {e}"}))
+    findings = _parse_findings_text(findings_src)
+    if findings is None:
+        print(json.dumps({"error": "invalid findings JSON: no parseable JSON array in input"}))
         return 0
     if not isinstance(findings, list):
         print(json.dumps({"error": "findings must be a JSON array"}))
@@ -138,6 +252,12 @@ def main() -> int:
             continue
 
         if args.schema_only:
+            kept.append(f)
+            continue
+
+        # Runtime-validation sentinel: not a source file, so the file/line
+        # scope filters don't apply. Keep as-is.
+        if f["file"] == "runtime":
             kept.append(f)
             continue
 

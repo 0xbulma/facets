@@ -1,6 +1,6 @@
 ---
 name: pr-fix
-version: 2.0.0
+version: 2.1.0
 description: Apply fixes for PR review findings and resolve merge conflicts. Reads unresolved review comments from a pull request, applies the fixes locally, detects and resolves merge conflicts with the base branch, commits, pushes, and resolves the threads. Use when user says /local:pr-fix, "fix PR comments", "apply review fixes", "address PR feedback", or "fix conflicts". Takes a PR number as argument.
 ---
 
@@ -143,7 +143,7 @@ Resolved merge conflicts in:
 - <file1>
 - <file2>
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 
@@ -243,7 +243,7 @@ For each unique package directory among the files with unresolved comments, read
 
 Detect from the codebase (not just the diff — fixes may need to read non-diff files):
 
-- `<HAS_WEB3>` — true if any file in the repo (focus on files with unresolved comments and their imports) imports `viem`, `wagmi`, `ethers` (extend this union with any project-specific Web3 SDK imports — e.g. `@your-org/*`), or contains contract address constants (`0x[a-fA-F0-9]{40}`) or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`).
+- `<HAS_WEB3>` — true if any file in the repo (focus on files with unresolved comments and their imports) imports `viem`, `wagmi`, `ethers` (extend this union with any project-specific Web3 SDK imports — e.g. `@your-org/*`), contains contract address constants (`0x[a-fA-F0-9]{40}`) or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`), or has the `.sol` extension.
 - `<HAS_REACT>` — true if any file with an unresolved comment has extension `.jsx`/`.tsx`, OR imports `react`, `react-dom`, `next/*`, `@tanstack/react-*`, `@apollo/client`, OR contains `'use client'` / `'use server'` directives.
 - `<HAS_TAILWIND>` — true if `<HAS_REACT>` AND any file with an unresolved comment contains a Tailwind-shaped class string in JSX.
 
@@ -330,6 +330,7 @@ When `<HAS_WEB3>` is true (from Step 4.5), bump severity to **CRITICAL** for any
 - Hex calldata (`0x[a-fA-F0-9]{8,}`) outside an obvious test fixture.
 - An import of `viem`, `wagmi`, `ethers`, or any project-specific Web3 SDK adjacent to the commented line.
 - A contract interaction call (`readContract`, `writeContract`, `simulateContract`, `useContractRead`, `useContractWrite`, `signTypedData`, `permit*`).
+- A target file with the `.sol` extension (vendored Solidity contract surface).
 
 Exception: if the comment language clearly says **"nit"**, **"consider"**, **"optional"**, or **"style"**, do NOT bump — keep the parsed severity. The bump is for substantive comments touching contract surface area.
 
@@ -417,7 +418,7 @@ For each file with findings, build a complete understanding:
 
      For each fix-applicable agent whose trigger condition matches the current file's surface, Read the agent file in full and use the body — particularly the `## Fix rubric` section — as the rubric for the confidence gate.
 
-     Today this set is `web3.md` (when `<HAS_WEB3>` and the file imports a contract-interaction library or contains contract addresses/calldata), `ci-security.md` (when `<HAS_WORKFLOWS>`), `release-integrity.md` (when `<HAS_RELEASE>`), `dependencies.md` (when `<HAS_DEPS>`), and `docs.md` (when the fix touches `AGENTS.md` / `CLAUDE.md` itself, or any file under `.agents/personas/` / `.claude/agents/` / similar). As new fix-applicable agents land in the engine, this loop picks them up automatically — no edit to this skill required.
+     Today this set is `web3.md` (when `<HAS_WEB3>` and the file imports a contract-interaction library, contains contract addresses/calldata, or has the `.sol` extension), `ci-security.md` (when `<HAS_WORKFLOWS>`), `release-integrity.md` (when `<HAS_RELEASE>`), `dependencies.md` (when `<HAS_DEPS>`), and `docs.md` (when the fix touches `AGENTS.md` / `CLAUDE.md` itself, or any file under `.agents/personas/` / `.claude/agents/` / similar). As new fix-applicable agents land in the engine, this loop picks them up automatically — no edit to this skill required.
 
      For Web3 fixes specifically, also re-read the Web3 portion of `<PROJECT_CONTEXT>` plus any `SECURITY.md` / `audits/*.md` discovered. For doc / spec-layering fixes, also confirm the bidirectional-backlink invariant: changes to a persona's `applies:` frontmatter must atomically update the corresponding callout in the spec, and vice versa. A one-sided fix is incomplete.
 
@@ -518,7 +519,7 @@ fix: address PR review findings
 Applied fixes for <N> review comments:
 - <brief summary of key fixes>
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -693,9 +694,9 @@ If `--watch` WAS passed, **you MUST proceed to Step 12**.
 
 **If `--watch` was passed, you MUST call `CronCreate` now.** Do not skip this step.
 
-Use `CronCreate` to schedule a recurring job every 2 minutes:
+Use `CronCreate` to schedule a recurring job every 5 minutes (`*/5 * * * *`):
 
-- cron: `*/2 * * * *`
+- cron: `*/5 * * * *`
 - recurring: true
 - prompt: The prompt below, with all `<PLACEHOLDERS>` replaced with actual values from Steps 1-2:
 
@@ -705,7 +706,7 @@ Repo path: <REPO_PATH>
 Head branch: <HEAD_BRANCH>
 Base branch: <BASE_BRANCH>
 
-This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 2 minutes.
+This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 5 minutes.
 
 CYCLE START:
 
@@ -771,7 +772,7 @@ CYCLE START:
    b. Check freshness: Read the file at the commented path+line. Does the referenced code still exist and match what the reviewer commented on? If the code has changed significantly, classify as stale — reply explaining the code has changed and leave for human review.
    c. Check if already addressed: Is the issue described in the comment already fixed in the current code? If yes, reply noting it's already addressed and resolve the thread.
    d. Confidence gate: For remaining actionable comments, read the file AND related files (imports, callers, type definitions) to build sufficient context. Only proceed with fixes where you have HIGH or MEDIUM confidence. For LOW confidence (ambiguous suggestion, unclear side effects, insufficient context), skip and reply explaining what's unclear.
-   e. PROJECT CONTEXT (re-discover per cycle): Read AGENTS.md (or CLAUDE.md fallback) at root, plus per-package AGENTS.md walkup for files with unresolved comments. Compute conditional flags: HAS_WEB3 (viem/wagmi/ethers imports — extend per project with org-specific Web3 SDK imports — or contract address constants in commented files), HAS_REACT (.jsx/.tsx or react/next imports in commented files), HAS_TAILWIND (Tailwind class strings in JSX). When a flag is true and the file under repair matches, additionally discover and Read the marketplace rubric SKILL.md via Bash: `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` for each of `vercel-react-best-practices`, `vercel-composition-patterns`, `tailwind-design-system`. If the path resolves non-empty, Read it and print "Loaded conditional skill: <name>"; otherwise print "Marketplace skill not found: <name> — degrading to inline rubric" and continue.
+   e. PROJECT CONTEXT (re-discover per cycle): Read AGENTS.md (or CLAUDE.md fallback) at root, plus per-package AGENTS.md walkup for files with unresolved comments. Compute conditional flags: HAS_WEB3 (viem/wagmi/ethers imports — extend per project with org-specific Web3 SDK imports — contract address constants in commented files, or .sol files), HAS_REACT (.jsx/.tsx or react/next imports in commented files), HAS_TAILWIND (Tailwind class strings in JSX). When a flag is true and the file under repair matches, additionally discover and Read the marketplace rubric SKILL.md via Bash: `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` for each of `vercel-react-best-practices`, `vercel-composition-patterns`, `tailwind-design-system`. If the path resolves non-empty, Read it and print "Loaded conditional skill: <name>"; otherwise print "Marketplace skill not found: <name> — degrading to inline rubric" and continue.
    f. WEB3 SEVERITY BUMP: When HAS_WEB3 and a comment touches contract addresses, hex calldata, or Web3 imports, bump severity to CRITICAL unless the comment language is "nit"/"consider"/"optional"/"style".
 
    **Never apply a fix you don't fully understand. A skipped finding is always better than a wrong fix.**
@@ -784,7 +785,7 @@ CYCLE START:
       git commit -m "$(cat <<'INNEREOF'
 fix: address PR review findings
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 INNEREOF
 )"
    e. Push: `git push origin <HEAD_BRANCH>`
@@ -800,7 +801,7 @@ REPLYEOF
    h. For skipped findings, reply with skip reason (using heredoc) but do NOT resolve the thread.
    i. Say "Assessed <N> comments: fixed <X>, skipped <Y> (questions/stale/low-confidence). Pushed commit <sha>, resolved <X> threads."
 
-CYCLE END — the cron scheduler will run this again in 2 minutes.
+CYCLE END — the cron scheduler will run this again in 5 minutes.
 ```
 
 **After CronCreate returns the job ID:**
@@ -828,7 +829,7 @@ CYCLE END — the cron scheduler will run this again in 2 minutes.
 - **Conflict-aware**: Detects merge conflicts with the base branch before applying review fixes. Resolves conflicts intelligently by reading both sides and merging logically. Conflicts that can't be safely resolved are reported for human intervention.
 - **Quality gates**: Discovers and runs project linters/formatters after each file fix and broader quality checks (typecheck, lint) after all fixes. Ensures fixes don't introduce new issues.
 - **Self-contained watcher**: The cron watcher does actual work inline (resolves conflicts, applies fixes, replies to threads, resolves threads) rather than re-invoking the skill. This avoids recursive watcher creation and ensures each cron tick is a complete fix cycle. The watcher also performs relevance assessment on every cycle — it never blindly fixes.
-- **Pairs with `/local:pr-review-gh`**: `/local:pr-review-gh` posts findings (from parallel Claude agents + optional Codex), `/local:pr-fix` applies fixes. With both using `--watch`, they form a fully autonomous review-fix loop.
+- **Pairs with `/local:pr-review-gh`**: `/local:pr-review-gh` posts findings (from parallel Claude agents + optional Codex), `/local:pr-fix` applies fixes. **Do NOT run both watchers on the same PR** — each fix push re-triggers the review watcher and each new finding re-triggers this watcher: an unattended ping-pong loop. Watch with one skill at a time and run the other on demand.
 - Fixes are applied to the PR branch, not main/dev
 - One commit for all fixes — keeps the PR history clean
 - Each reply includes the commit SHA for traceability

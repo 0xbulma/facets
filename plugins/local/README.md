@@ -2,11 +2,11 @@
 
 Ten user-invokable slash-command skills + one engine skill (`pr-review-engine`, invoked by other skills, not directly).
 
-**PR navigation / review / fix** (review side delegates to the shared `pr-review-engine` skill + its 15-agent library)
+**PR navigation / review / fix** (review side delegates to the shared `pr-review-engine` skill + its 16-agent library)
 
 - **`/local:pr-switch <pr-url-or-num>`** — switch the local checkout to a PR's head branch. Accepts a full GitHub PR URL, `owner/repo#num` shorthand, or a bare number. Refuses cross-repo URLs; resolves a dirty tree interactively (stash/commit/discard/abort).
-- **`/local:pr-review-local`** — pre-PR review on the local branch (committed + uncommitted). Terminal-only output. `--fix` applies mechanical fixes.
-- **`/local:pr-review-gh <PR>`** — review an open GitHub PR; posts findings as a `COMMENT` review (never auto-approves). `--watch` re-reviews on every new commit.
+- **`/local:pr-review-local`** — pre-PR review on the local branch (committed + uncommitted). Terminal-only output. `--fix` applies mechanical fixes; `--fast` skips the `docs` agent.
+- **`/local:pr-review-gh <PR>`** — review an open GitHub PR; posts findings as a `COMMENT` review (never auto-approves). `--watch` re-reviews on every new commit; `--fast` skips the `docs` agent (immediate review only).
 - **`/local:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a cron-driven fix loop.
 
 **PR / workflow authoring** (repo-agnostic; no persona library)

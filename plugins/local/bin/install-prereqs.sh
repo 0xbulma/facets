@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# install-prereqs.sh — idempotently install the 5 prereq skills used by the
-# local conditional personas.
+# install-prereqs.sh — idempotently install the prereq rubric skills used by
+# the local conditional personas. The PREREQS list below is the source of
+# truth for what gets installed; skills/setup/SKILL.md documents the same set.
 #
 # Safe to run repeatedly. Each skill is only fetched if not already present
 # at ~/.claude/skills/<name>/SKILL.md.
@@ -18,6 +19,48 @@ set -u  # do NOT set -e — we want to keep trying other skills if one fails
 VERBOSE="${VERBOSE:-0}"
 
 log() { [ "$VERBOSE" = "1" ] && echo "[local setup] $*" >&2; return 0; }
+
+# Single-instance lock. The SessionStart hook backgrounds this script, so two
+# sessions starting close together would otherwise run duplicate npx installs
+# in parallel (both pass the per-skill existence check before either finishes).
+# mkdir is atomic and portable (no flock on macOS). Staleness is TTL-only: a
+# lock older than 60 minutes (crashed / SIGKILLed holder — no trap runs on
+# SIGKILL) is reclaimed by atomically renaming it away, so exactly one
+# contender can win the reclaim; everyone else skips. Worst case after a
+# crash: installs are delayed one TTL, then self-heal.
+# Per-user lock name: on Linux TMPDIR is usually unset, so a fixed name in
+# the shared /tmp would contend across users — and /tmp's sticky bit makes
+# another user's stale lock unreclaimable (mv fails for non-owners).
+LOCKDIR="${TMPDIR:-/tmp}/claude-local-install-prereqs.$(id -u).lock"
+acquire_lock() {
+  mkdir "$LOCKDIR" 2>/dev/null && return 0
+  if [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    log "reclaiming stale lock (older than 60 min)"
+    # Atomic claim: only one racer's mv of a given inode succeeds.
+    mv "$LOCKDIR" "$LOCKDIR.stale.$$" 2>/dev/null || return 1
+    # TOCTOU guard: between our staleness check and our mv, a faster racer
+    # may have reclaimed and re-created the lock — in which case we just
+    # renamed THEIR fresh lock, not the stale one. Re-verify on the moved
+    # dir: if it's fresh, hand it back (or drop our copy if the path was
+    # re-taken meanwhile) and skip.
+    if [ -z "$(find "$LOCKDIR.stale.$$" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+      mv "$LOCKDIR.stale.$$" "$LOCKDIR" 2>/dev/null || rm -rf "$LOCKDIR.stale.$$"
+      return 1
+    fi
+    rm -rf "$LOCKDIR.stale.$$"
+    mkdir "$LOCKDIR" 2>/dev/null && return 0
+  fi
+  return 1
+}
+if ! acquire_lock; then
+  log "another install-prereqs run is active — skipping"
+  exit 0
+fi
+# Cleanup exactly once, via EXIT; signal traps must terminate (a non-exiting
+# signal handler would resume the script after deleting the lock).
+trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Bail out gracefully if the user has no npx (no Node).
 if ! command -v npx >/dev/null 2>&1; then

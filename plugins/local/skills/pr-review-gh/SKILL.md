@@ -1,19 +1,22 @@
 ---
 name: pr-review-gh
-version: 2.0.0
-description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /local:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
+version: 2.2.0
+description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /local:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
 # review-gh — Local PR Review (post to GitHub)
 
-Reviews a GitHub Pull Request locally using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md`, posts findings as inline review comments with `event="COMMENT"`. Never auto-approves or requests changes — leaves the verdict to humans. Optionally schedules a 2-minute watcher cron via `--watch`.
+Reviews a GitHub Pull Request locally using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md`, posts findings as inline review comments with `event="COMMENT"`. Never auto-approves or requests changes — leaves the verdict to humans. Optionally schedules a 5-minute watcher cron via `--watch`.
 
 ## Usage
 
 ```
 /local:pr-review-gh <PR_NUMBER>
 /local:pr-review-gh <PR_NUMBER> --watch
+/local:pr-review-gh <PR_NUMBER> --fast    # skip the docs agent (cheapest meaningful cut)
 ```
+
+`--fast` excludes the `docs` agent via the engine's `EXCLUDE_AGENTS` input (most expensive agent per launch, most likely clean on code-focused diffs — see pr-review-local's usage notes for the dogfood data). `--fast` applies to the immediate review only; a `--watch` watcher always runs the full panel, since unattended re-reviews favor coverage over cost.
 
 ## Pre-conditions
 
@@ -42,7 +45,7 @@ if [ -z "${1:-}" ]; then
   echo "local:pr-review-gh requires a PR number." >&2
   exit 1
 fi
-if [ "$CI" = "true" ] || [ "$GITHUB_ACTIONS" = "true" ]; then
+if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "WARNING: local:pr-review-gh runs locally; this skill family does not ship a CI variant. Use the repo-level pr-review-ci instead if you need CI verdicts." >&2
 fi
 ```
@@ -69,6 +72,7 @@ Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that a
 
 - `DIFF_SOURCE` = `pr`
 - `HEAD_REF` = `origin/<HEAD_BRANCH>`
+- `EXCLUDE_AGENTS` = `["docs"]` when `--fast` was passed, otherwise empty
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 
@@ -93,6 +97,8 @@ Build a JSON object at `/tmp/local:pr-review-gh-<PR_NUMBER>-comments.json`:
 ```
 
 Always use `"event": "COMMENT"` — never auto-approve or request changes.
+
+**Runtime-sentinel findings never go in `comments[]`.** A finding with `file: "runtime"` (the `runtime-validation` sentinel for issues with no source location) has no valid `path`/`line` for the GitHub reviews API — including one would 422 the entire POST and collapse every inline comment into the fallback. Route those findings into the review `body` instead, as a `### Runtime findings` section (one `**[SEVERITY]** <description>` line each); only real-path findings go inline.
 
 ### Body format
 
@@ -154,7 +160,7 @@ If `--watch` was NOT passed, the skill is complete here. If `--watch` WAS passed
 
 ## Step 9: Schedule the watcher (only with --watch)
 
-Use `CronCreate` to schedule a recurring job every 2 minutes (`*/2 * * * *`, recurring: true).
+Use `CronCreate` to schedule a recurring job every 5 minutes (`*/5 * * * *`, recurring: true). Each cycle that detects a new commit runs a full multi-agent review, so a tighter interval mostly burns tokens re-checking an unchanged SHA. `CronCreate` is environment-specific — if it is not available (see Error handling), `--watch` degrades to a one-shot review.
 
 ### Placeholder discipline (CRITICAL)
 
@@ -186,7 +192,7 @@ Head branch: <HEAD_BRANCH>
 Base branch: <BASE_BRANCH>
 Bot login: <BOT_LOGIN>
 
-This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 2 minutes.
+This is a RECURRING cron job. Each run is one check cycle. After completing a cycle, simply end your response — the cron scheduler will invoke you again in 5 minutes.
 
 Every shell command below must be checked for non-zero exit. On ANY non-zero exit, say "Sentinel: WATCH_TRANSIENT_ERROR — step <N> (<command>): <stderr>" and end this cycle.
 
@@ -222,14 +228,14 @@ CYCLE START:
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
 6. POST REVIEW to GitHub as a single atomic call:
-   Build a JSON file at /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array.
+   Build a JSON file at /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Findings with file=="runtime" go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path 422s the whole POST).
    If ${CYCLE_FAILED_AGENTS} > 0, prepend "> WARNING: ${CYCLE_FAILED_AGENTS} of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete." to the body.
    Run: gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/reviews --method POST --input /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json — abort cycle if non-zero exit.
    Clean up: rm -f /tmp/local:pr-review-gh-<PR_NUMBER>-cycle.json
 
 7. Say "Sentinel: WATCH_REVIEW_DONE — PR #<PR_NUMBER> commit ${CYCLE_HEAD_SHA_SHORT}: <N> findings (X critical, Y high, Z medium, W low)."
 
-CYCLE END — the cron scheduler will run this again in 2 minutes.
+CYCLE END — the cron scheduler will run this again in 5 minutes.
 ```
 
 After CronCreate returns the job ID:
@@ -248,8 +254,8 @@ After CronCreate returns the job ID:
 ## Notes
 
 - **`COMMENT` event only** — never auto-approve or request changes. The user reviews findings and decides.
-- **`--watch` semantics**: 2-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs.
-- **Pairs with `/local:pr-fix`**: this skill posts findings; `/local:pr-fix` applies them. With both using `--watch`, they form a fully autonomous review-fix loop.
+- **`--watch` semantics**: 5-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs.
+- **Pairs with `/local:pr-fix`**: this skill posts findings; `/local:pr-fix` applies them. **Do NOT run both watchers on the same PR** — the fix watcher's pushes re-trigger the review watcher, and any new finding re-triggers the fix watcher: an unattended ping-pong loop that burns tokens and spams the PR. Watch with one skill at a time and run the other on demand.
 
 ## Sentinel grammar
 

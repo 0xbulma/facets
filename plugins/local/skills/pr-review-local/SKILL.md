@@ -1,7 +1,7 @@
 ---
 name: pr-review-local
-version: 2.0.0
-description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree). Use when user says /local:pr-review-local, "review my changes", "review before PR", "local review", or "deep review".
+version: 2.1.0
+description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree). Use when user says /local:pr-review-local, "review my changes", "review before PR", "local review", or "deep review".
 ---
 
 # review-local — Pre-PR Local Review
@@ -14,10 +14,13 @@ Reviews local branch changes using parallel specialized agents from `${CLAUDE_PL
 /local:pr-review-local                       # review current branch vs default base
 /local:pr-review-local <BASE_BRANCH>         # review against an explicit base branch
 /local:pr-review-local --fix                 # review and apply fixes (refuses on dirty tree)
-/local:pr-review-local <BASE_BRANCH> --fix   # both
+/local:pr-review-local --fast                # skip the docs agent (cheapest meaningful cut)
+/local:pr-review-local <BASE_BRANCH> --fix   # flags combine freely
 ```
 
 `<BASE_BRANCH>` is positional and must NOT begin with `--`. Flag order is otherwise free.
+
+`--fast` excludes the `docs` agent via the engine's `EXCLUDE_AGENTS` input. Dogfood data across four full review passes: `docs` is the most expensive agent per launch (deep cross-reference verification) and the most likely to return clean on code-focused diffs — it's the one cut that saves real cost without touching the bug-finding lenses. Use the default (full panel) when the diff touches Markdown, inventories, or public API docs.
 
 ## Pre-conditions
 
@@ -41,7 +44,7 @@ Idempotency: re-running with no diff change produces the same sentinel + same co
 ## Step 1: Validate environment + arguments
 
 ```bash
-if [ "$CI" = "true" ] || [ "$GITHUB_ACTIONS" = "true" ]; then
+if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "WARNING: local:pr-review-local is for pre-PR local review; this skill family does not ship a CI variant." >&2
 fi
 ```
@@ -49,6 +52,7 @@ fi
 Parse positional and flag args:
 
 - If `--fix` is present, set `FIX=1`.
+- If `--fast` is present, set `FAST=1`.
 - If a non-flag positional argument is present and does not start with `--`, treat it as `<BASE_BRANCH>`.
 
 ## Step 2: Resolve branches
@@ -102,6 +106,7 @@ fi
 
 - `DIFF_SOURCE` = `local` (include uncommitted diff)
 - `HEAD_REF` = `HEAD`
+- `EXCLUDE_AGENTS` = `["docs"]` when `FAST=1`, otherwise empty
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 

@@ -1,6 +1,6 @@
 ---
 name: tib-ship
-version: 0.2.0
+version: 0.3.0
 description: Execute a TIB end-to-end (yolo). Plans TIPs, branches, implements per-block test-driven (format → lint → typecheck → test → commit per phase), then loops `pr-review-local` → fix → re-review until the branch is clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops short of pushing — the user creates the PR. Use when user says /local:tib-ship, "ship this TIB", "yolo this TIB", "implement and self-review", or "execute the TIB end to end".
 ---
 
@@ -73,7 +73,7 @@ First, sniff the project's commands once per TIP using the same logic as `tip-cr
 
 #### Load stack rubric (implementation parity with review)
 
-Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REACT` / `HAS_TAILWIND` / `HAS_STYLING` / `HAS_AI_SDK` / `HAS_WEB3` / `HAS_WORKFLOWS` / `HAS_RELEASE` / `HAS_DEPS` flags described in `skills/pr-review-engine/SKILL.md` Step 4 — but over the TIP's *declared* Files-to-Modify set (anticipated diff) rather than the actual diff. For every flag that's true, attach the corresponding marketplace skill bodies to the sub-agent's prompt so the implementation is written to the same rubric the review will then check against. Discovery is identical to the agent side — run-time `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` per skill:
+Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REACT` / `HAS_TAILWIND` / `HAS_STYLING` / `HAS_AI_SDK` / `HAS_WEB3` / `HAS_WORKFLOWS` / `HAS_RELEASE` / `HAS_DEPS` / `HAS_SERVER_API` flags described in `skills/pr-review-engine/SKILL.md` Step 4 — but over the TIP's *declared* Files-to-Modify set (anticipated diff) rather than the actual diff. For every flag that's true, attach the corresponding marketplace skill bodies to the sub-agent's prompt so the implementation is written to the same rubric the review will then check against. Discovery is identical to the agent side — run-time `find ~/.claude -type f -name SKILL.md -path "*<skill-name>*" 2>/dev/null | head -1` per skill:
 
 | Flag                              | Rubric skills to load                                                                  |
 | --------------------------------- | -------------------------------------------------------------------------------------- |
@@ -84,6 +84,7 @@ Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REA
 | `HAS_RELEASE`                     | `deploy-to-vercel`, `vercel-cli-with-tokens`                                           |
 | `HAS_DEPS`                        | (no marketplace skill — `dependencies` agent body is the rubric)                       |
 | `HAS_WEB3`                        | (no marketplace skill — the `web3` agent body acts as both review and implementation rubric)         |
+| `HAS_SERVER_API`                  | (no marketplace skill — the `api-security` agent body acts as both review and implementation rubric) |
 
 Skills absent from `~/.claude/skills/` are skipped silently (the implementation sub-agent falls back to its general knowledge). This mirrors the persona side's degrade-gracefully behavior. The goal is implementation/review parity: writing to the same rubric that will judge the work avoids predictable review-loop iterations.
 
@@ -136,13 +137,15 @@ After all phases for a TIP are green, set the TIP `Status` row from `Draft` to `
 
 `MAX_ITERS = $ARGUMENTS --max-iters` (default 5). `prev_findings_hash = ""`.
 
+The default is a ceiling, not a target: dogfood data (four full review→fix passes over a 20-file branch) shows iteration 1 carries most of the value, iteration 2 catches second-order bugs in iteration 1's fixes, and later passes mostly review the fixes themselves. Expect convergence by iteration 2–3; budget beyond that only when the fixes touch treacherous surfaces (concurrency, signing, money paths).
+
 For `i = 1..MAX_ITERS`:
 
 1. Run the equivalent of `/local:pr-review-local` (delegate to `skills/pr-review-engine/SKILL.md` with `<DIFF_SOURCE>=local` and `<EXCLUDE_AGENTS>=["runtime-validation"]`). The exclusion prevents the dev server from booting once per iteration — Step 6 runs `runtime-validation` exactly once after the static loop converges. Do **not** pass `--fix`; we handle fixes ourselves so we can track convergence.
-2. Collect findings into a list. If empty → **break, success**.
+2. Collect findings into a list. If empty, **or every remaining finding is `low` severity** → **break, success** (carry the lows forward to Step 7's triage list — Step 5.4 never fixes them, so requiring an empty list here would loop a low-only residue straight into the stuck detector).
 3. Compute a stable hash of the findings (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash`:
    - Same findings as last iteration → **stuck**. Stop and ask the user (do not silently retry).
-4. Group findings by severity. Apply fixes in this order: `critical` → `high` → `medium`. Skip `low` unless `<LOW_FIXES>` is requested.
+4. Group findings by severity. Apply fixes in this order: `critical` → `high` → `medium`. Skip `low` findings — they are listed in the Step 7 summary for the user to triage, not auto-fixed.
 5. For each finding:
    - Read the file at the cited line.
    - Apply the smallest change that addresses the finding's `description`.
@@ -186,8 +189,13 @@ Phases shipped:   <list>
 Gating tests:     <new tests added> (added/extended across phases)
 Block gates:      format ✓  lint ✓  typecheck ✓  tests ✓   (per-phase, end state)
 Review iters:     <i> (clean on iteration <i>)
+Low findings:     <N> (not auto-fixed — listed below for manual triage)
 Runtime check:    passed | skipped | failed-then-fixed
 Commits:          <N> (<feat: …> ×K, <fix(review): …> ×M)
+
+Low findings (manual triage — omit this block when N=0):
+  <file>:<line> — <description>
+  ...
 
 Local branch is ready. Next steps (manual):
   git push -u origin <branch>

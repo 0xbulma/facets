@@ -1,6 +1,6 @@
 # claude-skills
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 15-agent review library (6 baseline + 9 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (15 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 3 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -25,15 +25,16 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │   ├── setup/SKILL.md            # /local:setup
 │   │   └── pr-review-engine/         # shared review engine (was lib/ + personas/)
 │   │       ├── SKILL.md                          # dispatcher: Steps 3–6
-│   │       ├── agents/                           # 15 reviewers (6 baseline + 9 conditional)
+│   │       ├── agents/                           # 16 reviewers (6 baseline + 10 conditional)
 │   │       │   ├── correctness.md                   # baseline
 │   │       │   ├── docs.md                            # baseline
 │   │       │   ├── performance.md                    # baseline
 │   │       │   ├── error-handling.md          # baseline
 │   │       │   ├── simplification.md                 # baseline
 │   │       │   ├── tests.md                  # baseline
-│   │       │   ├── accessibility.md                  # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
+│   │       │   ├── accessibility.md                  # conditional (<HAS_STYLING> OR <HAS_REACT>)
 │   │       │   ├── ai-sdk.md          # conditional (<HAS_AI_SDK>)
+│   │       │   ├── api-security.md    # conditional (<HAS_SERVER_API>)
 │   │       │   ├── ci-security.md                    # conditional (<HAS_WORKFLOWS>)
 │   │       │   ├── dependencies.md                   # conditional (<HAS_DEPS>)
 │   │       │   ├── react-next.md      # conditional (<HAS_REACT>)
@@ -41,12 +42,13 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │       │   ├── runtime-validation.md             # conditional (<HAS_ROUTE_UI>)
 │   │       │   ├── styling.md                        # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
 │   │       │   └── web3.md                  # conditional (<HAS_WEB3>)
-│   │       └── references/                       # shared rubrics loaded on demand
+│   │       ├── references/                       # shared rubrics loaded on demand
+│   │       └── scripts/                          # deterministic helpers (changed-lines, finding validation)
 │   ├── hooks/hooks.json              # SessionStart auto-install
 │   ├── bin/install-prereqs.sh        # idempotent prereq installer
 │   └── README.md
 ├── CLAUDE.md                         # guidance for Claude Code working in this repo
-└── test/plugin.bats                  # manifest + frontmatter validation
+└── test/                             # bats + python suites (manifest, frontmatter, scripts)
 ```
 
 ## Skills
@@ -54,9 +56,9 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 **PR navigation / review / fix**
 
 - **`/local:pr-switch <pr-url-or-num>`** — switch the local checkout to a PR's head branch. Accepts a full GitHub PR URL, `owner/repo#num` shorthand, or a bare number. Refuses cross-repo URLs; resolves a dirty tree interactively (stash/commit/discard/abort).
-- **`/local:pr-review-local`** — pre-PR review on the working tree (committed + uncommitted). Terminal output. `--fix` applies mechanical fixes.
-- **`/local:pr-review-gh <PR>`** — review an open GitHub PR via GraphQL. Posts findings as a `COMMENT` review (never auto-approves). `--watch` re-runs on every new commit.
-- **`/local:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a 2-minute cron fix loop.
+- **`/local:pr-review-local`** — pre-PR review on the working tree (committed + uncommitted). Terminal output. `--fix` applies mechanical fixes; `--fast` skips the `docs` agent (cheapest meaningful cut on code-focused diffs).
+- **`/local:pr-review-gh <PR>`** — review an open GitHub PR (diff computed locally, never via the GitHub API). Posts findings as a `COMMENT` review (never auto-approves). `--watch` re-runs on every new commit; `--fast` skips the `docs` agent (immediate review only — watchers always run the full panel).
+- **`/local:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a 5-minute cron fix loop (don't pair it with a `pr-review-gh --watch` on the same PR — the two watchers re-trigger each other).
 
 **PR / workflow authoring**
 
@@ -72,7 +74,7 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 
 ## Rubric prereqs (auto-installed)
 
-18 external skills (15 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 3 community) are installed automatically on first session after plugin install via a `SessionStart` hook. Idempotent — re-runs skip already-installed skills.
+18 external skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 2 community) are installed automatically on first session after plugin install via a `SessionStart` hook. Idempotent — re-runs skip already-installed skills.
 
 | Skill | Source | Domain | Persona it backs |
 |---|---|---|---|
@@ -152,7 +154,7 @@ The plugin's `version` field in `plugins/local/.claude-plugin/plugin.json` contr
 
 ## Local development
 
-After editing any file under `plugins/local/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/plugin.bats` to validate manifest, frontmatter, version fields, hook wiring, agent inventory, and references/ bidirectional backlinks (25 cases).
+After editing any file under `plugins/local/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks, changed-lines builder) and `cd test && python3 -m unittest test_validate_findings` (finding validator) to validate.
 
 See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versioning rules, and forking notes.
 
@@ -167,13 +169,14 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `simplification` — unnecessary complexity, redundant logic, over-engineering.
 - `performance` — barrel imports, memory leaks, N+1, memoization correctness.
 
-9 conditional (fire only when their flag matches the diff):
+10 conditional (fire only when their flag matches the diff):
 
 - `react-next` — `<HAS_REACT>` — Server Components, hooks, React 19 APIs, Next.js conventions, Cache Components. Loads `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` when RN code detected).
 - `styling` — `<HAS_TAILWIND> OR <HAS_STYLING>` — Tailwind, design tokens, styling-architecture consistency. Loads `tailwind-design-system`, `web-design-guidelines`, `building-components` (+ `ai-elements`/`streamdown` when their imports are present).
-- `accessibility` — `<HAS_TAILWIND> OR <HAS_STYLING>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
+- `accessibility` — `<HAS_STYLING> OR <HAS_REACT>` — ARIA, keyboard nav, focus management, alt text, label association. Loads `web-design-guidelines`, `building-components`.
 - `ai-sdk` — `<HAS_AI_SDK>` — Vercel AI SDK usage, streaming, tool calls, structured output, useChat. Loads `ai-sdk`, `ai-elements`, `streamdown`.
-- `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling.
+- `api-security` — `<HAS_SERVER_API>` — authn/authz on routes and server actions, boundary input validation, webhook signature verification, SSRF, server-held signing keys.
+- `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling, vendored `.sol` diffs.
 - `ci-security` — `<HAS_WORKFLOWS>` — workflow injection, action pinning, `permissions:` scopes, secret exposure. Loads `github-actions-docs`, `turborepo`.
 - `release-integrity` — `<HAS_RELEASE>` — publish flow, provenance, release-commit signing, Changesets wiring. Loads `deploy-to-vercel`, `vercel-cli-with-tokens`.
 - `dependencies` — `<HAS_DEPS>` — lockfile drift, `.npmrc` hygiene, typosquats, postinstall scripts.

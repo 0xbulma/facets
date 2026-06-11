@@ -117,12 +117,13 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "agent inventory is exactly 15 files" {
-  # 6 baseline + 9 conditional. Three combos (ci-release-security,
+@test "agent inventory is exactly 16 files" {
+  # 6 baseline + 10 conditional. Three combos (ci-release-security,
   # ui-styling-accessibility, code-simplifier-performance) split per
-  # TIP-2026-05-20-persona-refinement: 11 - 3 + 7 = 15.
+  # TIP-2026-05-20-persona-refinement (11 - 3 + 7 = 15); api-security
+  # added for the server-side trust boundary: 15 + 1 = 16.
   count=$(find "$AGENTS_DIR" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  [ "$count" = "15" ]
+  [ "$count" = "16" ]
 }
 
 @test "list-fix-rubric-agents.sh returns exit 0 + empty stdout when no agent matches" {
@@ -182,6 +183,23 @@ setup() {
         echo "$agent_file: kind=$kind is not baseline|conditional" >&2; return 1
         ;;
     esac
+  done
+}
+
+@test "every conditional trigger flag is defined in the engine's Step 4 detection block" {
+  # A conditional agent only fires if the engine's Step 4 computes its
+  # trigger flag. A new agent with a typo'd or undeclared flag would
+  # silently never launch — no error, just a missing reviewer. This locks
+  # every HAS_* token in agent `trigger:` lines to a `- \`HAS_*\`` flag
+  # definition bullet in the engine SKILL.md.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  for agent_file in "$AGENTS_DIR"/*.md; do
+    trigger=$(awk '/^---$/{f=!f; next} f && /^trigger:/{sub(/^trigger: */,""); print; exit}' "$agent_file")
+    [ -n "$trigger" ] || continue
+    for flag in $(printf '%s\n' "$trigger" | grep -oE 'HAS_[A-Z0-9_]+' | sort -u); do
+      grep -q -- "- \`$flag\`" "$engine" \
+        || { echo "$agent_file trigger flag $flag has no definition bullet in engine Step 4" >&2; return 1; }
+    done
   done
 }
 
@@ -288,11 +306,84 @@ setup() {
   done
 }
 
+@test "install-prereqs.sh PREREQS list matches the setup skill's documented table" {
+  # bin/install-prereqs.sh is the source of truth for what gets installed;
+  # skills/setup/SKILL.md documents the same set in its table. The two have
+  # drifted before (header said 5, list had 18) — lock them together.
+  installer_names=$(sed -n "/^PREREQS=/,/'\$/p" "$PLUGIN_DIR/bin/install-prereqs.sh" | sed "s/^PREREQS='//" | awk 'NF{print $1}' | sort -u)
+  setup_names=$(grep -oE '^\| `[a-z0-9-]+`' "$SKILLS_DIR/setup/SKILL.md" | tr -d '|` ' | sort -u)
+  [ -n "$installer_names" ] || { echo "could not extract PREREQS names from install-prereqs.sh" >&2; return 1; }
+  [ -n "$setup_names" ]     || { echo "could not extract table names from setup/SKILL.md" >&2; return 1; }
+  diff <(printf '%s\n' "$installer_names") <(printf '%s\n' "$setup_names") \
+    || { echo "PREREQS list and setup table disagree (see diff above)" >&2; return 1; }
+}
+
 @test "hooks.json and install-prereqs.sh exist and are wired up" {
   [ -f "$PLUGIN_DIR/hooks/hooks.json" ]
   [ -x "$PLUGIN_DIR/bin/install-prereqs.sh" ]
   run jq -e '.hooks.SessionStart' "$PLUGIN_DIR/hooks/hooks.json"
   [ "$status" -eq 0 ]
+  # Assert the command content, not just key presence: a typo'd script path
+  # or dropped backgrounding fails silently at runtime (prereqs never install,
+  # personas quietly degrade).
+  cmd=$(jq -re '.hooks.SessionStart[0].hooks[0].command' "$PLUGIN_DIR/hooks/hooks.json")
+  [[ "$cmd" == *'bin/install-prereqs.sh'* ]] || { echo "hook command does not reference install-prereqs.sh: $cmd" >&2; return 1; }
+  [[ "$cmd" == *'&' ]] || { echo "hook command is not backgrounded (must end in &): $cmd" >&2; return 1; }
+}
+
+@test "install-prereqs.sh lock: skips while a fresh lock is held" {
+  # A fresh (sub-TTL) lock means another run is active: the script must
+  # exit 0 without installing and without touching the holder's lock.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  mkdir -p "$LOCK"
+
+  TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"another install-prereqs run is active"* ]] || { echo "missing skip message: $output" >&2; return 1; }
+  [ -d "$LOCK" ] || { echo "active holder's lock was removed" >&2; return 1; }
+}
+
+@test "install-prereqs.sh lock: reclaims an expired lock and releases on exit" {
+  # A lock older than the 60-min TTL (crashed holder — SIGKILL runs no trap)
+  # must be reclaimed, and the EXIT trap must release the new lock afterwards.
+  # Stub npx fails fast: the run is hermetic (no network), exercising the
+  # full lock lifecycle. touch -t is POSIX (works on macOS BSD touch too).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  mkdir -p "$LOCK"
+  touch -t 202001010000 "$LOCK"   # far past TTL
+
+  TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reclaiming stale lock"* ]] || { echo "expired lock was not reclaimed: $output" >&2; return 1; }
+  [ ! -d "$LOCK" ] || { echo "lock not released on exit" >&2; return 1; }
+}
+
+@test "install-prereqs.sh lock: SIGTERM terminates the run and releases the lock" {
+  # Regression guard for the signal-exit invariant: a non-exiting INT/TERM
+  # handler would delete the lock and keep installing (mutex defeated, then
+  # a double-free of the next holder's lock). Hermetic: HOME override makes
+  # every skill "missing" so the script blocks inside the slow npx stub —
+  # bash runs the signal trap after the foreground stub returns (~2s).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nsleep 2\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP"
+  FAKEHOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$FAKEHOME"
+  LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+
+  TMPDIR="$TMP" HOME="$FAKEHOME" VERBOSE=0 PATH="$STUB:$PATH" \
+    "$PLUGIN_DIR/bin/install-prereqs.sh" & SCRIPT_PID=$!
+  for _ in $(seq 1 50); do [ -d "$LOCK" ] && break; sleep 0.1; done
+  [ -d "$LOCK" ] || { echo "script never acquired the lock" >&2; return 1; }
+
+  kill -TERM "$SCRIPT_PID"
+  sig_status=0
+  wait "$SCRIPT_PID" || sig_status=$?   # || keeps bats' errexit from tripping on 143
+  [ "$sig_status" -eq 143 ] || { echo "expected exit 143 after SIGTERM, got $sig_status (handler did not exit?)" >&2; return 1; }
+  [ ! -d "$LOCK" ] || { echo "lock not released by the EXIT trap on the signal path" >&2; return 1; }
 }
 
 @test "no install.sh remaining at repo root" {
@@ -305,8 +396,20 @@ setup() {
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
   # The 9 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
-  run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." 2>&1
-  [ "$status" -eq 0 ]
+  # `</dev/null` is required: claude waits on stdin otherwise.
+  run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
+  if [ "$status" -ne 0 ]; then
+    # Disambiguate before failing: in some environments (CI, sandboxes that
+    # pass auth via an inherited file descriptor bats doesn't preserve) the
+    # CLI exists but can't authenticate at all. Probe without the plugin —
+    # if that also fails, it's the environment, not the plugin shape: skip.
+    # Probing only on failure keeps the happy path at one model invocation.
+    smoke_output="$output"
+    run claude -p "Say OK" </dev/null 2>&1
+    [ "$status" -ne 0 ] && skip "claude CLI present but not usable here (auth/network): $output"
+    echo "plugin-dir smoke failed but bare claude works — plugin shape problem: $smoke_output" >&2
+    return 1
+  fi
   echo "$output" | grep -q "local:pr-switch"
   echo "$output" | grep -q "local:pr-fix"
   echo "$output" | grep -q "local:pr-review-gh"

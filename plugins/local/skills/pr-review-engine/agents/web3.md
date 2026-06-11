@@ -1,6 +1,6 @@
 ---
 name: web3
-version: 1.0.0
+version: 1.1.0
 kind: conditional
 trigger: HAS_WEB3
 applies: |
@@ -62,6 +62,18 @@ The boundary between the project and the chain. Authoritative rules — if the p
 - **Receipts not awaited.** A `writeContract` whose returned hash is used as if the tx is mined; `waitForTransactionReceipt` (or equivalent) skipped before downstream state reads.
 - **`Promise.all` over independent writes** whose mutual nonce ordering matters — onchain writes from one signer are sequential by convention; flag fan-out writes from a single account.
 - **Reentrancy in callback handlers.** A frontend handler that fires another write inside the success callback of a pending write without sequencing.
+
+### Solidity diffs (when the repo vendors `.sol` contracts)
+
+A surface-level security pass, not an audit. On any changed `.sol` file, flag:
+
+- **Checks-effects-interactions violations** — state written after an external call (`.call`, `.transfer`, token hooks) without a reentrancy guard.
+- **Missing access control on state-changing functions** — a public/external function that mutates privileged state without an `onlyOwner` / role modifier.
+- **Unchecked low-level calls** — `.call{...}()` whose success return is ignored.
+- **Missing events on privileged state changes** — admin setters with no event emission.
+- **Floating pragma / wildcard imports** in production contracts.
+
+Anything deeper (economic exploits, oracle manipulation, upgrade-safety) — emit one **high** finding recommending dedicated audit tooling (Slither / a manual audit) rather than attempting it inline.
 
 ### Action-layer purity (when the project uses a layered Client → Entity → Action pattern)
 

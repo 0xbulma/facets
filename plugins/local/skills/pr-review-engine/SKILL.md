@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.2.0
+version: 0.5.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -24,10 +24,10 @@ deduplicated findings list + `FAILED_AGENTS` count produced by Step 6.
 
 How a caller knows the engine is working (rough targets, not hard thresholds):
 
-- **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. Verify via the per-fixture tests under `test/fixtures/`.
+- **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. The structural invariants (trigger flags declared and detected, schema, scope filters) are locked by the suites under `test/`.
 - **False-positive ceiling** — ≤ 10% of agent findings dropped by the scope filter on a healthy diff. If consistently higher, the diff path normalization or `CHANGED_LINES` build is wrong.
 - **0 failed agents on a clean diff** — `FAILED_AGENTS` is empty when every agent's JSON parses and matches the WHAT/FIX schema. If non-zero, check schema injection in Step 5.
-- **Bounded cost** — typical review fans out 6 baseline + 0–9 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
+- **Bounded cost** — typical review fans out 6 baseline + 0–10 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
 
 ## Inputs (from caller's Steps 1–2)
 
@@ -117,9 +117,11 @@ Use the Glob tool: `**/AGENTS.md` and `**/CLAUDE.md`. Filter to paths that prefi
 
 ### Detect framework / domain signals (used by Step 5 conditional agents)
 
-Compute boolean flags from the diff and from changed files' content. Flag names are bare (no `< >`); they're variable identifiers, not template placeholders:
+Compute boolean flags from the diff and from changed files' content. Flag names are bare (no `< >`); they're variable identifiers, not template placeholders.
 
-- `HAS_WEB3` — true if any changed file imports a contract-interaction library (`viem`, `wagmi`, `ethers`, `web3.js`), contains contract address constants (`0x[a-fA-F0-9]{40}`), or contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`, `signTypedData`, `permit*`).
+**Doc files are prose, not surfaces:** content-based detector legs (import / string / pattern matches like "any file containing `npm publish`" or a `0x…` address) never count matches found inside `*.md` / `*.mdx` / `*.txt` files — a documented example command must not launch an agent whose own scope rules will predictably return `[]`. Path-based legs (file-path patterns like `.github/workflows/**`, lockfiles, `vercel.json`, `.sol`) are unaffected.
+
+- `HAS_WEB3` — true if any changed file imports a contract-interaction library (`viem`, `wagmi`, `ethers`, `web3.js`), contains contract address constants (`0x[a-fA-F0-9]{40}`), contract interaction patterns (`useContractRead`, `useContractWrite`, `readContract`, `writeContract`, `simulateContract`, `signTypedData`, `permit*`), OR has the `.sol` extension (vendored Solidity contracts).
 - `HAS_REACT` — true if any changed file has extension `.jsx`/`.tsx`, OR imports `react`, `react-dom`, `next/*`, `@tanstack/react-*`, `@apollo/client`, OR contains `'use client'` / `'use server'` directives.
 - `HAS_TAILWIND` — true if `HAS_REACT` AND any changed file contains a Tailwind-shaped class string in JSX (`flex`, `grid`, `p-N`, `m-N`, `text-`, `bg-`, `border-`, `rounded-`).
 - `HAS_STYLING` — true if any changed file imports `styled-components`, `@emotion/*`, `tss-react`, `*.module.css`, `*.module.scss`, OR contains a11y attributes (`role=`, `aria-`, `tabIndex`).
@@ -127,6 +129,7 @@ Compute boolean flags from the diff and from changed files' content. Flag names 
 - `HAS_RELEASE` — true if any changed file matches `.changeset/**`, `vercel.json`, OR any `package.json` whose `scripts.*publish*` / `scripts.*release*` / `scripts.*deploy*` field is modified, OR any file containing `changeset publish`, `npm publish`, `pnpm publish`, `gh release create`, `vercel deploy`, or `vercel --prod`. Fires `release-integrity`.
 - `HAS_DEPS` — true if any changed file matches `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `pnpm-workspace.yaml`, or `.npmrc` (any level). Fires `dependencies`.
 - `HAS_AI_SDK` — true if any changed file imports `ai`, `@ai-sdk/*`, `@vercel/ai`, OR uses `streamText`, `generateText`, `streamObject`, `generateObject`, `embed`, `embedMany`, `useChat`, `useCompletion`, `useObject`, `ToolLoopAgent`, OR imports `ai-elements` or `streamdown`.
+- `HAS_SERVER_API` — true if any changed file matches `app/**/route.{ts,js}` (Next App Router handlers), `pages/api/**` (Pages Router API routes), `middleware.{ts,js}` (root or `src/`), contains a `'use server'` directive, OR imports a server framework (`next/server`, `express`, `fastify`, `hono`, `koa`, `@trpc/server`). Fires `api-security`.
 - `HAS_ROUTE_UI` — true if any changed file is **route-reachable**, i.e. a page/layout/api-route/SPA entry, AND the repo has a discoverable dev-server script. Intentionally narrower than `HAS_REACT` so we don't boot a dev server for arbitrary component changes. Matches:
   - **Next App Router:** `app/**/page.{tsx,jsx,ts,js}`, `app/**/layout.{tsx,jsx,ts,js}`, `app/**/template.{tsx,jsx}`, `app/**/loading.{tsx,jsx}`, `app/**/error.{tsx,jsx}`, `app/**/route.{ts,js}`.
   - **Next Pages Router:** `pages/**/*.{tsx,jsx,ts,js}` excluding `pages/_*.{tsx,jsx}`, `pages/api/**/*.{ts,js}`.
@@ -154,6 +157,7 @@ Conditional flags:
   Release:        HAS_RELEASE=<bool>
   Dependencies:   HAS_DEPS=<bool>
   AI SDK:         HAS_AI_SDK=<bool>
+  Server API:     HAS_SERVER_API=<bool>
   Route-UI:       HAS_ROUTE_UI=<bool>
 ```
 
@@ -168,6 +172,7 @@ Agent specs live in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
    - `kind: baseline` → always launch.
    - `kind: conditional` → parse the `trigger:` value, look up each named flag from Step 4, evaluate the boolean expression. Compound triggers like `HAS_TAILWIND OR HAS_STYLING` are evaluated as written (split on whitespace, look up each flag, apply `OR` / `AND`).
 3. **Apply the caller's exclusion list.** If the caller provided `EXCLUDE_AGENTS` (a list of agent names), drop those from the launch set. Used by orchestrators like `/local:tib-ship` to suppress an agent during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
+3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs). Conditionals need no special handling here: Step 4's content-based detectors already ignore matches inside doc files, so on a doc-only diff only path-based triggers can fire. Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
 4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
 5. Track `TOTAL_AGENTS_LAUNCHED` = count of agents actually launched (baseline + any fired conditionals − excluded).
 
@@ -177,12 +182,14 @@ For every spawned sub-agent, the dispatcher **must** assemble the launch prompt 
 
 1. The agent file body, verbatim (its frontmatter + Markdown prose).
 2. `PROJECT_CONTEXT` from Step 4 (root + per-package docs, lint contract).
-3. The diff in full (committed + uncommitted when `DIFF_SOURCE=local`).
-4. The full content of changed files (read from local FS via the Read tool).
+3. The diff in full (committed + uncommitted when `DIFF_SOURCE=local`). **Exception — lockfiles and generated artifacts** (same list as item 4): their hunks go only to the `dependencies` agent; every other agent gets a one-line note per file (`<path>: hunks omitted — lockfile/generated`) in place of the hunks. A lockfile regeneration is tens of thousands of hunk lines that only `dependencies` can use — injecting them into all launched agents reproduces the exact context blowup this exception exists to prevent.
+4. The full content of changed files (read from local FS via the Read tool). **Exception — lockfiles and generated artifacts** (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb`, `*.min.js`, `*.map`, files in `dist/`/`build/`/`.next/`): never inject their full content into any agent — not even `dependencies`, whose review surface is the diff hunks from item 3 (it can Read specific resolved-entry blocks from disk if a hunk warrants it). Non-`dependencies` agents get the same one-line omission note as item 3.
 5. The conditional flag values (`HAS_REACT`, `HAS_WEB3`, `HAS_WORKFLOWS`, etc.).
 6. `CHANGED_LINES` serialized as JSON: `{ "<path>": [<line>, <line>, ...] }`.
 7. **The "Shared per-agent contract" bullets below, copied verbatim into the prompt.** Without this injection, agents won't know to emit the schema and Step 6.2 will route every finding as malformed.
 8. **The calibration example pair** (the kept-finding + dropped-finding pair below), copied verbatim. Anchors the agent's output shape.
+
+**Ordering rule:** any extra caller-supplied context (an orchestrator's iteration history, exclusion rationale, TIP excerpts) goes between items 6 and 7 — items 7–8 must be the **final** content of the prompt. Dogfood data: agents given verification-style context narrate their answer unless the output contract is the last instruction they read (6 of 26 runs wrapped their JSON in prose when the contract sat mid-prompt).
 
 The dispatcher should NOT paraphrase or summarize these parts — copy them. Drift between the dispatcher's notion of the contract and what the agent receives is exactly the failure mode the engine's schema check is supposed to prevent.
 
@@ -193,7 +200,7 @@ The dispatcher should NOT paraphrase or summarize these parts — copy them. Dri
 - Agents must analyze the **full diff**, not just the latest commit.
 - Each agent **must return** a JSON array `[{severity: "critical"|"high"|"medium"|"low", file: "path", line: number, description: "WHAT: ... FIX: ..."}]` OR an explicit error sentinel `{"agent_error": "<reason>"}` if it could not complete.
 - **`description` schema.** Every finding's `description` MUST contain both a `WHAT:` clause naming the specific problem AND a `FIX:` clause stating the specific change. Recommended format: `WHAT: <one sentence>. FIX: <one sentence>.` Free-form prose otherwise. Findings without both clauses are rejected as malformed in Step 6 sub-step 2.
-- **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15.
+- **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15. **Exception:** the `runtime-validation` agent may emit the sentinel shape `file: "runtime", line: 0` for findings that can't be pinned to a source line; these pass the schema check and bypass the scope filters.
 - **Stay in scope (avoid scope creep).** Focus on the diff: flag issues introduced by these changes, and issues in adjacent code only when the diff makes that adjacent code materially worse. Do NOT flag pre-existing issues, propose unrelated refactors, suggest new features, or recommend cleanups outside the PR's intent. When in doubt, omit.
 - **Don't nitpick.** Polish, wording, naming preferences, stylistic alternatives, and "you could also" suggestions are not findings — omit them regardless of severity label.
 - Only **actionable** findings — no praise, no summaries.
@@ -237,19 +244,20 @@ Baseline (always fire, 6 agents):
 - `simplification.md` — unnecessary complexity, redundant logic, dead branches.
 - `performance.md` — barrel imports, memory leaks, N+1, memoization correctness.
 
-Conditional (fire only when their trigger flag is true, 9 agents):
+Conditional (fire only when their trigger flag is true, 10 agents):
 
-- `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation.
+- `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation, vendored `.sol` diffs.
 - `react-next.md` — fires when `HAS_REACT`. Loads marketplace rubrics (see `references/marketplace-rubrics.md`).
 - `styling.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. Tailwind/tokens, styling-architecture consistency.
-- `accessibility.md` — fires when `HAS_TAILWIND OR HAS_STYLING`. ARIA, keyboard, focus, alt text.
+- `accessibility.md` — fires when `HAS_STYLING OR HAS_REACT`. ARIA, keyboard, focus, alt text.
 - `ci-security.md` — fires when `HAS_WORKFLOWS`. Workflow injection, action pinning, `permissions:` scopes, secret exposure.
 - `release-integrity.md` — fires when `HAS_RELEASE`. Publish flow, provenance, release-commit signing, Changesets wiring.
 - `dependencies.md` — fires when `HAS_DEPS`. Lockfile drift, dependency hygiene, `.npmrc`, typosquats.
 - `ai-sdk.md` — fires when `HAS_AI_SDK`. Vercel AI SDK usage, streaming, tool calls, structured output.
+- `api-security.md` — fires when `HAS_SERVER_API`. Authn/authz on routes and server actions, boundary input validation, webhook signatures, SSRF, server-held signing keys.
 - `runtime-validation.md` — fires when `HAS_ROUTE_UI`. Boots dev server, navigates changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/local:tib-ship` from its iteration loop.
 
-The dispatcher does not hardcode names — it discovers via `find`. Total: 15 agents (6 baseline + 9 conditional).
+The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 16 agents (6 baseline + 10 conditional).
 
 Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
 
@@ -261,7 +269,7 @@ Merge all agent results into a single list:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
    - plus uncommitted: `git diff --name-only HEAD` (only when `DIFF_SOURCE=local`)
 
-   For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
+   For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. If `finding.file` is the literal string `"runtime"` (the `runtime-validation` sentinel for findings with no source location), **keep it** — skip both the file-level and line-level scope filters for that finding. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
 
    If `finding.file` is not in `CHANGED_FILES`, **drop the finding** and increment `DROPPED_OUT_OF_SCOPE`.
 
@@ -285,13 +293,13 @@ Merge all agent results into a single list:
    `Scope filter: dropped <N> file-level + <N> line-level + <N> doc-example finding(s).`
 
 2. **Count agent failures.** An agent counts as failed if any of these hold:
-   - Returned `{"agent_error": "..."}` (the explicit sentinel from Step 5).
-   - Returned text that is not parseable as JSON.
-   - Returned a JSON value that is not an array (e.g. an object that is not the error sentinel).
+   - Returned `{"agent_error": "..."}` (the explicit sentinel from Step 5). A sentinel payload is never mined for embedded findings — a declared failure stays a failure, even when the sentinel is wrapped in prose (the validator detects `"agent_error":` in the raw text and blocks recovery).
+   - Returned text from which no findings array can be **safely** recovered. The validator parses tolerantly first: a prose-wrapped array is recovered by slicing from the first `[` to the last `]`, and an object whose **sole** value is a list (e.g. `{"findings": [...]}`) is unwrapped structurally — unless the sole key's own name declares failure or partiality (`{"error": []}`, `{"partial_findings": [...]}` stay failures). An object with sibling keys (which may be declaring failure, e.g. `{"error": ..., "findings": []}`) is rejected, and the same dict rules apply when the object arrives prose-wrapped (an object-led payload is never mined for an embedded array). The slice is guarded too: a non-empty slice must be a list of objects, an empty slice is accepted only as a literal `[]` standing alone on a line, and an object trailing the array (`[...]` followed by `{"error": ...}`) makes the payload ambiguous and rejects — so ambiguous output (incidental brackets like `string[]` or `[ ]` checkboxes, citation lists, truncated arrays, trailing failure objects) still counts as a failure. The bias is deliberate: a false failure is recoverable, a false clean is not.
+   - Returned a JSON value that is not an array and could not be unwrapped per the sole-list rule above.
    - Returned an array containing one or more objects missing required fields:
      - `severity` not in `critical`/`high`/`medium`/`low`
      - missing or non-string `file`
-     - missing or non-positive-integer `line`
+     - missing or non-positive-integer `line` (exception: `line: 0` is valid when `file` is `"runtime"`)
      - missing or empty `description`
      - `description` lacks a `WHAT:` substring OR lacks a `FIX:` substring
      Count the agent as **partially failed**: keep the valid findings from that agent, but include it in `FAILED_AGENTS`.

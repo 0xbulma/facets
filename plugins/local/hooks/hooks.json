@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/install-prereqs.sh"
+            "command": "nohup \"${CLAUDE_PLUGIN_ROOT}/bin/install-prereqs.sh\" >/dev/null 2>&1 &"
           }
         ]
       }
