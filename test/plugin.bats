@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create extract-plan tib-create pr-switch tip-create tib-ship pr-review-engine"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create extract-plan tib-create pr-switch tip-create tib-ship ts-conventions pr-review-engine"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,7 +37,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "eleven skills exist at expected paths" {
+@test "twelve skills exist at expected paths" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
   done
@@ -246,6 +246,16 @@ setup() {
   done
 }
 
+@test "ts-conventions ships its reference files and the lint-swap contract" {
+  REFS="$SKILLS_DIR/ts-conventions/references"
+  for f in principles.md core.md lint-biome.md lint-eslint.md react-next.md web3.md; do
+    [ -f "$REFS/$f" ] || { echo "missing reference: $REFS/$f" >&2; return 1; }
+  done
+  # core.md must keep the placeholder the skill swaps for the linter section.
+  grep -q '__LINT_SECTION__' "$REFS/core.md" \
+    || { echo "core.md lost the __LINT_SECTION__ placeholder" >&2; return 1; }
+}
+
 @test "engine and setup skills set disable-model-invocation: true" {
   # These two skills are invoked by other skills (engine) or by the user
   # via a separate path (setup). They must not appear in the slash-command
@@ -394,7 +404,7 @@ setup() {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
-  # The 9 model-invokable skills should appear; `setup` is intentionally
+  # The 10 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
   # `</dev/null` is required: claude waits on stdin otherwise.
   run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
@@ -419,4 +429,5 @@ setup() {
   echo "$output" | grep -q "local:tib-create"
   echo "$output" | grep -q "local:tip-create"
   echo "$output" | grep -q "local:tib-ship"
+  echo "$output" | grep -q "local:ts-conventions"
 }

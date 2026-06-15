@@ -1,6 +1,6 @@
 # claude-skills
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with ten user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`local`) with eleven user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -22,6 +22,7 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 │   │   ├── tib-create/SKILL.md       # /local:tib-create <title>
 │   │   ├── tip-create/SKILL.md       # /local:tip-create <title> [--tib <path>]…
 │   │   ├── tib-ship/SKILL.md         # /local:tib-ship <tib-path> [--max-iters N] [--no-runtime]
+│   │   ├── ts-conventions/SKILL.md   # /local:ts-conventions [--preview]
 │   │   ├── setup/SKILL.md            # /local:setup
 │   │   └── pr-review-engine/         # shared review engine (was lib/ + personas/)
 │   │       ├── SKILL.md                          # dispatcher: Steps 3–6
@@ -67,6 +68,10 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 - **`/local:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
 - **`/local:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
 - **`/local:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; does not push or open a PR.
+
+**Conventions**
+
+- **`/local:ts-conventions [--preview]`** — write/refresh structured coding conventions in the global `~/.claude/CLAUDE.md`, inside idempotent managed markers. Two sections: a **language-agnostic `## Engineering principles`** part in three altitude tiers — system/solution architecture (public-API contract, layering, package boundaries, security & trust boundaries, supply chain, observability, change management), application architecture, and module/code design — plus anti-patterns, written for any repo; and a **`## TypeScript conventions`** part (preferred stack, frontend stack, type system & strictness incl. no-`any`/no-cast/no-`enum` with per-rule lint enforcement, modules & exports, tests, React/Next, web3) written when a TS stack is detected and tailored to the repo's linter/test runner. Writes only to the global config — never a project file; a repo's own conventions always win. `--preview` prints the block without writing. The local review/ship flows nudge you to run it when a TS repo has no conventions doc.
 
 **Utility**
 

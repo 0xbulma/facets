@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.5.0
+version: 0.6.1
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -160,6 +160,22 @@ Conditional flags:
   Server API:     HAS_SERVER_API=<bool>
   Route-UI:       HAS_ROUTE_UI=<bool>
 ```
+
+### Conventions hint (terminal-only, non-blocking)
+
+After printing discovery, emit a one-line nudge **if and only if** all three hold:
+
+1. The change is a TypeScript stack — any changed `.ts`/`.tsx` file, OR the repo has a root `tsconfig.json`, OR `HAS_REACT` / `HAS_SERVER_API` is true.
+2. Step 4 found **no** conventions doc — no root `AGENTS.md`/`CLAUDE.md` and no per-package one along the touched paths.
+3. The user's global `~/.claude/CLAUDE.md` has no `ts-conventions` managed block — i.e. `grep -q 'BEGIN ts-conventions' "$HOME/.claude/CLAUDE.md"` exits non-zero (no match *or* the file is missing both count as "no block").
+
+Then print exactly:
+
+```
+No TypeScript conventions found — run /local:ts-conventions to seed ~/.claude/CLAUDE.md.
+```
+
+This line is informational and prints to the operator's terminal only — **never** post it as a GitHub comment, and it never blocks or alters the review.
 
 ## Step 5: Launch parallel review agents
 
