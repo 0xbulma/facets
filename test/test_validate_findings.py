@@ -1,4 +1,4 @@
-"""Unit tests for plugins/local/skills/pr-review-engine/scripts/validate-findings.py.
+"""Unit tests for plugins/facets/skills/pr-review-engine/scripts/validate-findings.py.
 
 Run: python3 -m unittest test.test_validate_findings
 (or from inside test/: python3 -m unittest test_validate_findings)
@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "plugins" / "local" / "skills" / "pr-review-engine" / "scripts" / "validate-findings.py"
+SCRIPT = REPO_ROOT / "plugins" / "facets" / "skills" / "pr-review-engine" / "scripts" / "validate-findings.py"
 
 
 def _run(findings, changed_lines, repo_root=None, schema_only=False,

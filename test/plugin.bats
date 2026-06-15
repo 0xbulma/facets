@@ -10,7 +10,7 @@ setup() {
   # Resolve repo root from this test file's location.
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
-  PLUGIN_DIR="$REPO_ROOT/plugins/local"
+  PLUGIN_DIR="$REPO_ROOT/plugins/facets"
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
@@ -346,7 +346,7 @@ setup() {
   # exit 0 without installing and without touching the holder's lock.
   STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
   printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
-  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-facets-install-prereqs.$(id -u).lock"
   mkdir -p "$LOCK"
 
   TMPDIR="$TMP" VERBOSE=1 PATH="$STUB:$PATH" run "$PLUGIN_DIR/bin/install-prereqs.sh"
@@ -362,7 +362,7 @@ setup() {
   # full lock lifecycle. touch -t is POSIX (works on macOS BSD touch too).
   STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
   printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
-  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  TMP="$BATS_TEST_TMPDIR/tmp"; LOCK="$TMP/claude-facets-install-prereqs.$(id -u).lock"
   mkdir -p "$LOCK"
   touch -t 202001010000 "$LOCK"   # far past TTL
 
@@ -382,7 +382,7 @@ setup() {
   printf '#!/bin/sh\nsleep 2\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
   TMP="$BATS_TEST_TMPDIR/tmp"; mkdir -p "$TMP"
   FAKEHOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$FAKEHOME"
-  LOCK="$TMP/claude-local-install-prereqs.$(id -u).lock"
+  LOCK="$TMP/claude-facets-install-prereqs.$(id -u).lock"
 
   TMPDIR="$TMP" HOME="$FAKEHOME" VERBOSE=0 PATH="$STUB:$PATH" \
     "$PLUGIN_DIR/bin/install-prereqs.sh" & SCRIPT_PID=$!
@@ -420,14 +420,14 @@ setup() {
     echo "plugin-dir smoke failed but bare claude works — plugin shape problem: $smoke_output" >&2
     return 1
   fi
-  echo "$output" | grep -q "local:pr-switch"
-  echo "$output" | grep -q "local:pr-fix"
-  echo "$output" | grep -q "local:pr-review-gh"
-  echo "$output" | grep -q "local:pr-review-local"
-  echo "$output" | grep -q "local:pr-create"
-  echo "$output" | grep -q "local:extract-plan"
-  echo "$output" | grep -q "local:tib-create"
-  echo "$output" | grep -q "local:tip-create"
-  echo "$output" | grep -q "local:tib-ship"
-  echo "$output" | grep -q "local:ts-conventions"
+  echo "$output" | grep -q "facets:pr-switch"
+  echo "$output" | grep -q "facets:pr-fix"
+  echo "$output" | grep -q "facets:pr-review-gh"
+  echo "$output" | grep -q "facets:pr-review-local"
+  echo "$output" | grep -q "facets:pr-create"
+  echo "$output" | grep -q "facets:extract-plan"
+  echo "$output" | grep -q "facets:tib-create"
+  echo "$output" | grep -q "facets:tip-create"
+  echo "$output" | grep -q "facets:tib-ship"
+  echo "$output" | grep -q "facets:ts-conventions"
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Behavior tests for plugins/local/skills/pr-review-engine/scripts/build-changed-lines.sh.
+# Behavior tests for plugins/facets/skills/pr-review-engine/scripts/build-changed-lines.sh.
 # Run: bats test/test_build_changed_lines.bats
 #
 # Each test spins up a throwaway git repo in $BATS_TEST_TMPDIR, sets a known
@@ -8,7 +8,7 @@
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-  SCRIPT="$REPO_ROOT/plugins/local/skills/pr-review-engine/scripts/build-changed-lines.sh"
+  SCRIPT="$REPO_ROOT/plugins/facets/skills/pr-review-engine/scripts/build-changed-lines.sh"
   TMP="$BATS_TEST_TMPDIR/repo"
   mkdir -p "$TMP"
   cd "$TMP"

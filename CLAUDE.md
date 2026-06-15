@@ -4,7 +4,7 @@ Repo-level guidance for Claude Code working on this repo.
 
 ## What this repo is
 
-A Claude Code **plugin marketplace** containing a single plugin (`local`) with eleven slash-command skills:
+A Claude Code **plugin marketplace** containing a single plugin (`facets`) with eleven slash-command skills:
 
 - **PR navigation / review / fix** — `pr-switch` (check out a PR's branch from a URL/number), `pr-review-local`, `pr-review-gh`, `pr-fix`, `setup`
 - **PR / workflow authoring** — `pr-create` (draft PR from the current diff), `extract-plan` (TIB/ADR → Linear project + milestones + issues), `tib-create` (scaffold a new TIB), `tip-create` (scaffold a TIP — concrete implementation plan paired with a TIB), `tib-ship` (yolo execute a TIB end-to-end: scaffold TIPs → implement TDD-style → review→fix loop → ready-to-push branch)
@@ -12,14 +12,14 @@ A Claude Code **plugin marketplace** containing a single plugin (`local`) with e
 
 The review side and its persona library are **optimized for TypeScript + React + Vercel** codebases — JSX/TSX detection, Server Components, React 19 APIs, Tailwind, Vercel's Web Interface Guidelines, Web3 (viem/wagmi/ethers) when present, and route-level runtime validation via `agent-browser`. It works on any project, but the conditional personas are tuned for the TS/React/Vercel stack. The four authoring skills (`pr-create`, `extract-plan`, `tib-create`, `tip-create`) are repo-agnostic; `tib-ship` is repo-agnostic for orchestration but its inner per-block loop and `runtime-validation` step assume a JS/TS toolchain.
 
-Users install via `/plugin marketplace add 0xbulma/claude-skills` → `/plugin install local@claude-skills`. They invoke the skills as `/local:pr-switch`, `/local:pr-review-local`, `/local:pr-review-gh`, `/local:pr-fix`, `/local:setup`, `/local:pr-create`, `/local:extract-plan`, `/local:tib-create`, `/local:tip-create`, `/local:tib-ship`, `/local:ts-conventions`.
+Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install facets@facets`. They invoke the skills as `/facets:pr-switch`, `/facets:pr-review-local`, `/facets:pr-review-gh`, `/facets:pr-fix`, `/facets:setup`, `/facets:pr-create`, `/facets:extract-plan`, `/facets:tib-create`, `/facets:tip-create`, `/facets:tib-ship`, `/facets:ts-conventions`.
 
 ## Mental model
 
 ```
 .claude-plugin/marketplace.json
         │
-        └─ lists ─→ plugins/local/
+        └─ lists ─→ plugins/facets/
                           │
                           ├─ .claude-plugin/plugin.json
                           ├─ skills/
@@ -65,14 +65,14 @@ One-way arrow: the four PR-flow skills (`pr-review-gh`, `pr-review-local`, `pr-f
 Installation mechanism (in order of automation):
 
 1. **SessionStart hook** (`hooks/hooks.json`) — runs `bin/install-prereqs.sh` silently in the background every Claude Code session. Idempotent: skills already present at `~/.claude/skills/<name>/SKILL.md` are skipped. Failure on any one skill does not block the session.
-2. **Manual fallback** — `/local:setup` runs the same script with verbose output. Use this when the hook failed (no network at startup) or to verify install state.
+2. **Manual fallback** — `/facets:setup` runs the same script with verbose output. Use this when the hook failed (no network at startup) or to verify install state.
 
 If a prereq is absent at review time, the consuming persona logs `Marketplace skill not found: <name> — degrading to persona's built-in rubric below` and falls through to the inline rubric in its body. No hard failure.
 
 ## Local development loop
 
 ```bash
-claude --plugin-dir ./plugins/local
+claude --plugin-dir ./plugins/facets
 # inside Claude Code:
 /reload-plugins   # after edits
 ```
@@ -92,9 +92,9 @@ The SessionStart hook fires on each `claude` invocation, so prereqs install the 
 
 Three levels of versioning, all semver:
 
-1. **Plugin version** — `plugins/local/.claude-plugin/plugin.json` `version`. The release pin users see in `/plugin marketplace update`. **Bump on every PR that changes anything in `plugins/local/`** (description, SKILL.md, agents, hooks, bin). The marketplace updater keys cache invalidation off this field — if it doesn't move, `/plugin marketplace update` short-circuits and existing installs keep serving the stale cache forever (the description text, the `agents/` roster, the install script, all of it). The README and `plugin.json` description can disagree with reality for weeks and you'd never know.
+1. **Plugin version** — `plugins/facets/.claude-plugin/plugin.json` `version`. The release pin users see in `/plugin marketplace update`. **Bump on every PR that changes anything in `plugins/facets/`** (description, SKILL.md, agents, hooks, bin). The marketplace updater keys cache invalidation off this field — if it doesn't move, `/plugin marketplace update` short-circuits and existing installs keep serving the stale cache forever (the description text, the `agents/` roster, the install script, all of it). The README and `plugin.json` description can disagree with reality for weeks and you'd never know.
 2. **Per-skill version** — `version:` in each `SKILL.md` frontmatter. Lets you ship a skill-level changelog without bumping the whole plugin.
-3. **Per-agent version** — `version:` in each `plugins/local/skills/pr-review-engine/agents/*.md` frontmatter. Agents evolve fast; per-file versioning lets us track rubric drift independently.
+3. **Per-agent version** — `version:` in each `plugins/facets/skills/pr-review-engine/agents/*.md` frontmatter. Agents evolve fast; per-file versioning lets us track rubric drift independently.
 
 Semver rules:
 
@@ -104,7 +104,7 @@ Semver rules:
 
 ## Agent contract
 
-Every file in `plugins/local/skills/pr-review-engine/agents/` has YAML frontmatter:
+Every file in `plugins/facets/skills/pr-review-engine/agents/` has YAML frontmatter:
 
 ```yaml
 ---
@@ -122,7 +122,7 @@ focus: <one-line scope>
 
 Severity calibration lives in the body as a `## Severity guidance` section (a few agents carry it as `severity-guidance:` frontmatter instead — either is fine, but every agent must have one).
 
-Adding an agent = drop a new file in `plugins/local/skills/pr-review-engine/agents/`. If `kind: conditional`, also extend the flag-detection block in Step 4 of `plugins/local/skills/pr-review-engine/SKILL.md`. **Bump the plugin `version`** in `plugins/local/.claude-plugin/plugin.json` (see Versioning above) — without it, existing installs will never see the new agent.
+Adding an agent = drop a new file in `plugins/facets/skills/pr-review-engine/agents/`. If `kind: conditional`, also extend the flag-detection block in Step 4 of `plugins/facets/skills/pr-review-engine/SKILL.md`. **Bump the plugin `version`** in `plugins/facets/.claude-plugin/plugin.json` (see Versioning above) — without it, existing installs will never see the new agent.
 
 ## Forking notes
 
@@ -147,4 +147,4 @@ bats test/                                              # plugin.bats + test_bui
 - **Don't reintroduce `<HOME>` template substitution.** The marketplace install model handles paths automatically.
 - **Don't try to declare rubric skills in `plugin.json` `dependencies`.** That field only resolves other plugins (different ecosystem from `npx skills`). Use the SessionStart hook + setup skill instead.
 - **`npx` consumes stdin** when called inside a `while read` loop — always pass `</dev/null` to the install command.
-- **Don't forget to bump `plugin.json` `version` in any PR touching `plugins/local/`.** `/plugin marketplace update` keys cache invalidation off this field — leave it the same and every existing install keeps serving the old description, old agent roster, old hook script. This bit us once: 2.3.0 sat unchanged for two days while the description and the agents/ layout were rewritten in place; users kept seeing the original 11-persona text from the May 19 install. See the Versioning section for semver rules (patch/minor/major).
+- **Don't forget to bump `plugin.json` `version` in any PR touching `plugins/facets/`.** `/plugin marketplace update` keys cache invalidation off this field — leave it the same and every existing install keeps serving the old description, old agent roster, old hook script. This bit us once: 2.3.0 sat unchanged for two days while the description and the agents/ layout were rewritten in place; users kept seeing the original 11-persona text from the May 19 install. See the Versioning section for semver rules (patch/minor/major).
