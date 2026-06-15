@@ -1,3 +1,14 @@
+```
+   ███████╗ █████╗  ██████╗███████╗████████╗███████╗
+   ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔════╝
+   █████╗  ███████║██║     █████╗     ██║   ███████╗
+   ██╔══╝  ██╔══██║██║     ██╔══╝     ██║   ╚════██║
+   ██║     ██║  ██║╚██████╗███████╗   ██║   ███████║
+   ╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝   ╚═╝   ╚══════╝
+
+   ◆ ◇ ◆  self-review every facet of your PR, then ship it
+```
+
 # facets
 
 > **F**ullstack&nbsp;·&nbsp;**A**gentic&nbsp;·&nbsp;**C**laude&nbsp;·&nbsp;**E**ngine&nbsp;·&nbsp;**T**ypeScript&nbsp;·&nbsp;**S**hipping
@@ -17,43 +28,43 @@ Works on any project — but the conditional personas are tuned for TS/JS/JSX/TS
 ├── plugins/facets/
 │   ├── .claude-plugin/plugin.json
 │   ├── skills/
-│   │   ├── pr-switch/SKILL.md        # /facets:pr-switch <pr-url-or-num>
-│   │   ├── pr-review-local/SKILL.md  # /facets:pr-review-local
-│   │   ├── pr-review-gh/SKILL.md     # /facets:pr-review-gh <PR>
-│   │   ├── pr-fix/SKILL.md           # /facets:pr-fix <PR>
-│   │   ├── pr-create/SKILL.md        # /facets:pr-create
-│   │   ├── extract-plan/SKILL.md     # /facets:extract-plan <doc> [project]
-│   │   ├── tib-create/SKILL.md       # /facets:tib-create <title>
-│   │   ├── tip-create/SKILL.md       # /facets:tip-create <title> [--tib <path>]…
-│   │   ├── tib-ship/SKILL.md         # /facets:tib-ship <tib-path> [--max-iters N] [--no-runtime]
-│   │   ├── ts-conventions/SKILL.md   # /facets:ts-conventions [--preview]
-│   │   ├── setup/SKILL.md            # /facets:setup
-│   │   └── pr-review-engine/         # shared review engine (was lib/ + personas/)
-│   │       ├── SKILL.md                          # dispatcher: Steps 3–6
-│   │       ├── agents/                           # 16 reviewers (6 baseline + 10 conditional)
-│   │       │   ├── correctness.md                   # baseline
-│   │       │   ├── docs.md                            # baseline
-│   │       │   ├── performance.md                    # baseline
-│   │       │   ├── error-handling.md          # baseline
-│   │       │   ├── simplification.md                 # baseline
-│   │       │   ├── tests.md                  # baseline
-│   │       │   ├── accessibility.md                  # conditional (<HAS_STYLING> OR <HAS_REACT>)
-│   │       │   ├── ai-sdk.md          # conditional (<HAS_AI_SDK>)
-│   │       │   ├── api-security.md    # conditional (<HAS_SERVER_API>)
-│   │       │   ├── ci-security.md                    # conditional (<HAS_WORKFLOWS>)
-│   │       │   ├── dependencies.md                   # conditional (<HAS_DEPS>)
-│   │       │   ├── react-next.md      # conditional (<HAS_REACT>)
-│   │       │   ├── release-integrity.md              # conditional (<HAS_RELEASE>)
-│   │       │   ├── runtime-validation.md             # conditional (<HAS_ROUTE_UI>)
-│   │       │   ├── styling.md                        # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
-│   │       │   └── web3.md                  # conditional (<HAS_WEB3>)
-│   │       ├── references/                       # shared rubrics loaded on demand
-│   │       └── scripts/                          # deterministic helpers (changed-lines, finding validation)
-│   ├── hooks/hooks.json              # SessionStart auto-install
-│   ├── bin/install-prereqs.sh        # idempotent prereq installer
+│   │   ├── pr-switch/SKILL.md             # /facets:pr-switch <pr-url-or-num>
+│   │   ├── pr-review-local/SKILL.md       # /facets:pr-review-local
+│   │   ├── pr-review-gh/SKILL.md          # /facets:pr-review-gh <PR>
+│   │   ├── pr-fix/SKILL.md                # /facets:pr-fix <PR>
+│   │   ├── pr-create/SKILL.md             # /facets:pr-create
+│   │   ├── extract-plan/SKILL.md          # /facets:extract-plan <doc> [project]
+│   │   ├── tib-create/SKILL.md            # /facets:tib-create <title>
+│   │   ├── tip-create/SKILL.md            # /facets:tip-create <title> [--tib <path>]…
+│   │   ├── tib-ship/SKILL.md              # /facets:tib-ship <tib-path> [--max-iters N] [--no-runtime]
+│   │   ├── ts-conventions/SKILL.md        # /facets:ts-conventions [--preview]
+│   │   ├── setup/SKILL.md                 # /facets:setup
+│   │   └── pr-review-engine/              # shared review engine (was lib/ + personas/)
+│   │       ├── SKILL.md                   # dispatcher: Steps 3–6
+│   │       ├── agents/                    # 16 reviewers (6 baseline + 10 conditional)
+│   │       │   ├── correctness.md         # baseline
+│   │       │   ├── docs.md                # baseline
+│   │       │   ├── performance.md         # baseline
+│   │       │   ├── error-handling.md      # baseline
+│   │       │   ├── simplification.md      # baseline
+│   │       │   ├── tests.md               # baseline
+│   │       │   ├── accessibility.md       # conditional (<HAS_STYLING> OR <HAS_REACT>)
+│   │       │   ├── ai-sdk.md              # conditional (<HAS_AI_SDK>)
+│   │       │   ├── api-security.md        # conditional (<HAS_SERVER_API>)
+│   │       │   ├── ci-security.md         # conditional (<HAS_WORKFLOWS>)
+│   │       │   ├── dependencies.md        # conditional (<HAS_DEPS>)
+│   │       │   ├── react-next.md          # conditional (<HAS_REACT>)
+│   │       │   ├── release-integrity.md   # conditional (<HAS_RELEASE>)
+│   │       │   ├── runtime-validation.md  # conditional (<HAS_ROUTE_UI>)
+│   │       │   ├── styling.md             # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
+│   │       │   └── web3.md                # conditional (<HAS_WEB3>)
+│   │       ├── references/                # shared rubrics loaded on demand
+│   │       └── scripts/                   # deterministic helpers (changed-lines, finding validation)
+│   ├── hooks/hooks.json                   # SessionStart auto-install
+│   ├── bin/install-prereqs.sh             # idempotent prereq installer
 │   └── README.md
-├── CLAUDE.md                         # guidance for Claude Code working in this repo
-└── test/                             # bats + python suites (manifest, frontmatter, scripts)
+├── CLAUDE.md                              # guidance for Claude Code working in this repo
+└── test/                                  # bats + python suites (manifest, frontmatter, scripts)
 ```
 
 ## Skills
