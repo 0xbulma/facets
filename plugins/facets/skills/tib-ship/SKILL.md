@@ -80,7 +80,7 @@ Before spawning an implementation sub-agent for a TIP, compute the same `HAS_REA
 | `HAS_REACT`                       | `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` if RN detected) |
 | `HAS_TAILWIND` or `HAS_STYLING`   | `tailwind-design-system`, `web-design-guidelines`, `building-components`               |
 | `HAS_AI_SDK`                      | `ai-sdk`, `ai-elements`, `streamdown`                                                  |
-| `HAS_WORKFLOWS`                   | `github-actions-docs`, `turborepo`                                                     |
+| `HAS_WORKFLOWS`                   | `turborepo`                                                                            |
 | `HAS_RELEASE`                     | `deploy-to-vercel`, `vercel-cli-with-tokens`                                           |
 | `HAS_DEPS`                        | (no marketplace skill — `dependencies` agent body is the rubric)                       |
 | `HAS_WEB3`                        | (no marketplace skill — the `web3` agent body acts as both review and implementation rubric)         |

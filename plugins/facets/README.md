@@ -19,7 +19,7 @@ Ten user-invokable slash-command skills + one engine skill (`pr-review-engine`, 
 
 **Utility**
 
-- **`/facets:setup`** — manually install the 18 rubric skills used by the conditional review personas. Same script also runs in the background on every Claude Code session start.
+- **`/facets:setup`** — manually install the 17 rubric skills used by the conditional review personas. Same script also runs in the background on every Claude Code session start.
 
 The PR review/fix skills delegate Steps 3–6 to `skills/pr-review-engine/SKILL.md`, which walks `skills/pr-review-engine/agents/*.md` and dispatches one sub-agent per matching file in parallel. Baseline agents always fire; conditional agents fire when their trigger flag matches the diff (Web3, React/Next, Tailwind/styling, CI/release). Shared rubric content lives in `skills/pr-review-engine/references/` and is loaded on demand by agents that cite it.
 
@@ -28,7 +28,7 @@ The PR review/fix skills delegate Steps 3–6 to `skills/pr-review-engine/SKILL.
 - `gh` CLI authenticated (`gh auth status`) — for the GitHub skills.
 - `git` ≥ 2.30.
 
-18 rubric skills (from the [skills.sh](https://skills.sh) registry: 16 Vercel-published + 2 community) are *auto-installed* by the `SessionStart` hook the first time the plugin is loaded. See the root `README.md` / `CLAUDE.md` for the full inventory and per-agent attribution. When a skill is absent at review time, the consuming agent logs a degradation message and falls back to its inline rubric — no hard failure.
+17 rubric skills (from the [skills.sh](https://skills.sh) registry: 16 Vercel-published + 1 community) are *auto-installed* by the `SessionStart` hook the first time the plugin is loaded. See the root `README.md` / `CLAUDE.md` for the full inventory and per-agent attribution. When a skill is absent at review time, the consuming agent logs a degradation message and falls back to its inline rubric — no hard failure.
 
 ## Install (as a marketplace plugin)
 

@@ -39,7 +39,7 @@ One-way arrow: the four PR-flow skills (`pr-review-gh`, `pr-review-local`, `pr-f
 
 ## Rubric prereqs (auto-installed)
 
-18 external skills from the [skills.sh](https://skills.sh) registry serve as runtime rubric for the conditional personas (16 Vercel-published, 2 community: `tailwind-design-system`, `github-actions-docs`). They are *not* Claude Code plugin dependencies (the `dependencies` field in `plugin.json` only resolves other plugins) — they're standalone skills installed via `npx skills add`.
+17 external skills from the [skills.sh](https://skills.sh) registry serve as runtime rubric for the conditional personas (16 Vercel-published, 1 community: `tailwind-design-system`). They are *not* Claude Code plugin dependencies (the `dependencies` field in `plugin.json` only resolves other plugins) — they're standalone skills installed via `npx skills add`.
 
 | Skill | Source | Backs persona |
 |---|---|---|
@@ -57,7 +57,6 @@ One-way arrow: the four PR-flow skills (`pr-review-gh`, `pr-review-local`, `pr-f
 | `turborepo` | `vercel/turborepo` | `ci-security` (when turbo.json touched) |
 | `deploy-to-vercel` | `vercel-labs/agent-skills` | `release-integrity` (when vercel.json / deploy touched) |
 | `vercel-cli-with-tokens` | `vercel-labs/agent-skills` | `release-integrity` (when vercel CLI touched) |
-| `github-actions-docs` | `xixu-me/skills` | `ci-security` |
 | `agent-browser` | `vercel-labs/agent-browser` | utility (browser automation) |
 | `find-skills` | `vercel-labs/skills` | utility (skill discovery) |
 | `before-and-after` | `vercel-labs/before-and-after` | utility (visual diff) |

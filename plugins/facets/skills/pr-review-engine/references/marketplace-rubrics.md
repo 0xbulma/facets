@@ -40,7 +40,6 @@ N agents on the same diff.
 | `turborepo`                      | `ci-security` (when turbo.json touched)                       |
 | `deploy-to-vercel`               | `release-integrity` (when vercel.json / vercel deploy)        |
 | `vercel-cli-with-tokens`         | `release-integrity` (when vercel CLI usage)                   |
-| `github-actions-docs`            | `ci-security`                                                 |
 
 ## Why this lives in `references/`
 
@@ -69,8 +68,9 @@ once and use a shared resolved-path map — worth doing if a
 marketplace skill ever grows to >50 KB.
 
 The companion topic-specific references (`references/secrets.md`,
-`references/injection.md`, `references/effect-cleanup.md`) extract
+`references/injection.md`, `references/effect-cleanup.md`,
+`references/github-actions.md`) extract
 shared **rubric content** (not just discovery), eliminating cross-agent
-inline duplication for those three concerns. Consumer agents
+inline duplication for these concerns. Consumer agents
 cross-check those files via prose pointer lines instead of restating
 the rubric.

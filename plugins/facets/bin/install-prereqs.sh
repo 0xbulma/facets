@@ -12,7 +12,7 @@
 #   - /facets:setup skill (manual, verbose)
 #
 # Skill source: vercel-labs/agent-skills + addyosmani/web-quality-skills +
-#               wshobson/agents + xixu-me/skills (skills.sh registry).
+#               wshobson/agents (skills.sh registry).
 #
 
 set -u  # do NOT set -e — we want to keep trying other skills if one fails
@@ -86,8 +86,7 @@ deploy-to-vercel                  vercel-labs/agent-skills@deploy-to-vercel
 vercel-cli-with-tokens            vercel-labs/agent-skills@vercel-cli-with-tokens
 find-skills                       vercel-labs/skills@find-skills
 before-and-after                  vercel-labs/before-and-after@before-and-after
-tailwind-design-system            wshobson/agents@tailwind-design-system
-github-actions-docs               xixu-me/skills@github-actions-docs'
+tailwind-design-system            wshobson/agents@tailwind-design-system'
 
 installed=0
 skipped=0

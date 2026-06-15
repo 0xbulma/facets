@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # /facets:setup — Install Prereq Rubric Skills
 
-Installs the 18 rubric skills used by the conditional review agents. Skills already present are skipped. Failure on any one skill does not abort the others.
+Installs the 17 rubric skills used by the conditional review agents. Skills already present are skipped. Failure on any one skill does not abort the others.
 
 A `SessionStart` hook also runs this in the background on every Claude Code session, so this manual command is only needed when:
 
@@ -17,7 +17,7 @@ A `SessionStart` hook also runs this in the background on every Claude Code sess
 
 ## What gets installed
 
-18 rubric skills (16 Vercel-published, 2 community). Most back a conditional persona; a few are utilities.
+17 rubric skills (16 Vercel-published, 1 community). Most back a conditional persona; a few are utilities.
 
 | Skill | Source | Used by persona / role |
 |---|---|---|
@@ -35,7 +35,6 @@ A `SessionStart` hook also runs this in the background on every Claude Code sess
 | `turborepo` | `vercel/turborepo` | `ci-security` (when turbo.json touched) |
 | `deploy-to-vercel` | `vercel-labs/agent-skills` | `release-integrity` (when vercel.json / deploy touched) |
 | `vercel-cli-with-tokens` | `vercel-labs/agent-skills` | `release-integrity` (when vercel CLI touched) |
-| `github-actions-docs` | `xixu-me/skills` | `ci-security` |
 | `agent-browser` | `vercel-labs/agent-browser` | utility (browser automation, not a review rubric) |
 | `find-skills` | `vercel-labs/skills` | utility (skill discovery) |
 | `before-and-after` | `vercel-labs/before-and-after` | utility (visual diff screenshots) |
