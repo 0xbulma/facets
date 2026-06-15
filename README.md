@@ -15,7 +15,7 @@
 >
 > **Self-review every _facet_ of your PR — then ship it.** A 16-agent Claude review engine that runs locally, with no cloud review bill.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with eleven user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 18 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 2 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with eleven user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -27,7 +27,7 @@ Four commands inside Claude Code, in order:
 /plugin marketplace add 0xbulma/facets   # 1 · add the marketplace (one-time)
 /plugin install facets@facets            # 2 · install the plugin (one-time)
 /reload-plugins                          # 3 · reload to load the plugin + its /facets:setup command
-/facets:setup                            # 4 · install the 18 rubric deps + verify — one ✓ per skill
+/facets:setup                            # 4 · install the 17 rubric deps + verify — one ✓ per skill
 ```
 
 Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see [Prerequisites](#other-prerequisites).
@@ -107,7 +107,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 
 ## Rubric prereqs (auto-installed)
 
-18 external skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 2 community) are installed automatically on first session after plugin install via a `SessionStart` hook. Idempotent — re-runs skip already-installed skills.
+17 external skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 1 community) are installed automatically on first session after plugin install via a `SessionStart` hook. Idempotent — re-runs skip already-installed skills.
 
 | Skill | Source | Domain | Persona it backs |
 |---|---|---|---|
@@ -125,7 +125,6 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 | `turborepo` | `vercel/turborepo` | Monorepo build orchestration | `ci-security` |
 | `deploy-to-vercel` | `vercel-labs/agent-skills` | Vercel deployment | `release-integrity` |
 | `vercel-cli-with-tokens` | `vercel-labs/agent-skills` | Vercel CLI / tokens | `release-integrity` |
-| `github-actions-docs` | `xixu-me/skills` | GitHub Actions docs | `ci-security` |
 | `agent-browser` | `vercel-labs/agent-browser` | Browser automation | utility |
 | `find-skills` | `vercel-labs/skills` | Skill discovery | utility |
 | `before-and-after` | `vercel-labs/before-and-after` | Visual before/after diff | utility |
@@ -134,7 +133,7 @@ If any are missing at review time, the consuming persona logs a degradation warn
 
 ### Why not plugin `dependencies`?
 
-Claude Code's `plugin.json` `dependencies` field only resolves other **plugins** (in the marketplace ecosystem). The 18 rubric skills above live in the parallel [skills.sh](https://skills.sh) / `npx skills` ecosystem, so we install them via SessionStart hook + a verbose `/facets:setup` skill instead.
+Claude Code's `plugin.json` `dependencies` field only resolves other **plugins** (in the marketplace ecosystem). The 17 rubric skills above live in the parallel [skills.sh](https://skills.sh) / `npx skills` ecosystem, so we install them via SessionStart hook + a verbose `/facets:setup` skill instead.
 
 ## Other prerequisites
 
@@ -156,7 +155,7 @@ From inside Claude Code:
 # 3. Reload so the plugin and its commands (incl. /facets:setup) load
 /reload-plugins
 
-# 4. Install the 18 rubric dependencies and verify — one ✓ per skill (required)
+# 4. Install the 17 rubric dependencies and verify — one ✓ per skill (required)
 /facets:setup
 #    Runs bin/install-prereqs.sh: fetches each missing skill via `npx skills add`.
 #    First run ~30-90s; re-runs skip already-installed skills (idempotent).
@@ -174,7 +173,7 @@ Test the plugin straight from a clone, no marketplace round-trip:
 claude --plugin-dir ./plugins/facets
 ```
 
-The SessionStart hook fires the same way; the 18 rubric skills auto-install on session start.
+The SessionStart hook fires the same way; the 17 rubric skills auto-install on session start.
 
 ## Update
 
@@ -209,7 +208,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `ai-sdk` — `<HAS_AI_SDK>` — Vercel AI SDK usage, streaming, tool calls, structured output, useChat. Loads `ai-sdk`, `ai-elements`, `streamdown`.
 - `api-security` — `<HAS_SERVER_API>` — authn/authz on routes and server actions, boundary input validation, webhook signature verification, SSRF, server-held signing keys.
 - `web3` — `<HAS_WEB3>` — contract calls, permits, chainId validation, signature handling, vendored `.sol` diffs.
-- `ci-security` — `<HAS_WORKFLOWS>` — workflow injection, action pinning, `permissions:` scopes, secret exposure. Loads `github-actions-docs`, `turborepo`.
+- `ci-security` — `<HAS_WORKFLOWS>` — workflow injection, action pinning, `permissions:` scopes, secret exposure. Uses the in-repo `references/github-actions.md` hardening rubric; loads `turborepo`.
 - `release-integrity` — `<HAS_RELEASE>` — publish flow, provenance, release-commit signing, Changesets wiring. Loads `deploy-to-vercel`, `vercel-cli-with-tokens`.
 - `dependencies` — `<HAS_DEPS>` — lockfile drift, `.npmrc` hygiene, typosquats, postinstall scripts.
 - `runtime-validation` — `<HAS_ROUTE_UI>` — boots the dev server, navigates the changed route(s), captures console errors / network 4xx-5xx / screenshots. Loads `agent-browser`; `tib-ship` excludes it from its iteration loop and runs it once after static convergence.

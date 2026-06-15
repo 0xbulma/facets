@@ -305,7 +305,7 @@ setup() {
   # Only treat backticked tokens as consumer names if a matching agent
   # file actually exists under $AGENTS_DIR/<name>.md — otherwise we'd
   # pick up incidental code-formatted prose like `eval()` or `0x...`.
-  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md; do
+  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md; do
     ref_name=$(basename "$ref_file")
     consumers=$(awk '/^## Consumers/,EOF' "$ref_file" | grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | sort -u)
     for c in $consumers; do

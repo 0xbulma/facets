@@ -1,6 +1,6 @@
 ---
 name: ci-security
-version: 1.0.0
+version: 1.1.0
 kind: conditional
 trigger: HAS_WORKFLOWS
 applies: |
@@ -29,8 +29,6 @@ The trust boundary that runs our code. CI runs with privileged tokens; a bad wor
 Discover supplemental rubric skills via Bash. Each provides authoritative docs the persona uses on top of its own rubric:
 
 ```bash
-GHA_RUBRIC=$(find ~/.claude -type f -name SKILL.md -path "*github-actions-docs*" 2>/dev/null | head -1)
-
 # Conditional on the diff touching Turborepo surface.
 if grep -lE "turbo\\.json|from ['\"]turbo|\"turbo\":" <CHANGED_FILES> >/dev/null 2>&1; then
   TURBO_RUBRIC=$(find ~/.claude -type f -name SKILL.md -path "*turborepo*" 2>/dev/null | head -1)
@@ -49,6 +47,8 @@ Fires when `<HAS_WORKFLOWS>` is true — any changed file matches:
 
 ## Prompt must include
 
+Cross-check `references/github-actions.md` for the canonical GitHub Actions hardening rubric (the in-repo source of truth, distilled from GitHub's official security-hardening docs); the subsections below narrow it to the highest-signal checks on the diff.
+
 ### Workflow injection (CRITICAL)
 
 Cross-check `references/injection.md` for the canonical injection rubric; this section narrows it to the GitHub Actions expression-interpolation surface.
@@ -59,15 +59,14 @@ Cross-check `references/injection.md` for the canonical injection rubric; this s
 
 ### Action pinning (HIGH)
 
-- `uses:` lines that reference a floating ref — branch (`@main`, `@master`) or floating tag (`@v4`, `@v3.5`) — for any third-party action. Pin to a full commit SHA with the human-readable tag in a trailing comment: `uses: actions/checkout@<40-char-sha>  # v4.1.7`.
-- Exception: first-party `actions/*` and `github/*` actions may use tagged versions when the repo has a Dependabot policy that bumps them; flag with a note when no such policy exists in `.github/dependabot.yml`.
+- Third-party `uses:` on a floating ref — branch (`@main`, `@master`) or floating tag (`@v4`, `@v3.5`). Flag for a full commit-SHA pin (fix shape in the reference above). First-party `actions/*` / `github/*` may stay on tags only when `.github/dependabot.yml` bumps them — note when no such policy exists.
 - Newly added actions from unknown publishers — surface the publisher name and ask whether it was reviewed.
 
 ### Workflow `permissions:` scopes (HIGH)
 
-- Missing top-level `permissions:` block in a new workflow — defaults to write-all on classic-permissions repos. Require an explicit `permissions:` block (job-level if scopes differ between jobs).
-- Wide scopes where narrow ones would do: `contents: write` when only `contents: read` is needed; `id-token: write` outside of OIDC / provenance-publishing jobs; `pull-requests: write` outside of bot-comment jobs.
-- `secrets: inherit` passed to reusable workflows — flag and request explicit secret listing.
+- New workflow with no top-level `permissions:` block — defaults to write-all on classic-permissions repos. Require an explicit block (job-level when scopes differ).
+- Over-scoped where narrow would do: `contents: write` when `read` suffices; `id-token: write` outside OIDC / provenance jobs; `pull-requests: write` outside bot-comment jobs.
+- `secrets: inherit` to a reusable workflow — flag and request an explicit secret list.
 
 ### Secret exposure in workflows (HIGH)
 
@@ -100,7 +99,7 @@ Apply only the mechanical fixes that have a single correct shape:
 changing `secrets:` plumbing across reusable workflows, or modifying
 which workflows fire on which events — surface those for human review.
 
-Cross-check `references/injection.md` and `references/secrets.md`.
+Cross-check `references/injection.md`, `references/secrets.md`, and `references/github-actions.md`.
 
 ## Out-of-scope reminders (for the sub-agent)
 
