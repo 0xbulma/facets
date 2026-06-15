@@ -19,6 +19,19 @@ A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-market
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
+## Quick install
+
+Four commands inside Claude Code, in order:
+
+```
+/plugin marketplace add 0xbulma/facets   # 1 · add the marketplace (one-time)
+/plugin install facets@facets            # 2 · install the plugin (one-time)
+/reload-plugins                          # 3 · reload to load the plugin + its /facets:setup command
+/facets:setup                            # 4 · install the 18 rubric deps + verify — one ✓ per skill
+```
+
+Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see [Prerequisites](#other-prerequisites).
+
 ## What's in here
 
 ```
@@ -140,16 +153,15 @@ From inside Claude Code:
 # 2. Install the plugin (one-time)
 /plugin install facets@facets
 
-# 3. Reload so the SessionStart hook fires
+# 3. Reload so the plugin and its commands (incl. /facets:setup) load
 /reload-plugins
-#    (or quit and start a new Claude Code session)
-#
-#    On first fire, the hook runs bin/install-prereqs.sh in the background,
-#    fetching the 18 rubric skills via `npx skills add`. First run takes
-#    ~30-90s. Subsequent sessions are instant (idempotent skip).
 
-# 4. Optional — verify install state, see one ✓ per skill
+# 4. Install the 18 rubric dependencies and verify — one ✓ per skill (required)
 /facets:setup
+#    Runs bin/install-prereqs.sh: fetches each missing skill via `npx skills add`.
+#    First run ~30-90s; re-runs skip already-installed skills (idempotent).
+#    (A brand-new Claude Code session also runs this in the background via the
+#     SessionStart hook, best-effort — but this explicit run is the guaranteed install.)
 ```
 
 Make sure `npx` (Node.js), `gh` (authenticated), and `git` ≥ 2.30 are on `PATH` before step 1 — see [Prerequisites](#other-prerequisites) below.
