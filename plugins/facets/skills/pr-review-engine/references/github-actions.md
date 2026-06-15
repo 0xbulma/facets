@@ -79,10 +79,6 @@ the guidance changes:
 4. **Secrets**: bind via `env:` and reference `$VAR`; mask non-secret sensitive
    values with `::add-mask::`.
 
-Do **not** auto-apply: removing a `pull_request_target` trigger, re-plumbing
-`secrets:` across reusable workflows, or changing which events fire which
-workflows — surface those for human review.
-
 ## Out of scope
 
 - Release / publish flow, provenance, Changesets — see `release-integrity`.

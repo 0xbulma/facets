@@ -71,6 +71,6 @@ The companion topic-specific references (`references/secrets.md`,
 `references/injection.md`, `references/effect-cleanup.md`,
 `references/github-actions.md`) extract
 shared **rubric content** (not just discovery), eliminating cross-agent
-inline duplication for those three concerns. Consumer agents
+inline duplication for these concerns. Consumer agents
 cross-check those files via prose pointer lines instead of restating
 the rubric.
