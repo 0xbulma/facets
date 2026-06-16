@@ -150,7 +150,7 @@ Next steps:
   2. Set Status to "Approved" when reviewers sign off.
   3. As you ship, tick the Implementation Steps checkboxes and Verification
      Checklist items. Move Status to "In Progress" → "Shipped".
-  4. Optionally, run /facets:extract-plan <relative-path> to create Linear
+  4. Optionally, run /facets:convert-tib-to-linear <relative-path> to create Linear
      milestones + issues from this TIP.
 ```
 

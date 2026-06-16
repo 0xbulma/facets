@@ -12,7 +12,7 @@ Ten user-invokable slash-command skills + one engine skill (`pr-review-engine`, 
 **PR / workflow authoring** (repo-agnostic; no persona library)
 
 - **`/facets:pr-create`** — open a draft PR from the current diff. Branch, title, body, and label derived without asking.
-- **`/facets:extract-plan <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan with milestones and dependency-aware issues.
+- **`/facets:convert-tib-to-linear <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan with milestones and dependency-aware issues.
 - **`/facets:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
 - **`/facets:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
 - **`/facets:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; the user pushes and opens the PR manually.

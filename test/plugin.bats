@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create extract-plan tib-create pr-switch tip-create tib-ship ts-conventions pr-review-engine"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions pr-review-engine"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -425,7 +425,7 @@ setup() {
   echo "$output" | grep -q "facets:pr-review-gh"
   echo "$output" | grep -q "facets:pr-review-local"
   echo "$output" | grep -q "facets:pr-create"
-  echo "$output" | grep -q "facets:extract-plan"
+  echo "$output" | grep -q "facets:convert-tib-to-linear"
   echo "$output" | grep -q "facets:tib-create"
   echo "$output" | grep -q "facets:tip-create"
   echo "$output" | grep -q "facets:tib-ship"

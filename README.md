@@ -46,7 +46,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │   ├── pr-review-gh/SKILL.md          # /facets:pr-review-gh <PR>
 │   │   ├── pr-fix/SKILL.md                # /facets:pr-fix <PR>
 │   │   ├── pr-create/SKILL.md             # /facets:pr-create
-│   │   ├── extract-plan/SKILL.md          # /facets:extract-plan <doc> [project]
+│   │   ├── convert-tib-to-linear/SKILL.md # /facets:convert-tib-to-linear <doc> [project]
 │   │   ├── tib-create/SKILL.md            # /facets:tib-create <title>
 │   │   ├── tip-create/SKILL.md            # /facets:tip-create <title> [--tib <path>]…
 │   │   ├── tib-ship/SKILL.md              # /facets:tib-ship <tib-path> [--max-iters N] [--no-runtime]
@@ -92,7 +92,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 **PR / workflow authoring**
 
 - **`/facets:pr-create`** — open a draft PR from the current diff. Derives branch name, title, body, and label without asking.
-- **`/facets:extract-plan <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan (milestones + issues with dependencies).
+- **`/facets:convert-tib-to-linear <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan (milestones + issues with dependencies).
 - **`/facets:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
 - **`/facets:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
 - **`/facets:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; does not push or open a PR.

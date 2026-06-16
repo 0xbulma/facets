@@ -56,7 +56,7 @@ _Optional — remove this sub-section if the solution does not require phased de
 If the solution has a meaningful order of operations, outline the high-level phases here. Each
 phase should have a clear goal and a rough indication of what lands in it. The point is to let
 reviewers chime in on sequencing, dependencies, and gotchas _before_ execution begins — and to
-give the `/facets:extract-plan` workflow a starting point for Linear milestones.
+give the `/facets:convert-tib-to-linear` workflow a starting point for Linear milestones.
 
 - **Phase 1 — [name]:** What lands in this phase and why it comes first.
 - **Phase 2 — [name]:** …

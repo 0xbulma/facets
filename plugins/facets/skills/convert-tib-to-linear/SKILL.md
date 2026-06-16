@@ -1,17 +1,17 @@
 ---
-name: extract-plan
-version: 1.1.0
-description: Convert a technical document (TIB / ADR / RFC / design doc) into a Linear project plan with milestones and issues. Use when user says /facets:extract-plan, "extract plan from this doc", "turn this TIB into Linear issues", "create Linear issues from this design doc", or "make a project plan from this RFC". Takes a doc path and optional Linear project name/ID.
+name: convert-tib-to-linear
+version: 2.0.0
+description: Convert a technical document (TIB / ADR / RFC / design doc) into a Linear project plan with milestones and issues. Use when user says /facets:convert-tib-to-linear, "turn this TIB into Linear issues", "create Linear issues from this design doc", or "make a project plan from this RFC". Takes a doc path and optional Linear project name/ID.
 ---
 
-# /facets:extract-plan — Document → Linear Project Plan
+# /facets:convert-tib-to-linear — Document → Linear Project Plan
 
 Read a technical document (TIB, ADR, RFC, design doc, etc.) and generate a Linear project plan with milestones and implementation issues from it.
 
 ## Arguments
 
 - `$ARGUMENTS` should contain: `<doc-file-path> [linear-project-name-or-id]`
-- Example: `/facets:extract-plan docs/tibs/TIB-2026-04-30-rate-limiting.md "Rate Limiting"`
+- Example: `/facets:convert-tib-to-linear docs/tibs/TIB-2026-04-30-rate-limiting.md "Rate Limiting"`
 
 ## Pre-conditions
 

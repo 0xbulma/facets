@@ -6,7 +6,7 @@
     {
       "name": "facets",
       "source": "./plugins/facets",
-      "description": "Self-review a PR before it ships — locally, in seconds, without paying for a cloud review service. Eleven user-invokable slash commands (pr-switch, pr-review-local, pr-review-gh, pr-fix, pr-create, tib-create, tip-create, tib-ship, extract-plan, ts-conventions, setup) plus a shared pr-review-engine dispatcher. Reviews fan out a multi-agent panel against the diff (correctness, error-handling, performance, security, CI, deps, React/Next, AI-SDK, Web3, accessibility, runtime-validation, ...), post inline comments to GitHub when desired (never auto-approves), and apply mechanical fixes on demand. Tuned for TS/React/Vercel codebases.",
+      "description": "Self-review a PR before it ships — locally, in seconds, without paying for a cloud review service. Eleven user-invokable slash commands (pr-switch, pr-review-local, pr-review-gh, pr-fix, pr-create, tib-create, tip-create, tib-ship, convert-tib-to-linear, ts-conventions, setup) plus a shared pr-review-engine dispatcher. Reviews fan out a multi-agent panel against the diff (correctness, error-handling, performance, security, CI, deps, React/Next, AI-SDK, Web3, accessibility, runtime-validation, ...), post inline comments to GitHub when desired (never auto-approves), and apply mechanical fixes on demand. Tuned for TS/React/Vercel codebases.",
       "category": "code-review",
       "keywords": ["pr-review", "code-review", "github", "personas", "vercel", "react", "typescript", "linear", "adr", "rfc", "tib"]
     }
