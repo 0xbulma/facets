@@ -132,15 +132,12 @@ Adding an agent = drop a new file in `plugins/facets/skills/pr-review-engine/age
 ## Testing
 
 ```bash
-bats test/                                              # plugin.bats + test_build_changed_lines.bats
-(cd test && python3 -m unittest test_validate_findings) # finding-validator unit tests
-pnpm install && pnpm verify                             # inject-wallet TS scripts: Biome + tsc + Vitest
+bats test/                  # plugin.bats — manifest, frontmatter, version fields, agent/trigger invariants
+pnpm install && pnpm verify # all skill TS scripts: Biome + tsc + Vitest
 ```
 
 - `test/plugin.bats` — manifest shape, skill discovery, frontmatter (including the `version:` field), agent/trigger invariants, no leaked legacy paths, hook + bin presence, and (if `claude` CLI is on PATH) a local plugin-dir smoke install.
-- `test/test_build_changed_lines.bats` — the `CHANGED_LINES` builder script (hunk parsing, deletions, renames).
-- `test/test_validate_findings.py` — the finding validator (WHAT/FIX schema, ±15 window, doc-example filter, runtime sentinel).
-- **`inject-wallet` TypeScript scripts** — the only TS in the repo. Root `biome.json` (strict, scoped to `plugins/facets/skills/inject-wallet/scripts/**`), root `tsconfig.json` (extends `tsconfig.base.json`), root `vitest.config.ts`. `pnpm verify` runs `biome check` + `tsc -p tsconfig.json` + `vitest run`. The scripts themselves run dependency-free via Node's native type-stripping; the toolchain is dev-only (`node_modules/` is gitignored).
+- **Skill TypeScript scripts** — the only non-doc source in the repo. Root `biome.json` (strict), `tsconfig.json` (extends `tsconfig.base.json`), `vitest.config.ts` — all scoped to `plugins/facets/skills/**/scripts/**`. `pnpm verify` runs `biome check` + `tsc -p tsconfig.json` + `vitest run`. Covers the `inject-wallet` scripts and the `pr-review-engine` helpers (`build-changed-lines.ts`, `validate-findings.ts`, each with a colocated `*.test.ts`). The scripts run dependency-free via Node's native type-stripping (Node ≥ 22.18); the toolchain is dev-only (`node_modules/` is gitignored).
 
 ## Common gotchas
 

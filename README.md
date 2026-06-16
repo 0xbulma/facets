@@ -73,12 +73,12 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │       │   ├── styling.md             # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
 │   │       │   └── web3.md                # conditional (<HAS_WEB3>)
 │   │       ├── references/                # shared rubrics loaded on demand
-│   │       └── scripts/                   # deterministic helpers (changed-lines, finding validation)
+│   │       └── scripts/                   # deterministic helpers, TypeScript run via node (changed-lines, finding validation)
 │   ├── hooks/hooks.json                   # SessionStart auto-install
 │   ├── bin/install-prereqs.sh             # idempotent prereq installer
 │   └── README.md
 ├── CLAUDE.md                              # guidance for Claude Code working in this repo
-└── test/                                  # bats + python suites (manifest, frontmatter, scripts)
+└── test/                                  # bats suite (manifest, frontmatter); TS script tests run via pnpm verify
 ```
 
 ## Skills
@@ -144,7 +144,7 @@ Claude Code's `plugin.json` `dependencies` field only resolves other **plugins**
 
 - `gh` CLI authenticated (`gh auth status`) — for the GitHub PR skills.
 - `git` ≥ 2.30 — for `--name-status --find-renames`.
-- `npx` (Node) — for the prereq installer.
+- **Node ≥ 22.18** — the review skills' bundled helpers (`build-changed-lines.ts`, `validate-findings.ts`) run via Node's native TypeScript type-stripping; `npx` (Node) also drives the prereq installer. (Python is no longer required.)
 
 ## Install
 
@@ -190,7 +190,7 @@ The plugin's `version` field in `plugins/facets/.claude-plugin/plugin.json` cont
 
 ## Local development
 
-After editing any file under `plugins/facets/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks, changed-lines builder) and `cd test && python3 -m unittest test_validate_findings` (finding validator) to validate.
+After editing any file under `plugins/facets/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks) and `pnpm verify` (Biome + tsc + Vitest — covers the changed-lines builder and finding validator, now TypeScript) to validate.
 
 See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versioning rules, and forking notes.
 

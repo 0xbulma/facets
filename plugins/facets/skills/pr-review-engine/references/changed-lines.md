@@ -1,6 +1,6 @@
 # Changed-lines build — edge cases
 
-Reference for Step 3 of `SKILL.md`. The deterministic build is in `scripts/build-changed-lines.sh`; this file documents the rules the script implements so reviewers can adjust them.
+Reference for Step 3 of `SKILL.md`. The deterministic build is in `scripts/build-changed-lines.ts`; this file documents the rules the script implements so reviewers can adjust them.
 
 ## Standard hunk
 
@@ -38,7 +38,7 @@ The script emits compact JSON to stdout:
 }
 ```
 
-Pipe to `/tmp/changed-lines.json` (or any path the dispatcher chooses) and pass the path to `scripts/validate-findings.py` via `--changed-lines`.
+Pipe to `/tmp/changed-lines.json` (or any path the dispatcher chooses) and pass the path to `scripts/validate-findings.ts` via `--changed-lines`.
 
 ## Known limitations
 

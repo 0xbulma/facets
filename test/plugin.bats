@@ -230,12 +230,12 @@ setup() {
 @test "engine ships scripts/ with the three bundled helpers" {
   # The Anthropic Skills guide (p. 26) recommends scripting deterministic
   # logic instead of expressing it only in language. The three helpers
-  # implement the diff-line build, the finding validator, and the
-  # fix-rubric agent discovery — locking the file list catches a future
-  # edit that removes any of them.
+  # implement the diff-line build (TS, run via `node`), the finding validator
+  # (TS), and the fix-rubric agent discovery (bash) — locking the file list
+  # catches a future edit that removes any of them.
   SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
-  [ -x "$SCRIPTS_DIR/build-changed-lines.sh" ]   || { echo "missing/non-executable: build-changed-lines.sh" >&2; return 1; }
-  [ -x "$SCRIPTS_DIR/validate-findings.py" ]     || { echo "missing/non-executable: validate-findings.py" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/build-changed-lines.ts" ]   || { echo "missing/non-executable: build-changed-lines.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/validate-findings.ts" ]     || { echo "missing/non-executable: validate-findings.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
 }
 
