@@ -51,6 +51,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │   ├── tip-create/SKILL.md            # /facets:tip-create <title> [--tib <path>]…
 │   │   ├── tib-ship/SKILL.md              # /facets:tib-ship <tib-path> [--max-iters N] [--no-runtime]
 │   │   ├── ts-conventions/SKILL.md        # /facets:ts-conventions [--preview]
+│   │   ├── inject-wallet/SKILL.md        # /facets:inject-wallet [--anvil|--rpc] [--url …]
 │   │   ├── setup/SKILL.md                 # /facets:setup
 │   │   └── pr-review-engine/              # shared review engine (was lib/ + personas/)
 │   │       ├── SKILL.md                   # dispatcher: Steps 3–6
@@ -100,6 +101,10 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 **Conventions**
 
 - **`/facets:ts-conventions [--preview]`** — write/refresh structured coding conventions in the global `~/.claude/CLAUDE.md`, inside idempotent managed markers. Two sections: a **language-agnostic `## Engineering principles`** part in three altitude tiers — system/solution architecture (public-API contract, layering, package boundaries, security & trust boundaries, supply chain, observability, change management), application architecture, and module/code design — plus anti-patterns, written for any repo; and a **`## TypeScript conventions`** part (preferred stack, frontend stack, type system & strictness incl. no-`any`/no-cast/no-`enum` with per-rule lint enforcement, modules & exports, tests, React/Next, web3) written when a TS stack is detected and tailored to the repo's linter/test runner. Writes only to the global config — never a project file; a repo's own conventions always win. `--preview` prints the block without writing. The local review/ship flows nudge you to run it when a TS repo has no conventions doc.
+
+**dApp testing** (TypeScript; Reown AppKit / wagmi)
+
+- **`/facets:inject-wallet`** — boot a dev server + browser and inject a test wallet (an EIP-1193 provider announced over EIP-6963) so the agent gets past the Reown AppKit connect modal, then screenshot the connected UI. Backed by a local Anvil fork or a read-only RPC; reads/signing/sends proxy to the backend, so there is no in-browser crypto. Best-effort modal auto-connect with an `agent-browser` snapshot fallback, plus an env-gated wagmi `mock`-connector path for SIWE-heavy apps. Needs Node ≥ 22.18 and `agent-browser`.
 
 **Utility**
 

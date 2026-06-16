@@ -1,0 +1,19 @@
+{
+  "name": "facets-marketplace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "biome:check": "biome check .",
+    "biome:fix": "biome check --write .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "biome check . && tsc -p tsconfig.json && vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.14",
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}

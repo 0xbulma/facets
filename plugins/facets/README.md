@@ -1,6 +1,6 @@
 # facets
 
-Ten user-invokable slash-command skills + one engine skill (`pr-review-engine`, invoked by other skills, not directly).
+Eleven user-invokable slash-command skills + one engine skill (`pr-review-engine`, invoked by other skills, not directly).
 
 **PR navigation / review / fix** (review side delegates to the shared `pr-review-engine` skill + its 16-agent library)
 
@@ -16,6 +16,10 @@ Ten user-invokable slash-command skills + one engine skill (`pr-review-engine`, 
 - **`/facets:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
 - **`/facets:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
 - **`/facets:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; the user pushes and opens the PR manually.
+
+**dApp testing** (TypeScript; Reown AppKit / wagmi)
+
+- **`/facets:inject-wallet`** — boot a dev server + browser, inject a test wallet (EIP-1193 + EIP-6963) so the agent gets past the Reown AppKit connect modal, then screenshot the connected UI. Anvil-fork or read-only-RPC backend; env-gated wagmi `mock`-connector fallback. Needs Node ≥ 22.18 and `agent-browser`.
 
 **Utility**
 

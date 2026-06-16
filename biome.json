@@ -1,0 +1,86 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.14/schema.json",
+	"plugins": ["./biome-plugins/no-type-assertion.grit"],
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["plugins/facets/skills/inject-wallet/scripts/**/*.ts"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 100
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"correctness": {
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error"
+			},
+			"style": {
+				"noEnum": "error",
+				"noNonNullAssertion": "error",
+				"noParameterAssign": "error",
+				"noNestedTernary": "warn",
+				"noUselessElse": "error",
+				"useConsistentArrayType": {
+					"level": "warn",
+					"options": { "syntax": "shorthand" }
+				},
+				"useNamingConvention": {
+					"level": "error",
+					"options": {
+						"strictCase": false,
+						"conventions": [
+							{
+								"selector": { "kind": "function" },
+								"formats": ["camelCase", "PascalCase", "CONSTANT_CASE"]
+							},
+							{
+								"selector": { "kind": "typeLike" },
+								"formats": ["PascalCase"]
+							},
+							{
+								"selector": { "kind": "const" },
+								"match": "_*(.+?)_*",
+								"formats": ["camelCase", "PascalCase", "CONSTANT_CASE"]
+							},
+							{
+								"selector": { "kind": "objectLiteralMember" },
+								"match": "[\\$_]*(.+?)_*",
+								"formats": ["camelCase", "PascalCase", "CONSTANT_CASE", "snake_case"]
+							}
+						]
+					}
+				},
+				"useSelfClosingElements": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "error"
+			},
+			"nursery": {
+				"useMaxParams": {
+					"level": "error",
+					"options": { "max": 2 }
+				},
+				"noFloatingPromises": "error",
+				"noMisusedPromises": "error",
+				"noShadow": "error",
+				"useExhaustiveSwitchCases": "error"
+			}
+		}
+	}
+}
