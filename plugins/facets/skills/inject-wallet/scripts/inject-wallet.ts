@@ -19,7 +19,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startAnvil } from "./lib/anvil.ts";
 import { parseArgs, USAGE, UsageError } from "./lib/args.ts";
-import { driveAndScreenshot, hasAgentBrowser } from "./lib/browser.ts";
+import { agentBrowserError, driveAndScreenshot, probeAgentBrowser } from "./lib/browser.ts";
 import { resolveDevCommand, startDevServer } from "./lib/dev-server.ts";
 import { jsonRpc } from "./lib/json-rpc.ts";
 import {
@@ -114,12 +114,14 @@ async function main(): Promise<number> {
 
 	// agent-browser drives the browser in BOTH modes (mock mode only skips the
 	// provider injection, not the navigate/screenshot calls), so the preflight is
-	// mode-independent.
-	if (!options.dryRun && !hasAgentBrowser()) {
-		process.stderr.write(
-			"error: agent-browser not found on PATH (required to drive the browser, in inject and mock modes).\n  install: npm i -g agent-browser && agent-browser install\n  or pass --dry-run to print the plan without running.\n",
-		);
-		return 1;
+	// mode-independent. Probe functionally (--version + doctor) and fail with a
+	// mode-specific remediation before paying to boot Anvil + the dev server.
+	if (!options.dryRun) {
+		const msg = agentBrowserError(probeAgentBrowser());
+		if (msg) {
+			process.stderr.write(msg);
+			return 1;
+		}
 	}
 
 	const cwd = process.cwd();

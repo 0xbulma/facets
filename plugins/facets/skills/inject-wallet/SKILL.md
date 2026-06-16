@@ -1,6 +1,6 @@
 ---
 name: inject-wallet
-version: 0.2.0
+version: 0.3.0
 description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil or an RPC. Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
 ---
 
@@ -27,7 +27,7 @@ result.
 
 - **Node ≥ 22.18** (the CLI is TypeScript, run via Node's native type-stripping).
   Older Node: prefix the command with `npx -y tsx` instead of `node`.
-- **agent-browser** on PATH for inject mode: `npm i -g agent-browser && agent-browser install`. It is the only browser tool that injects a script *before* navigation (`--init-script`); the claude-in-chrome MCP runs JS post-load, too late to seed `window.ethereum`.
+- **agent-browser** on PATH: `npm i -g agent-browser && agent-browser install` — don't skip the second step, it downloads Chrome. Required in **both** modes (it does the navigate + screenshot even in mock mode). It is the only browser tool that injects a script *before* navigation (`--init-script`); the claude-in-chrome MCP runs JS post-load, too late to seed `window.ethereum`. The CLI preflights `agent-browser --version` + `agent-browser doctor` and fails fast with the exact fix if it is missing, broken, or the browser was never installed.
 - **Foundry / `anvil`** on PATH if using `--anvil` (https://getfoundry.sh).
 - A discoverable dev script in the dApp's `package.json` (`dev` / `start` / `serve*`), or pass `--dev-cmd`.
 
