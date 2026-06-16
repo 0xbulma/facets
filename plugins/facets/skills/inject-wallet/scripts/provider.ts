@@ -37,7 +37,28 @@ type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number | string;
 	readonly rpcUrl: string;
+	/** Read-only "view as": report `address` but reject sends/signs (no key held). */
+	readonly impersonated?: boolean;
 };
+
+// Methods that require the address's private key. Under read-only impersonation
+// we hold no key, so these are rejected up front instead of proxied to the
+// backend (where they would fail cryptically or hang the connect flow). This is
+// a deny-list because reads are open-ended (the `default` case proxies any
+// unlisted method); every key-requiring send/sign variant must appear here,
+// including the EIP-5792 batched-send `wallet_sendCalls` modern AppKit emits.
+const WRITE_METHODS = new Set([
+	"eth_sendTransaction",
+	"eth_signTransaction",
+	"personal_sign",
+	"eth_sign",
+	"eth_signTypedData",
+	"eth_signTypedData_v1",
+	"eth_signTypedData_v2",
+	"eth_signTypedData_v3",
+	"eth_signTypedData_v4",
+	"wallet_sendCalls",
+]);
 
 type JsonRpcResponse = { result?: unknown; error?: { code?: number; message?: string } };
 
@@ -168,6 +189,16 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
+		if (cfg.impersonated && WRITE_METHODS.has(method)) {
+			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
+			const error: Error & { code?: number } = new Error(
+				`[e2e-wallet] read-only impersonation: cannot ${method} for ${target} — no private key ` +
+					"is held for this address. Impersonation is view-only; reads proxy to the backend. For " +
+					"sends/signatures, use a key-holding Anvil account (drop --impersonate) or --mode mock.",
+			);
+			error.code = 4100; // EIP-1193 "Unauthorized"
+			throw error;
+		}
 		switch (method) {
 			case "eth_requestAccounts":
 			case "eth_accounts": {

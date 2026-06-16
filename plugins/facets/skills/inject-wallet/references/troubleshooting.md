@@ -35,6 +35,24 @@ The dApp calls `personal_sign`, which the provider proxies to the backend.
 - **EIP-712 typed data**: `eth_signTypedData_v4` is proxied verbatim; ensure your
   Anvil build supports it, else use mock.
 
+## `--impersonate`: sends/signs rejected with "read-only impersonation"
+
+Expected. `--impersonate <0x..>` is a view-as mode — the provider reports an
+address it holds **no key** for, so it rejects `eth_sendTransaction`,
+`personal_sign`, `eth_sign`, and `eth_signTypedData*` up front (EIP-1193 `4100`)
+instead of failing cryptically against the backend. Reads still return that
+address's real on-chain state.
+
+- **Just want the connected screenshot?** The connect helper flips
+  `e2eConnected` on `eth_requestAccounts` *before* any signature, so the
+  screenshot lands even if the dApp then attempts SIWE and gets rejected.
+- **Need a working sign/tx?** Drop `--impersonate` and connect as a key-holding
+  Anvil account (`--anvil`, optionally `--fork-url`), or use the mock connector
+  (`--mode mock`) — see `mock-connector.md`.
+- **Nothing impersonated?** `--impersonate` is ignored in `--mode mock` (the
+  app-side connector chooses the account); the CLI logs a warning when both are
+  passed.
+
 ## Reads fail / CSP blocks the RPC
 
 The injected provider `fetch`es the RPC from the page origin. A strict

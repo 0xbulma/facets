@@ -1,6 +1,6 @@
 ---
 name: inject-wallet
-version: 0.1.0
+version: 0.2.0
 description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil or an RPC. Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
 ---
 
@@ -40,6 +40,7 @@ screenshots under `<cwd>/.context/inject-wallet` — add `.context/` to the dApp
 - Confirm it is an AppKit/wagmi dApp: look for `@reown/appkit`, `createAppKit`, `useAppKit`, or `wagmi` in `package.json` / source.
 - Pick **routes** to capture (the connected pages worth a screenshot).
 - Pick a **backend**: `--anvil` (optionally `--fork-url <rpc>` for realistic balances/txs; Anvil signs `personal_sign`/sends for its unlocked account) or `--rpc <url>` (read-only; good for pure connected-UI screenshots).
+- Optionally **view-as another address** with `--impersonate <0x..>`: connect *as* an arbitrary address (a whale, a specific protocol user, a multisig) and proxy reads to the backend, so the connected UI renders that address's real balances/positions. It is **read-only** — the provider holds no key, so sends and signatures are rejected up front. Pair it with `--rpc <publicRpc>` to view real mainnet state without forking. Not for SIWE / tx flows (see Notes).
 - Pick a **mode**: `inject` (default) or `mock` (the app already wires an env-gated wagmi `mock` connector — see Step 5).
 
 ## Step 2 — Run the orchestrator
@@ -52,6 +53,10 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/inject-wallet/scripts/inject-wallet.ts" \
 # Read-only against a public RPC:
 node "${CLAUDE_PLUGIN_ROOT}/skills/inject-wallet/scripts/inject-wallet.ts" \
   --rpc "$RPC_URL" --routes "/app,/portfolio"
+
+# View any address's connected UI, read-only, against a public RPC:
+node "${CLAUDE_PLUGIN_ROOT}/skills/inject-wallet/scripts/inject-wallet.ts" \
+  --rpc "$RPC_URL" --impersonate 0xWhale… --url /portfolio
 
 # Inspect the plan without booting anything:
 node "${CLAUDE_PLUGIN_ROOT}/skills/inject-wallet/scripts/inject-wallet.ts" \
@@ -118,6 +123,15 @@ skips injection. Wire it per `references/mock-connector.md`, then re-run with
   known, zero value). Never pass a real private key. The mock connector is
   env-gated so it cannot reach production. The injected provider exists only in
   the agent's ephemeral browser session.
+- **`--impersonate` is read-only.** It reports an address you don't hold the key
+  for, so reads return that address's real on-chain state but **sends and
+  signatures are rejected** (the provider throws an EIP-1193 `4100` with a clear
+  message). SIWE login, Permit2, and any typed-data/`personal_sign` step cannot
+  complete — that's inherent, not a bug. For those, connect as a key-holding
+  Anvil account (drop `--impersonate`) or use the mock connector (`--mode mock`,
+  Step 5). The connect helper flips `e2eConnected` on `eth_requestAccounts`
+  *before* any signature, so the connected screenshot still lands even when a
+  later SIWE step is rejected.
 - **How discovery works.** AppKit finds the wallet via legacy `window.ethereum`
   *and* an `eip6963:announceProvider` event (rdns `io.facets.e2ewallet`,
   name "E2E Wallet").
