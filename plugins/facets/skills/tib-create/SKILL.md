@@ -6,7 +6,7 @@ description: Scaffold a new TIB (Technical Implementation Brief — a lightweigh
 
 # /facets:tib-create — Scaffold a New TIB
 
-Create a new TIB (Technical Implementation Brief) markdown file from a template. A TIB is a lightweight ADR/RFC — a dated record of a technical decision, its motivation, alternatives considered, and rollout plan. Once written, it can be fed into `/facets:extract-plan` to generate a Linear project from it.
+Create a new TIB (Technical Implementation Brief) markdown file from a template. A TIB is a lightweight ADR/RFC — a dated record of a technical decision, its motivation, alternatives considered, and rollout plan. Once written, it can be fed into `/facets:convert-tib-to-linear` to generate a Linear project from it.
 
 ## Arguments
 
@@ -72,7 +72,7 @@ Next steps:
   1. Fill in Context, Goals/Non-Goals, Proposed Solution, and Considered Alternatives.
   2. Share for review (PR, doc tool, Slack).
   3. When the decision is accepted, flip Status to `Accepted` and (optionally) run:
-        /facets:extract-plan <relative-path>
+        /facets:convert-tib-to-linear <relative-path>
      to generate a Linear project with milestones and issues from the doc.
 ```
 
