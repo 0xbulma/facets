@@ -2,6 +2,9 @@
   "name": "facets-marketplace",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "biome:check": "biome check .",
     "biome:fix": "biome check --write .",

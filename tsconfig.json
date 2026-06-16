@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["plugins/facets/skills/inject-wallet/scripts/**/*.ts"],
+  "include": ["plugins/facets/skills/**/scripts/**/*.ts"],
   "exclude": ["node_modules"]
 }

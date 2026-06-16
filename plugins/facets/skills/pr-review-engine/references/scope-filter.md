@@ -1,6 +1,6 @@
 # Markdown documentation-example filter
 
-Reference for Step 6 of `SKILL.md`. The deterministic implementation is in `scripts/validate-findings.py`; this file documents the rules.
+Reference for Step 6 of `SKILL.md`. The deterministic implementation is in `scripts/validate-findings.ts`; this file documents the rules.
 
 ## Why this filter exists
 
@@ -38,4 +38,4 @@ If the count is odd, `finding.line` is inside a fenced block → drop and increm
 
 ## Implementation pointer
 
-`scripts/validate-findings.py` carries the regex set, the fence-walking logic, and the `DROPPED_DOC_EXAMPLE` counter. The bats invariant test `engine doc-example filter recognizes tilde fences` locks in the CommonMark `~~~` support so future edits don't silently regress.
+`scripts/validate-findings.ts` carries the regex set, the fence-walking logic, and the `DROPPED_DOC_EXAMPLE` counter. The bats invariant test `engine doc-example filter recognizes tilde fences` locks in the CommonMark `~~~` support so future edits don't silently regress.

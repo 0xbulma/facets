@@ -7,7 +7,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["plugins/facets/skills/inject-wallet/scripts/**/*.ts"]
+		"includes": ["plugins/facets/skills/**/scripts/**/*.ts"]
 	},
 	"formatter": {
 		"enabled": true,
@@ -60,6 +60,11 @@
 							},
 							{
 								"selector": { "kind": "objectLiteralMember" },
+								"match": "[\\$_]*(.+?)_*",
+								"formats": ["camelCase", "PascalCase", "CONSTANT_CASE", "snake_case"]
+							},
+							{
+								"selector": { "kind": "typeProperty" },
 								"match": "[\\$_]*(.+?)_*",
 								"formats": ["camelCase", "PascalCase", "CONSTANT_CASE", "snake_case"]
 							}

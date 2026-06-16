@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.6.1
+version: 0.7.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -63,7 +63,7 @@ git diff --unified=0 $MERGE_BASE..${HEAD_REF}
 Build `CHANGED_LINES` as a map `{ "<file-path>": <sorted-int-set> }` by parsing the unified=0 hunk headers. The deterministic implementation ships as a bundled script — prefer it over re-implementing the parser by hand:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.sh" \
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.ts" \
   --base "$MERGE_BASE" --head "${HEAD_REF}" > /tmp/changed-lines.json
 ```
 
@@ -299,7 +299,7 @@ Merge all agent results into a single list:
    **Markdown documentation-example filter.** Drop findings on `.md` files whose `description` matches secret/injection FP-suspect patterns AND whose cited line falls inside a fenced code block. The full rule (CommonMark fence handling, off-by-one, limitations) lives in `references/scope-filter.md`. Implementation ships as a script:
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/validate-findings.py" \
+   node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/validate-findings.ts" \
      --findings findings.json --changed-lines /tmp/changed-lines.json
    ```
 
@@ -391,11 +391,11 @@ Likely path normalization disagreement. The agent returned absolute paths or pat
 
 ### Symptom: every finding on a renamed file is dropped
 
-Pure renames produce empty `CHANGED_LINES` for the file. The line-level filter is supposed to short-circuit on an empty set — if findings are still being dropped, the build step (`scripts/build-changed-lines.sh`) may have produced a stale or partial JSON. Delete `/tmp/changed-lines.json` and rerun.
+Pure renames produce empty `CHANGED_LINES` for the file. The line-level filter is supposed to short-circuit on an empty set — if findings are still being dropped, the build step (`scripts/build-changed-lines.ts`) may have produced a stale or partial JSON. Delete `/tmp/changed-lines.json` and rerun.
 
 ### Symptom: `FAILED_AGENTS` is non-empty but findings look fine
 
-The agent returned valid findings but at least one is missing the `WHAT:` or `FIX:` clause. Run `scripts/validate-findings.py --findings <agent-output>.json --schema-only` to identify the offending finding. Common cause: the agent file body was not injected via the prompt envelope (Step 5), so the agent never saw the schema rule.
+The agent returned valid findings but at least one is missing the `WHAT:` or `FIX:` clause. Run `node scripts/validate-findings.ts --findings <agent-output>.json --schema-only` to identify the offending finding. Common cause: the agent file body was not injected via the prompt envelope (Step 5), so the agent never saw the schema rule.
 
 ### Symptom: agent body talks about a deleted feature (e.g. `<MODE>=fix`)
 
@@ -411,8 +411,8 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 
 ## Bundled scripts
 
-- `scripts/build-changed-lines.sh` — parses `git diff --unified=0` and emits the `CHANGED_LINES` JSON map. Handles deletion-only and pure-rename edge cases.
-- `scripts/validate-findings.py` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`.
+- `scripts/build-changed-lines.ts` — parses `git diff --unified=0` and emits the `CHANGED_LINES` JSON map. Handles deletion-only and pure-rename edge cases. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").
