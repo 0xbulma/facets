@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { backendLabel, computeExitCode, formatReport, queryChainId } from "../inject-wallet.ts";
-import type { RouteResult } from "../lib/types.ts";
+import {
+	backendLabel,
+	computeExitCode,
+	formatReport,
+	queryChainId,
+	resolveConnectedAddress,
+} from "../inject-wallet.ts";
+import { DEV_ACCOUNT_0, type RouteResult } from "../lib/types.ts";
 
 const route = (partial: Partial<RouteResult>): RouteResult => ({
 	route: "/",
@@ -71,6 +77,24 @@ describe("backendLabel", () => {
 			"anvil(8453) fork",
 		);
 		expect(backendLabel({ kind: "rpc", rpcUrl: "https://x" }, 1)).toBe("rpc(1)");
+	});
+});
+
+describe("resolveConnectedAddress", () => {
+	const whale = "0x1111111111111111111111111111111111111111";
+	const explicit = "0x2222222222222222222222222222222222222222";
+	const backend = "0x3333333333333333333333333333333333333333";
+
+	it("prefers --impersonate over --address and the backend account", () => {
+		expect(
+			resolveConnectedAddress({ impersonate: whale, address: explicit, backendAddress: backend }),
+		).toBe(whale);
+	});
+
+	it("falls through --address -> backend account -> dev account 0", () => {
+		expect(resolveConnectedAddress({ address: explicit, backendAddress: backend })).toBe(explicit);
+		expect(resolveConnectedAddress({ backendAddress: backend })).toBe(backend);
+		expect(resolveConnectedAddress({})).toBe(DEV_ACCOUNT_0);
 	});
 });
 

@@ -40,6 +40,17 @@ describe("parseArgs", () => {
 		expect(() => parseArgs(["--rpc", "https://x", "--anvil"])).toThrow(UsageError);
 	});
 
+	it("parses --impersonate and implies it as the connected address", () => {
+		const addr = "0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+		const opts = parseArgs(["--rpc", "https://mainnet.example", "--impersonate", addr]);
+		expect(opts.impersonate).toBe(addr);
+	});
+
+	it("validates --impersonate and --address as 0x-addresses", () => {
+		expect(() => parseArgs(["--impersonate", "not-an-address"])).toThrow(/20-byte address/);
+		expect(() => parseArgs(["--address", "0x1234"])).toThrow(/20-byte address/);
+	});
+
 	it("validates --mode", () => {
 		expect(parseArgs(["--mode", "mock"]).mode).toBe("mock");
 		expect(() => parseArgs(["--mode", "bogus"])).toThrow(/inject\|mock/);

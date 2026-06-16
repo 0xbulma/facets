@@ -12,7 +12,7 @@ const { createEip1193Provider, normalizeChainId, isMethodNotFound, toHex } = loa
 const RPC = "http://127.0.0.1:8545";
 
 function build(
-	cfg: { address?: string; chainId: number | string; rpcUrl: string },
+	cfg: { address?: string; chainId: number | string; rpcUrl: string; impersonated?: boolean },
 	handler: RpcHandler,
 ) {
 	const calls: Array<{ method: string; params: unknown[] }> = [];
@@ -108,6 +108,69 @@ describe("inject-wallet provider", () => {
 		await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xa" }] });
 		expect(emitted).toBe("0xa");
 		expect(await provider.request({ method: "eth_chainId" })).toBe("0xa");
+	});
+
+	it("rejects write methods under read-only impersonation, but still proxies reads", async () => {
+		const { provider, calls } = build(
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			(method) => {
+				if (method === "eth_getBalance") return { result: "0xde0b6b3a7640000" };
+				if (method === "eth_call") return { result: "0x" };
+				return mustNotCall(method, []);
+			},
+		);
+
+		// Every key-requiring method in the provider's deny-list must reject — keep
+		// this list in sync with WRITE_METHODS so dropping an entry fails CI.
+		for (const method of [
+			"eth_sendTransaction",
+			"eth_signTransaction",
+			"personal_sign",
+			"eth_sign",
+			"eth_signTypedData",
+			"eth_signTypedData_v1",
+			"eth_signTypedData_v2",
+			"eth_signTypedData_v3",
+			"eth_signTypedData_v4",
+			"wallet_sendCalls",
+		]) {
+			await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
+				code: 4100,
+				message: expect.stringContaining("read-only impersonation"),
+			});
+		}
+		// No write method reached the backend.
+		expect(calls).toHaveLength(0);
+
+		// Reads still flow through to the RPC.
+		expect(
+			await provider.request({ method: "eth_getBalance", params: ["0xWhale", "latest"] }),
+		).toBe("0xde0b6b3a7640000");
+		expect(await provider.request({ method: "eth_call", params: [{}] })).toBe("0x");
+		expect(calls.map((c) => c.method)).toEqual(["eth_getBalance", "eth_call"]);
+	});
+
+	it("proxies write methods normally when NOT impersonating (guard is gated on the flag)", async () => {
+		const { provider, calls } = build({ address: "0xabc", chainId: 1, rpcUrl: RPC }, (method) => {
+			if (method === "eth_sendTransaction") return { result: "0xtxhash" };
+			if (method === "eth_signTypedData_v4") return { result: "0xsig" };
+			return mustNotCall(method, []);
+		});
+		expect(await provider.request({ method: "eth_sendTransaction", params: [{}] })).toBe(
+			"0xtxhash",
+		);
+		expect(await provider.request({ method: "eth_signTypedData_v4", params: ["0xabc", {}] })).toBe(
+			"0xsig",
+		);
+		expect(calls.map((c) => c.method)).toEqual(["eth_sendTransaction", "eth_signTypedData_v4"]);
+	});
+
+	it("still reports the impersonated address for eth_requestAccounts", async () => {
+		const { provider } = build(
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			mustNotCall,
+		);
+		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);
 	});
 
 	it("surfaces RPC errors with their JSON-RPC code", async () => {

@@ -12,6 +12,15 @@ import {
 
 export class UsageError extends Error {}
 
+const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+/** Validate a `0x`-prefixed 20-byte address; throw a usage error otherwise. */
+export function assertHexAddress(flag: string, value: string): string {
+	if (!HEX_ADDRESS.test(value))
+		throw new UsageError(`${flag} must be a 0x-prefixed 20-byte address, got "${value}"`);
+	return value;
+}
+
 export const USAGE = `inject-wallet — connect a test wallet, then screenshot a Reown AppKit dApp.
 
 Usage:
@@ -30,6 +39,10 @@ Wallet / app:
   --dev-cmd "<cmd>"       override dev-server command (else detected)
   --chain-id <n>          chain id to report (anvil default 31337; rpc: queried)
   --address <0x..>        connected address (default: derived / Anvil account 0)
+  --impersonate <0x..>    view-as address (read-only): connect AS this address and
+                          proxy reads to the backend; sends/signs are rejected (no
+                          key). Pairs with --rpc <publicRpc> to view real on-chain
+                          state. Implies --address; not for SIWE/tx flows.
   --mode inject|mock      inject the provider (default) or expect an app-side
                           mock connector (env-gated). See references/mock-connector.md
   --out <dir>             screenshot dir (default .context/inject-wallet)
@@ -60,6 +73,7 @@ export function parseArgs(argv: readonly string[]): RunOptions {
 	let devCmd: string | undefined;
 	let chainId: number | undefined;
 	let address: string | undefined;
+	let impersonate: string | undefined;
 	let outDir = ".context/inject-wallet";
 	let mode: Mode = "inject";
 	let teardown = true;
@@ -106,7 +120,10 @@ export function parseArgs(argv: readonly string[]): RunOptions {
 				chainId = numberAt(arg);
 				break;
 			case "--address":
-				address = valueAt(arg);
+				address = assertHexAddress(arg, valueAt(arg));
+				break;
+			case "--impersonate":
+				impersonate = assertHexAddress(arg, valueAt(arg));
 				break;
 			case "--mode": {
 				const value = valueAt(arg);
@@ -140,6 +157,7 @@ export function parseArgs(argv: readonly string[]): RunOptions {
 		devCmd,
 		chainId,
 		address,
+		impersonate,
 		outDir,
 		backend,
 		mode,

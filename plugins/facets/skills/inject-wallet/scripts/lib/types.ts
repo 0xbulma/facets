@@ -5,6 +5,12 @@ export type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number;
 	readonly rpcUrl: string;
+	/**
+	 * Read-only impersonation: the provider reports `address` but holds no key for
+	 * it, so reads proxy normally while write methods (sends / signs) are rejected
+	 * up front instead of failing cryptically against the backend.
+	 */
+	readonly impersonated?: boolean;
 };
 
 /** Where the test wallet's reads/sends are served from. */
@@ -20,6 +26,8 @@ export type RunOptions = {
 	readonly devCmd?: string;
 	readonly chainId?: number;
 	readonly address?: string;
+	/** Read-only "view as" address: implies the connected address + sets WalletConfig.impersonated. */
+	readonly impersonate?: string;
 	readonly outDir: string;
 	readonly backend: Backend;
 	readonly mode: Mode;

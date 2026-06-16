@@ -75,6 +75,19 @@ export function backendLabel(backend: Backend, chainId: number): string {
 }
 
 /**
+ * Pick the connected address. Read-only `--impersonate` wins (view-as), then an
+ * explicit `--address`, then the backend's unlocked account (Anvil), then
+ * Anvil's well-known dev account 0 as a last resort. Pure.
+ */
+export function resolveConnectedAddress(opts: {
+	impersonate?: string;
+	address?: string;
+	backendAddress?: string;
+}): string {
+	return opts.impersonate ?? opts.address ?? opts.backendAddress ?? DEV_ACCOUNT_0;
+}
+
+/**
  * Exit code policy: 0 = ok, 2 = something to look at. A route is "ok" when it
  * has no error AND (mock mode, where connection is app-handled) OR it connected
  * OR a screenshot was produced.
@@ -141,9 +154,12 @@ async function main(): Promise<number> {
 
 	try {
 		// 1. Resolve the chain backend.
+		if (options.impersonate && options.mode === "mock") {
+			log("--impersonate is ignored in --mode mock (the app-side connector picks the account)");
+		}
 		let rpcUrl: string;
 		let chainId: number;
-		let address = options.address;
+		let backendAddress: string | undefined;
 		if (options.backend.kind === "anvil") {
 			if (options.dryRun) {
 				rpcUrl = `http://127.0.0.1:${options.backend.port}`;
@@ -158,14 +174,25 @@ async function main(): Promise<number> {
 				cleanups.push(anvil.stop);
 				rpcUrl = anvil.rpcUrl;
 				chainId = anvil.chainId;
-				address = address ?? anvil.address ?? DEV_ACCOUNT_0;
+				backendAddress = anvil.address;
 			}
 		} else {
 			rpcUrl = options.backend.rpcUrl;
 			chainId = options.chainId ?? (options.dryRun ? 1 : await queryChainId(rpcUrl));
 		}
-		address = address ?? DEV_ACCOUNT_0;
-		const walletConfig: WalletConfig = { address, chainId, rpcUrl };
+		// --impersonate is a read-only "view as" address: it wins over --address and
+		// the backend's unlocked account. Reads proxy; the provider rejects sends/signs.
+		const address = resolveConnectedAddress({
+			impersonate: options.impersonate,
+			address: options.address,
+			backendAddress,
+		});
+		const walletConfig: WalletConfig = {
+			address,
+			chainId,
+			rpcUrl,
+			impersonated: Boolean(options.impersonate),
+		};
 
 		// 2. Boot the dev server.
 		let command: string;
