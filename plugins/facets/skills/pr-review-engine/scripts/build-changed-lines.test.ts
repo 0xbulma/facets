@@ -216,3 +216,23 @@ describe("build-changed-lines CLI (real git)", () => {
 		expect(Object.hasOwn(build(dir, ["--base", base, "--head", "HEAD"]), "t.txt")).toBe(true);
 	});
 });
+
+describe("build-changed-lines CLI arg errors", () => {
+	const SCRIPT = join(import.meta.dirname, "build-changed-lines.ts");
+
+	function cli(args: readonly string[]) {
+		return spawnSync("node", [SCRIPT, ...args], { encoding: "utf8" });
+	}
+
+	it("exits 2 when --base and --head are missing", () => {
+		const res = cli([]);
+		expect(res.status).toBe(2);
+		expect(res.stderr).toContain("--base and --head are required");
+	});
+
+	it("exits 2 on an unknown argument", () => {
+		const res = cli(["--base", "x", "--head", "y", "--bogus"]);
+		expect(res.status).toBe(2);
+		expect(res.stderr).toContain("unknown argument");
+	});
+});

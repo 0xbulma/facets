@@ -38,4 +38,4 @@ If the count is odd, `finding.line` is inside a fenced block → drop and increm
 
 ## Implementation pointer
 
-`scripts/validate-findings.ts` carries the regex set, the fence-walking logic, and the `DROPPED_DOC_EXAMPLE` counter. The bats invariant test `engine doc-example filter recognizes tilde fences` locks in the CommonMark `~~~` support so future edits don't silently regress.
+`scripts/validate-findings.ts` carries the regex set, the fence-walking logic, and the `DROPPED_DOC_EXAMPLE` counter. The Vitest test `drops a finding inside a tilde fence` in `scripts/validate-findings.test.ts` locks in the CommonMark `~~~` support so future edits don't silently regress.

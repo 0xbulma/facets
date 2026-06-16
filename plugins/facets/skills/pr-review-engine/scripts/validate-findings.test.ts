@@ -602,6 +602,18 @@ describe("CLI shell", () => {
 		expect(res.stderr).toContain("--changed-lines is required");
 	});
 
+	it("exits 2 on a non-integer --line-tolerance", () => {
+		const res = cli(["--changed-lines", clFile(), "--line-tolerance", "15.5"], "[]");
+		expect(res.status).toBe(2);
+		expect(res.stderr).toContain("--line-tolerance must be an integer");
+	});
+
+	it("exits 2 on an unknown argument", () => {
+		const res = cli(["--changed-lines", clFile(), "--bogus"], "[]");
+		expect(res.status).toBe(2);
+		expect(res.stderr).toContain("unknown argument");
+	});
+
 	it("reads findings from stdin", () => {
 		const res = cli(["--changed-lines", clFile()], `[${FINDING}]`);
 		expect(res.status).toBe(0);

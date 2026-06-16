@@ -438,7 +438,14 @@ function main(): number {
 		}
 		findingsText = text;
 	} else {
-		findingsText = readFileSync(0, "utf8");
+		// Reading fd 0 throws (EAGAIN) when stdin is a TTY with no piped input;
+		// emit the structured-error contract instead of crashing with a stack trace.
+		try {
+			findingsText = readFileSync(0, "utf8");
+		} catch {
+			emit({ error: "cannot read findings from stdin" });
+			return 0;
+		}
 	}
 
 	const changedLinesText = readFileSafe(parsed.changedLines);
