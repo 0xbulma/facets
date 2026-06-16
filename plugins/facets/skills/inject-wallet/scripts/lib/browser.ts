@@ -21,8 +21,115 @@ function errText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
-export function hasAgentBrowser(): boolean {
-	return spawnSync("command", ["-v", AB], { shell: true }).status === 0;
+// --- agent-browser readiness preflight -------------------------------------
+// `command -v agent-browser` proves only that *something* is on PATH; it passes
+// for a dangling binary and for an install that never ran `agent-browser
+// install` (the browser binaries). Probe functionally instead — `--version`
+// then `doctor` — and distinguish the failure modes so the caller can print the
+// right remediation and fail *before* booting Anvil + the dev server.
+
+export type AgentBrowserStatus =
+	| { kind: "ready"; version: string }
+	| { kind: "missing" } // not on PATH (spawn ENOENT)
+	| { kind: "broken"; detail: string } // on PATH but `--version` non-zero / unparseable
+	| { kind: "no-browser"; detail: string }; // CLI ok, `doctor` reports the browser unready
+
+export type AbProbe = {
+	status: number | null;
+	stdout: string;
+	stderr: string;
+	errCode?: string;
+};
+
+/** The single I/O seam for the probe — injected so every branch is testable. */
+export type AbRunner = (args: readonly string[]) => AbProbe;
+
+function errnoCode(error: Error | undefined): string | undefined {
+	if (error && "code" in error && typeof error.code === "string") return error.code;
+	return undefined;
+}
+
+const defaultRunner: AbRunner = (args) => {
+	const r = spawnSync(AB, [...args], { encoding: "utf8" });
+	return {
+		status: r.status,
+		stdout: r.stdout ?? "",
+		stderr: r.stderr ?? "",
+		errCode: errnoCode(r.error),
+	};
+};
+
+export function parseAgentBrowserVersion(stdout: string): string | null {
+	return stdout.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+}
+
+function probeDetail(r: AbProbe): string {
+	const text = (r.stderr || r.stdout).trim();
+	if (text) return text;
+	if (r.errCode) return `spawn error: ${r.errCode}`;
+	return r.status === null ? "no output" : `exited with status ${r.status}`;
+}
+
+/** Keep the actionable `fail`/`warn`/`Summary` lines from `doctor` output. */
+export function summarizeDoctor(output: string): string {
+	const lines = output.split("\n").map((l) => l.trim());
+	const picked = lines.filter((l) => /^(fail|warn)\b/i.test(l) || /^Summary:/i.test(l));
+	return picked.length ? picked.join("\n") : output.trim();
+}
+
+export function probeAgentBrowser(run: AbRunner = defaultRunner): AgentBrowserStatus {
+	const ver = run(["--version"]);
+	if (ver.errCode === "ENOENT") return { kind: "missing" };
+	const version = parseAgentBrowserVersion(ver.stdout);
+	if (ver.status !== 0 || !version) return { kind: "broken", detail: probeDetail(ver) };
+
+	const doc = run(["doctor"]);
+	if (doc.status !== 0) {
+		const detail = summarizeDoctor(`${doc.stdout}\n${doc.stderr}`) || probeDetail(doc);
+		return { kind: "no-browser", detail };
+	}
+	return { kind: "ready", version };
+}
+
+const AB_INSTALL = "npm i -g agent-browser && agent-browser install";
+const DRY_HINT = "  or pass --dry-run to print the plan without running.";
+
+function indent(text: string): string {
+	return text
+		.split("\n")
+		.map((l) => `    ${l}`)
+		.join("\n");
+}
+
+/** Pure: turn a status into the hard-fail message, or null when ready. */
+export function agentBrowserError(status: AgentBrowserStatus): string | null {
+	switch (status.kind) {
+		case "ready":
+			return null;
+		case "missing":
+			return [
+				"error: agent-browser not found on PATH (required to drive the browser, in inject and mock modes).",
+				`  install: ${AB_INSTALL}`,
+				DRY_HINT,
+				"",
+			].join("\n");
+		case "no-browser":
+			return [
+				"error: agent-browser is on PATH but its browser is not ready (the `agent-browser install` step).",
+				indent(status.detail),
+				"  fix: agent-browser install   (or repair: agent-browser doctor --fix)",
+				DRY_HINT,
+				"",
+			].join("\n");
+		case "broken":
+			return [
+				"error: agent-browser is on PATH but did not run (broken or incompatible install).",
+				indent(status.detail),
+				`  fix: reinstall — ${AB_INSTALL}   then verify: agent-browser doctor`,
+				DRY_HINT,
+				"",
+			].join("\n");
+	}
 }
 
 /** Type-strip a .ts file to `outPath` so it can be injected as a classic script. */

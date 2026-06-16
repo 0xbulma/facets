@@ -77,11 +77,21 @@ Node, or run the CLI through `tsx`:
 npx -y tsx "${CLAUDE_PLUGIN_ROOT}/skills/inject-wallet/scripts/inject-wallet.ts" --anvil --url /
 ```
 
-## agent-browser command not found / verb errors
+## agent-browser preflight failed (missing / broken / browser not installed)
 
-Install: `npm i -g agent-browser && agent-browser install`. If a subcommand
-errors, the CLI surface changed — confirm with `agent-browser skills get core
---full` and adjust the verbs in `scripts/lib/browser.ts`.
+The CLI probes `agent-browser --version` + `agent-browser doctor` before booting
+anything, and prints a mode-specific fix:
+
+- **not found on PATH** — `npm i -g agent-browser && agent-browser install`.
+- **on PATH but the browser is not ready** — you ran `npm i -g agent-browser` but
+  skipped the second step: `agent-browser install` downloads Chrome. Repair a
+  stale install with `agent-browser doctor --fix`.
+- **on PATH but won't run** (broken / incompatible) — reinstall, then verify with
+  `agent-browser doctor`.
+
+If a *subcommand* errors mid-run instead, the CLI surface changed — confirm with
+`agent-browser skills get core --full` and adjust the verbs in
+`scripts/lib/browser.ts`.
 
 ## What about Synpress (real MetaMask)?
 
