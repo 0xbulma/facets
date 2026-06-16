@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions pr-review-engine"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet pr-review-engine"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,7 +37,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "twelve skills exist at expected paths" {
+@test "thirteen skills exist at expected paths" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
   done
@@ -430,4 +430,5 @@ setup() {
   echo "$output" | grep -q "facets:tip-create"
   echo "$output" | grep -q "facets:tib-ship"
   echo "$output" | grep -q "facets:ts-conventions"
+  echo "$output" | grep -q "facets:inject-wallet"
 }

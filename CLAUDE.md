@@ -4,15 +4,16 @@ Repo-level guidance for Claude Code working on this repo.
 
 ## What this repo is
 
-A Claude Code **plugin marketplace** containing a single plugin (`facets`) with eleven slash-command skills:
+A Claude Code **plugin marketplace** containing a single plugin (`facets`) with twelve slash-command skills:
 
 - **PR navigation / review / fix** — `pr-switch` (check out a PR's branch from a URL/number), `pr-review-local`, `pr-review-gh`, `pr-fix`, `setup`
 - **PR / workflow authoring** — `pr-create` (draft PR from the current diff), `convert-tib-to-linear` (TIB/ADR → Linear project + milestones + issues), `tib-create` (scaffold a new TIB), `tip-create` (scaffold a TIP — concrete implementation plan paired with a TIB), `tib-ship` (yolo execute a TIB end-to-end: scaffold TIPs → implement TDD-style → review→fix loop → ready-to-push branch)
 - **Conventions** — `ts-conventions` (write/refresh global `~/.claude/CLAUDE.md` with a language-agnostic `## Engineering principles` section — three altitude tiers from solution architecture down to code design, incl. security/supply-chain/change-management — plus a stack-tailored `## TypeScript conventions` section — preferred stack, frontend stack, type system & strictness, modules/exports, lint/test rules, anti-patterns — inside idempotent managed markers)
+- **dApp testing** — `inject-wallet` (boot a dev server + browser, inject a test wallet — EIP-1193 provider announced over EIP-6963 — so an agent gets past the Reown AppKit connect modal, then screenshot the connected UI; Anvil-fork or read-only-RPC backend, env-gated wagmi `mock`-connector fallback; a TypeScript Node CLI under `scripts/` run via native type-stripping, the SKILL.md wraps it)
 
 The review side and its persona library are **optimized for TypeScript + React + Vercel** codebases — JSX/TSX detection, Server Components, React 19 APIs, Tailwind, Vercel's Web Interface Guidelines, Web3 (viem/wagmi/ethers) when present, and route-level runtime validation via `agent-browser`. It works on any project, but the conditional personas are tuned for the TS/React/Vercel stack. The four authoring skills (`pr-create`, `convert-tib-to-linear`, `tib-create`, `tip-create`) are repo-agnostic; `tib-ship` is repo-agnostic for orchestration but its inner per-block loop and `runtime-validation` step assume a JS/TS toolchain.
 
-Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install facets@facets`. They invoke the skills as `/facets:pr-switch`, `/facets:pr-review-local`, `/facets:pr-review-gh`, `/facets:pr-fix`, `/facets:setup`, `/facets:pr-create`, `/facets:convert-tib-to-linear`, `/facets:tib-create`, `/facets:tip-create`, `/facets:tib-ship`, `/facets:ts-conventions`.
+Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install facets@facets`. They invoke the skills as `/facets:pr-switch`, `/facets:pr-review-local`, `/facets:pr-review-gh`, `/facets:pr-fix`, `/facets:setup`, `/facets:pr-create`, `/facets:convert-tib-to-linear`, `/facets:tib-create`, `/facets:tip-create`, `/facets:tib-ship`, `/facets:ts-conventions`, `/facets:inject-wallet`.
 
 ## Mental model
 
@@ -25,7 +26,7 @@ Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install 
                           ├─ skills/
                           │   ├─ {pr-switch,pr-review-local,pr-review-gh,pr-fix,setup,
                           │   │    pr-create,convert-tib-to-linear,tib-create,tip-create,tib-ship,
-                          │   │    ts-conventions}/SKILL.md
+                          │   │    ts-conventions,inject-wallet}/SKILL.md
                           │   └─ pr-review-engine/
                           │       ├─ SKILL.md             ← shared Steps 3–6 (the dispatcher)
                           │       ├─ agents/*.md          ← 16 versioned reviewers (6 baseline + 10 conditional)
@@ -133,11 +134,13 @@ Adding an agent = drop a new file in `plugins/facets/skills/pr-review-engine/age
 ```bash
 bats test/                                              # plugin.bats + test_build_changed_lines.bats
 (cd test && python3 -m unittest test_validate_findings) # finding-validator unit tests
+pnpm install && pnpm verify                             # inject-wallet TS scripts: Biome + tsc + Vitest
 ```
 
 - `test/plugin.bats` — manifest shape, skill discovery, frontmatter (including the `version:` field), agent/trigger invariants, no leaked legacy paths, hook + bin presence, and (if `claude` CLI is on PATH) a local plugin-dir smoke install.
 - `test/test_build_changed_lines.bats` — the `CHANGED_LINES` builder script (hunk parsing, deletions, renames).
 - `test/test_validate_findings.py` — the finding validator (WHAT/FIX schema, ±15 window, doc-example filter, runtime sentinel).
+- **`inject-wallet` TypeScript scripts** — the only TS in the repo. Root `biome.json` (strict, scoped to `plugins/facets/skills/inject-wallet/scripts/**`), root `tsconfig.json` (extends `tsconfig.base.json`), root `vitest.config.ts`. `pnpm verify` runs `biome check` + `tsc -p tsconfig.json` + `vitest run`. The scripts themselves run dependency-free via Node's native type-stripping; the toolchain is dev-only (`node_modules/` is gitignored).
 
 ## Common gotchas
 

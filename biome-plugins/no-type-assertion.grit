@@ -1,0 +1,8 @@
+`$expr as $type` where {
+	! $type <: "const",
+	register_diagnostic(
+		span = $expr,
+		message = "Avoid `as` type assertions. Use type guards, `satisfies`, or proper typing instead. If unavoidable, add a biome-ignore comment with justification.",
+		severity = "error"
+	)
+}

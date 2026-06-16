@@ -5,3 +5,7 @@
 .vscode/
 .context/
 __pycache__/
+
+# Node toolchain (Biome / TypeScript / Vitest for the inject-wallet skill scripts)
+node_modules/
+coverage/
