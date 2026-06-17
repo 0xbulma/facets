@@ -315,7 +315,12 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
 2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
-3. If it returns any `critical`/`high` findings → re-enter the loop with a +1 iteration budget for runtime fixes, then re-run `runtime-validation` once more. If still red → restore the tree (see *Leaving the branch clean* above), then emit `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.`, print the runtime findings, and stop and ask the user. (This is the third non-success exit the rollback rule covers — same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`.)
+3. If it returns any `critical`/`high` findings → run **one** dedicated runtime-fix pass — **not** a re-entry of the static loop, so the loop's `GOAL_STUCK` / `GOAL_MAXED` exits do not apply here:
+   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 5).
+   - Re-gate (`<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`); commit `fix(review): runtime — <N> findings` when green.
+   - Re-run `runtime-validation` exactly once more.
+   - **If that re-run is clean** → fall through to the Final summary with `Runtime check: failed-then-fixed` (count the runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
+   - **If still red** → restore the tree (see *Leaving the branch clean* above), then emit `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.`, print the runtime findings, and stop and ask the user. This is the third non-success exit the rollback rule covers — same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`, and the terminal for a still-red runtime check.
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
 
