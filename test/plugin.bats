@@ -283,6 +283,17 @@ setup() {
   grep -q '±15'    "$engine"                 || { echo "engine missing the ±15 adjacent-code tolerance window" >&2; return 1; }
 }
 
+@test "pr-review-local SKILL.md documents the --goal loop contract" {
+  # The --goal autonomous loop is a documented contract: the flag itself,
+  # its crisp completion sentinel (GOAL_CLEAN — the token native /goal
+  # audits), and the iteration-ceiling flag. Lock them so a future edit
+  # can't silently gut the loop while leaving the description in place.
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q -- '--goal' "$skill"      || { echo "pr-review-local missing --goal flag" >&2; return 1; }
+  grep -q 'GOAL_CLEAN' "$skill"     || { echo "pr-review-local missing GOAL_CLEAN sentinel" >&2; return 1; }
+  grep -q -- '--max-iters' "$skill" || { echo "pr-review-local missing --max-iters flag" >&2; return 1; }
+}
+
 @test "every references/*.md pointer in agents resolves to a real file" {
   REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
   # Every "Cross-check `references/X.md`" pointer in an agent body must

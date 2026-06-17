@@ -1,26 +1,31 @@
 ---
 name: pr-review-local
-version: 2.1.0
-description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree). Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", or "deep review".
+version: 2.2.0
+description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
 # review-local — Pre-PR Local Review
 
-Reviews local branch changes using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md` and outputs findings directly in the terminal. Zero GitHub interaction. Optionally applies fixes with `--fix`.
+Reviews local branch changes using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md` and outputs findings directly in the terminal. Zero GitHub interaction. Optionally applies fixes with `--fix`, or loops review→fix→re-review with `--goal` until the review passes cleanly.
 
 ## Usage
 
 ```
-/facets:pr-review-local                       # review current branch vs default base
-/facets:pr-review-local <BASE_BRANCH>         # review against an explicit base branch
-/facets:pr-review-local --fix                 # review and apply fixes (refuses on dirty tree)
-/facets:pr-review-local --fast                # skip the docs agent (cheapest meaningful cut)
-/facets:pr-review-local <BASE_BRANCH> --fix   # flags combine freely
+/facets:pr-review-local                        # review current branch vs default base
+/facets:pr-review-local <BASE_BRANCH>          # review against an explicit base branch
+/facets:pr-review-local --fix                  # review and apply fixes once (unstaged; refuses on dirty tree)
+/facets:pr-review-local --goal                 # loop review->fix->re-review, commit each iteration, until clean
+/facets:pr-review-local --goal --max-iters 8   # raise the loop ceiling (default 5)
+/facets:pr-review-local --goal --no-runtime    # skip the post-convergence runtime-validation shot
+/facets:pr-review-local --fast                 # skip the docs agent (cheapest meaningful cut)
+/facets:pr-review-local <BASE_BRANCH> --fix    # flags combine freely
 ```
 
 `<BASE_BRANCH>` is positional and must NOT begin with `--`. Flag order is otherwise free.
 
 `--fast` excludes the `docs` agent via the engine's `EXCLUDE_AGENTS` input. Dogfood data across four full review passes: `docs` is the most expensive agent per launch (deep cross-reference verification) and the most likely to return clean on code-focused diffs — it's the one cut that saves real cost without touching the bug-finding lenses. Use the default (full panel) when the diff touches Markdown, inventories, or public API docs.
+
+`--goal` is the autonomous loop mode: it reviews, fixes `critical`/`high`/`medium` findings, re-gates (format → lint → typecheck → test), commits, and re-reviews until no actionable findings remain — see the **Goal mode** section. It commits each iteration and therefore refuses on a dirty tree. `--goal` supersedes `--fix` (loop-and-commit beats single-shot-unstaged); if both are passed, `--goal` wins.
 
 ## Pre-conditions
 
@@ -38,6 +43,11 @@ A maintainer changing this skill should verify each outcome shape:
 | Zero findings + agent crash | `Sentinel: REVIEW_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no findings does NOT mean clean.` |
 | `--fix` happy path | `Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).` plus `git diff` shows the unstaged edits. |
 | `--fix` aborted on dirty tree | `Sentinel: FIX_ABORTED — working tree is not clean. Commit or stash before --fix.` |
+| `--goal` converges | `Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` plus one `fix(review): iteration N` commit per fixing pass. |
+| `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
+| `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
+| `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
+| `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 
 Idempotency: re-running with no diff change produces the same sentinel + same counts; finding *text* may drift (LLM nondeterminism). The sentinel structure is deterministic.
 
@@ -52,8 +62,11 @@ fi
 Parse positional and flag args:
 
 - If `--fix` is present, set `FIX=1`.
+- If `--goal` is present, set `GOAL=1` (autonomous loop mode — see the **Goal mode** section). `--goal` supersedes `--fix`: if both are present, set `GOAL=1` and ignore `FIX` (loop-and-commit replaces single-shot-unstaged).
+- If `--max-iters <N>` is present, set `MAX_ITERS=<N>`; otherwise default `MAX_ITERS=5`. Only meaningful with `--goal`.
+- If `--no-runtime` is present, set `NO_RUNTIME=1`. Only meaningful with `--goal`.
 - If `--fast` is present, set `FAST=1`.
-- If a non-flag positional argument is present and does not start with `--`, treat it as `<BASE_BRANCH>`.
+- If a non-flag positional argument is present and does not start with `--`, treat it as `<BASE_BRANCH>`. (The numeric value following `--max-iters` is its argument, not the positional base branch.)
 
 ## Step 2: Resolve branches
 
@@ -99,6 +112,11 @@ if [ -z "$COMMIT_RANGE_FILES" ] && [ -z "$WORKTREE_DIRTY" ]; then
   exit 0
 fi
 ```
+
+## Routing: goal mode vs single-shot
+
+- If `GOAL=1` → **skip Steps 7 and 7b entirely** and follow the **Goal mode** section below. That section drives the engine (Steps 3–6) once per iteration and owns its own output. Do not also run the single-shot Step 7 output.
+- Otherwise → run Steps 3–6 once, then Step 7 (and Step 7b if `FIX=1`).
 
 ## Steps 3–6: Shared review base
 
@@ -222,11 +240,96 @@ Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).
 - Do NOT push.
 - Leave all changes as unstaged modifications so the user can review them with `git diff`.
 
+## Goal mode (`--goal`): review → fix → re-review loop
+
+Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs.
+
+**"Passes cleanly" = no `critical`/`high`/`medium` findings remain.** `low` findings are never auto-fixed — they are carried to the final summary for the user to triage.
+
+> **Autonomous, not careless.** Goal mode stops and asks the user on a stuck loop, an exhausted iteration budget, or a pre-existing red gate. It never commits broken state and never sweeps unrelated dirty changes into a commit.
+
+### Pre-flight gates (stop-and-ask)
+
+Before the first iteration, check in order and abort with the stated sentinel/message:
+
+1. **Dirty working tree** — `git status --porcelain` non-empty:
+   ```bash
+   DIRTY=$(git status --porcelain)
+   if [ -n "$DIRTY" ]; then
+     echo "Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal." >&2
+     printf 'Uncommitted file(s):\n%s\n' "$DIRTY" >&2
+     exit 1
+   fi
+   ```
+   The loop commits each iteration, so uncommitted WIP must not be swept into a `fix(review)` commit. Committing the WIP first also brings it in-range so it gets reviewed. (Same clean-tree precondition as `--fix`; goal mode just emits `GOAL_ABORTED` instead of `FIX_ABORTED`.)
+2. **Detached HEAD** — refuse; the loop needs a branch to commit onto. Ask the user to check out a branch.
+3. **Pre-existing red gate** — run `<TEST_CMD>` once (sniffed below). If it already fails on the current branch, surface the failure and ask whether to proceed — yolo must not paper over pre-existing breakage, and a red base makes the re-gate loop forever.
+
+### Command sniff (once)
+
+Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command.
+
+### The loop
+
+`prev_findings_hash = ""`. For `i = 1..MAX_ITERS` (default `5` — a ceiling, not a target; expect convergence by iteration 2–3):
+
+1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
+2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
+3. **Success check.** If `actionable` is empty → **break, success** (carry the lows forward to the summary).
+4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
+5. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
+6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green. A non-green gate becomes additional synthetic findings for the next iteration — **do not commit broken state**.
+7. **Commit** (only when the gate is green):
+   ```
+   fix(review): iteration <i> — <N> findings
+   ```
+8. Set `prev_findings_hash = hash`; continue.
+
+If `i == MAX_ITERS` and `actionable` is still non-empty → emit `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?`, print the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop.
+
+### Post-convergence runtime check (single shot)
+
+After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 4). If `<HAS_ROUTE_UI>` is true AND `NO_RUNTIME` is unset, run the `runtime-validation` persona exactly once (mirrors `tib-ship` Step 6):
+
+1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
+2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
+3. If it returns any `critical`/`high` findings → re-enter the loop with a +1 iteration budget for runtime fixes, then re-run `runtime-validation` once more. If still red → stop and surface to the user.
+
+If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
+
+### Final summary
+
+On a clean converge, print a summary and the terminal sentinel:
+
+```
+## Goal-mode Review (local:pr-review-local --goal)
+
+Branch:        <HEAD_BRANCH> -> <BASE_BRANCH>
+Iterations:    <i> (clean on iteration <i>)
+Commits:       <M> (fix(review): iteration N)
+Runtime check: passed | skipped (<reason>) | failed-then-fixed
+Low findings:  <K> (not auto-fixed — listed below for manual triage)
+
+Low findings (manual triage — omit when K=0):
+  <file>:<line> — <description>
+  ...
+
+Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).
+```
+
+### Hard constraints (goal mode)
+
+- Commit each fixing iteration; never `git add`/commit a partial or gate-red state.
+- Do NOT push and do NOT open a PR — the branch is left ready for the user.
+- Never auto-fix `low` findings; only triage-list them.
+- Commits are conventional (`fix(review): ...`) and signed if the repo configures signing.
+
 ## Notes
 
 - **No GitHub interaction**. The skill never calls `gh api`. All output stays in the terminal.
-- **Refuse on dirty tree** for `--fix`. Clean precondition replaces ~80 lines of stash plumbing and a class of stash-pop-conflict bugs.
+- **Refuse on dirty tree** for both `--fix` and `--goal`. Clean precondition replaces ~80 lines of stash plumbing and a class of stash-pop-conflict bugs.
 - **Pairs with `/facets:pr-review-gh`**: workflow is `/facets:pr-review-local` (pre-PR feedback) → fix issues → create PR → `/facets:pr-review-gh` (GitHub-posted review).
+- **Pairing with native `/goal`**: `--goal` self-converges within `--max-iters` and is idempotent (an already-clean branch returns `GOAL_CLEAN` on iteration 1), so it does not require Claude Code's native `/goal` command. To go *unbounded* across the `GOAL_MAXED` bail (long-running, cross-session autonomy), wrap it: `/goal "run /facets:pr-review-local --goal until it prints GOAL_CLEAN"`. `GOAL_CLEAN` is the crisp completion token the native goal audit keys off.
 
 ## Sentinel grammar
 
@@ -237,3 +340,7 @@ Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).
 | `REVIEW_DONE_LOCAL` | Step 7 | `— <N> findings (X critical, Y high, Z medium, W low) on <HEAD_BRANCH> vs <BASE_BRANCH>.` |
 | `FIX_DONE_LOCAL` | Step 7b | `— <X> applied, <Y> skipped (Local-only, unstaged).` |
 | `FIX_ABORTED` | Step 7b pre-flight | `— working tree is not clean. Commit or stash before --fix.` |
+| `GOAL_CLEAN` | Goal mode final summary | `— review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` |
+| `GOAL_ABORTED` | Goal mode pre-flight | `— working tree is not clean; commit or stash before --goal.` |
+| `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
+| `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
