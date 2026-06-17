@@ -46,8 +46,11 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` converges | `Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` plus one `fix(review): iteration N` commit per fixing pass. |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
+| `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
+| `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
+| `--goal` runtime still red | `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.` |
 
 Idempotency: re-running with no diff change produces the same sentinel + same counts; finding *text* may drift (LLM nondeterminism). The sentinel structure is deterministic.
 
@@ -300,10 +303,11 @@ If `i == MAX_ITERS` and `actionable` is still non-empty → restore the tree (se
 Whenever goal mode stops **without** converging — `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
 
 ```bash
-git checkout -- .   # discard the current iteration's uncommitted (gate-red) fix edits
+git checkout -- .   # discard the current iteration's uncommitted edits to tracked files
+git clean -fd       # AND remove any untracked files/dirs a fix created (else gate 1 still trips)
 ```
 
-This is safe because pre-flight gate 1 guaranteed a clean tree, so the only uncommitted changes are the loop's own edits. The stopping point is then the last green `fix(review)` commit (or the original `HEAD` if no iteration ever went green) — never a dirty, gate-red tree. Without it, the edits left by a final red iteration would make the next `--goal` run abort immediately on `GOAL_ABORTED` (dirty tree). Earlier iterations' work is preserved in their commits; the printed residual findings tell the user what remained.
+This is safe because pre-flight gate 1 guaranteed a clean tree, so the only changes present are the loop's own edits — both modifications to tracked files (`git checkout`) and any new untracked files a fix introduced (`git clean -fd`; `git checkout` alone would leave these, and `git status --porcelain` counts them, so the next run would still `GOAL_ABORTED`). The stopping point is then the last green `fix(review)` commit (or the original `HEAD` if no iteration ever went green) — never a dirty, gate-red tree. Earlier iterations' work is preserved in their commits; the printed residual findings tell the user what remained.
 
 ### Post-convergence runtime check (single shot)
 
@@ -311,7 +315,7 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
 2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
-3. If it returns any `critical`/`high` findings → re-enter the loop with a +1 iteration budget for runtime fixes, then re-run `runtime-validation` once more. If still red → stop and surface to the user.
+3. If it returns any `critical`/`high` findings → re-enter the loop with a +1 iteration budget for runtime fixes, then re-run `runtime-validation` once more. If still red → restore the tree (see *Leaving the branch clean* above), then emit `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.`, print the runtime findings, and stop and ask the user. (This is the third non-success exit the rollback rule covers — same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`.)
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
 
@@ -359,6 +363,9 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `FIX_DONE_LOCAL` | Step 7b | `— <X> applied, <Y> skipped (Local-only, unstaged).` |
 | `FIX_ABORTED` | Step 7b pre-flight | `— working tree is not clean. Commit or stash before --fix.` |
 | `GOAL_CLEAN` | Goal mode final summary | `— review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` |
-| `GOAL_ABORTED` | Goal mode pre-flight | `— working tree is not clean; commit or stash before --goal.` |
+| `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
+| `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
+| `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
 | `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
+| `GOAL_RUNTIME_RED` | Goal mode runtime re-pass | `— runtime-validation still failing after a fix pass; stopping for user input.` |

@@ -292,7 +292,7 @@ setup() {
   # scope-filter test, which locks every DROPPED_* counter, not one
   # representative.
   skill="$SKILLS_DIR/pr-review-local/SKILL.md"
-  for token in GOAL_CLEAN GOAL_ABORTED GOAL_STUCK GOAL_MAXED; do
+  for token in GOAL_CLEAN GOAL_ABORTED GOAL_STUCK GOAL_MAXED GOAL_RUNTIME_RED; do
     grep -q "$token" "$skill" || { echo "pr-review-local missing $token sentinel" >&2; return 1; }
   done
   for flag in --goal --max-iters --no-runtime; do
