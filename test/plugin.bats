@@ -284,14 +284,20 @@ setup() {
 }
 
 @test "pr-review-local SKILL.md documents the --goal loop contract" {
-  # The --goal autonomous loop is a documented contract: the flag itself,
-  # its crisp completion sentinel (GOAL_CLEAN — the token native /goal
-  # audits), and the iteration-ceiling flag. Lock them so a future edit
-  # can't silently gut the loop while leaving the description in place.
+  # The --goal autonomous loop is a documented contract: the flags plus the
+  # full four-sentinel state machine — GOAL_CLEAN (success) and the
+  # GOAL_ABORTED / GOAL_STUCK / GOAL_MAXED safety rails (the "Autonomous,
+  # not careless" exits). Lock the whole set so a future edit can't silently
+  # gut a rail while leaving the description in place. Mirrors the
+  # scope-filter test, which locks every DROPPED_* counter, not one
+  # representative.
   skill="$SKILLS_DIR/pr-review-local/SKILL.md"
-  grep -q -- '--goal' "$skill"      || { echo "pr-review-local missing --goal flag" >&2; return 1; }
-  grep -q 'GOAL_CLEAN' "$skill"     || { echo "pr-review-local missing GOAL_CLEAN sentinel" >&2; return 1; }
-  grep -q -- '--max-iters' "$skill" || { echo "pr-review-local missing --max-iters flag" >&2; return 1; }
+  for token in GOAL_CLEAN GOAL_ABORTED GOAL_STUCK GOAL_MAXED; do
+    grep -q "$token" "$skill" || { echo "pr-review-local missing $token sentinel" >&2; return 1; }
+  done
+  for flag in --goal --max-iters --no-runtime; do
+    grep -q -- "$flag" "$skill" || { echo "pr-review-local missing $flag flag" >&2; return 1; }
+  done
 }
 
 @test "every references/*.md pointer in agents resolves to a real file" {

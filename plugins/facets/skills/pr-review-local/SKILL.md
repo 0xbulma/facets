@@ -248,9 +248,13 @@ Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — St
 
 > **Autonomous, not careless.** Goal mode stops and asks the user on a stuck loop, an exhausted iteration budget, or a pre-existing red gate. It never commits broken state and never sweeps unrelated dirty changes into a commit.
 
+### Command sniff (once)
+
+Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — the pre-flight gates below depend on `<TEST_CMD>`.
+
 ### Pre-flight gates (stop-and-ask)
 
-Before the first iteration, check in order and abort with the stated sentinel/message:
+Before the first iteration, check in order; every gate aborts with a `GOAL_ABORTED` sentinel and `exit 1` (so an automated wrapper — e.g. the native `/goal` audit — can tell an abort from a hang):
 
 1. **Dirty working tree** — `git status --porcelain` non-empty:
    ```bash
@@ -262,12 +266,16 @@ Before the first iteration, check in order and abort with the stated sentinel/me
    fi
    ```
    The loop commits each iteration, so uncommitted WIP must not be swept into a `fix(review)` commit. Committing the WIP first also brings it in-range so it gets reviewed. (Same clean-tree precondition as `--fix`; goal mode just emits `GOAL_ABORTED` instead of `FIX_ABORTED`.)
-2. **Detached HEAD** — refuse; the loop needs a branch to commit onto. Ask the user to check out a branch.
-3. **Pre-existing red gate** — run `<TEST_CMD>` once (sniffed below). If it already fails on the current branch, surface the failure and ask whether to proceed — yolo must not paper over pre-existing breakage, and a red base makes the re-gate loop forever.
-
-### Command sniff (once)
-
-Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command.
+2. **Detached HEAD** — the loop needs a branch to commit onto, or the `fix(review)` commits are orphaned. Step 2 tolerates a detached HEAD for read-only review, but goal mode must refuse:
+   ```bash
+   if [ -z "$(git branch --show-current)" ]; then
+     echo "Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal." >&2
+     exit 1
+   fi
+   ```
+3. **Pre-existing red gate** — run `<TEST_CMD>` once (resolved by the sniff above). If it already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
+   - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`.
+   - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 6) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
 
 ### The loop
 
@@ -276,16 +284,26 @@ Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `p
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
 2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
 3. **Success check.** If `actionable` is empty → **break, success** (carry the lows forward to the summary).
-4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
+4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
 5. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
-6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green. A non-green gate becomes additional synthetic findings for the next iteration — **do not commit broken state**.
+6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 7). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
 7. **Commit** (only when the gate is green):
    ```
    fix(review): iteration <i> — <N> findings
    ```
 8. Set `prev_findings_hash = hash`; continue.
 
-If `i == MAX_ITERS` and `actionable` is still non-empty → emit `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?`, print the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop.
+If `i == MAX_ITERS` and `actionable` is still non-empty → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?`, print the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop.
+
+### Leaving the branch clean on a non-success exit
+
+Whenever goal mode stops **without** converging — `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
+
+```bash
+git checkout -- .   # discard the current iteration's uncommitted (gate-red) fix edits
+```
+
+This is safe because pre-flight gate 1 guaranteed a clean tree, so the only uncommitted changes are the loop's own edits. The stopping point is then the last green `fix(review)` commit (or the original `HEAD` if no iteration ever went green) — never a dirty, gate-red tree. Without it, the edits left by a final red iteration would make the next `--goal` run abort immediately on `GOAL_ABORTED` (dirty tree). Earlier iterations' work is preserved in their commits; the printed residual findings tell the user what remained.
 
 ### Post-convergence runtime check (single shot)
 
