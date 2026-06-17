@@ -50,7 +50,7 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
-| `--goal` runtime still red | `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.` |
+| `--goal` runtime fix pass failed | `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
 
 Idempotency: re-running with no diff change produces the same sentinel + same counts; finding *text* may drift (LLM nondeterminism). The sentinel structure is deterministic.
 
@@ -315,12 +315,14 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
 2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
-3. If it returns any `critical`/`high` findings → run **one** dedicated runtime-fix pass — **not** a re-entry of the static loop, so the loop's `GOAL_STUCK` / `GOAL_MAXED` exits do not apply here:
-   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 5).
-   - Re-gate (`<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`); commit `fix(review): runtime — <N> findings` when green.
-   - Re-run `runtime-validation` exactly once more.
-   - **If that re-run is clean** → fall through to the Final summary with `Runtime check: failed-then-fixed` (count the runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
-   - **If still red** → restore the tree (see *Leaving the branch clean* above), then emit `Sentinel: GOAL_RUNTIME_RED — runtime-validation still failing after a fix pass; stopping for user input.`, print the runtime findings, and stop and ask the user. This is the third non-success exit the rollback rule covers — same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`, and the terminal for a still-red runtime check.
+3. If it returns any `critical`/`high` findings → run **one** dedicated runtime-fix pass — **not** a re-entry of the static loop, so the loop's `GOAL_STUCK` / `GOAL_MAXED` exits do not apply here. Apply the fixes, then **leave the work uncommitted until it is proven good on both gates** (so any failure is undone by the uncommitted-only restore — no committed runtime fix can be left behind):
+   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 5). Do **not** commit yet.
+   - Re-gate (`<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`). **If non-green** (the runtime fix broke the static gate) → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`; do **not** re-run `runtime-validation`.
+   - If the gate is green → re-run `runtime-validation` exactly once more (still uncommitted):
+     - **If that re-run is clean** → commit `fix(review): runtime — <N> findings`, then fall through to the Final summary with `Runtime check: failed-then-fixed` (count this single runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
+     - **If still red** → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`, print the runtime findings, and stop and ask the user.
+
+   `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the third non-success exit the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
 
@@ -333,7 +335,7 @@ On a clean converge, print a summary and the terminal sentinel:
 
 Branch:        <HEAD_BRANCH> -> <BASE_BRANCH>
 Iterations:    <i> (clean on iteration <i>)
-Commits:       <M> (fix(review): iteration N)
+Commits:       <M> (fix(review): iteration N; plus one fix(review): runtime — N when Runtime check is failed-then-fixed)
 Runtime check: passed | skipped (<reason>) | failed-then-fixed
 Low findings:  <K> (not auto-fixed — listed below for manual triage)
 
@@ -373,4 +375,4 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
 | `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
-| `GOAL_RUNTIME_RED` | Goal mode runtime re-pass | `— runtime-validation still failing after a fix pass; stopping for user input.` |
+| `GOAL_RUNTIME_RED` | Goal mode runtime re-pass | `— runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
