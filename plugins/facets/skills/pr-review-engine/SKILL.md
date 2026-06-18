@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.7.0
+version: 0.8.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -27,7 +27,7 @@ How a caller knows the engine is working (rough targets, not hard thresholds):
 - **Triggering precision** — CI-only diffs fire `ci-security` and not `release-integrity` / `dependencies`; React-only diffs fire `react-next` and not `web3`. The structural invariants (trigger flags declared and detected, schema, scope filters) are locked by the suites under `test/`.
 - **False-positive ceiling** — ≤ 10% of agent findings dropped by the scope filter on a healthy diff. If consistently higher, the diff path normalization or `CHANGED_LINES` build is wrong.
 - **0 failed agents on a clean diff** — `FAILED_AGENTS` is empty when every agent's JSON parses and matches the WHAT/FIX schema. If non-zero, check schema injection in Step 5.
-- **Bounded cost** — typical review fans out 6 baseline + 0–10 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
+- **Bounded cost** — typical review fans out 6 baseline + 0–11 conditional agents. The mean token budget per agent is set by the sub-agent prompt envelope size + per-file content; a single review should cost no more than a non-trivial chat turn would.
 
 ## Inputs (from caller's Steps 1–2)
 
@@ -136,6 +136,7 @@ Compute boolean flags from the diff and from changed files' content. Flag names 
   - **SPA / Vite / Astro:** `src/pages/**/*.{tsx,jsx,astro,mdx}`, `src/routes/**/*.{tsx,jsx}`, `src/App.{tsx,jsx,ts,js}`, `src/main.{tsx,jsx,ts,js}`, `src/index.{tsx,jsx,ts,js}`, `index.html` at repo root.
 
   Component-only changes (e.g. `components/Button.tsx`) intentionally do **not** trigger this flag. Users who want runtime validation in that case should run `/facets:tib-ship` (which always runs runtime-validation after convergence).
+- `HAS_PLUGIN_SKILLS` — true if any changed file is part of a Claude Code skill/plugin authoring surface: matches `**/SKILL.md`, `**/skills/**/agents/*.md`, `**/skills/**/references/*.md`, `.claude-plugin/plugin.json`, or `.claude-plugin/marketplace.json`. Path-based (manifests are JSON, skill files are prose), so it fires even on a docs-only skill diff — exactly when authoring conformance matters. Fires `skill-authoring`.
 
 ### Print discovery
 
@@ -159,6 +160,7 @@ Conditional flags:
   AI SDK:         HAS_AI_SDK=<bool>
   Server API:     HAS_SERVER_API=<bool>
   Route-UI:       HAS_ROUTE_UI=<bool>
+  Plugin/Skills:  HAS_PLUGIN_SKILLS=<bool>
 ```
 
 ### Conventions hint (terminal-only, non-blocking)
@@ -260,7 +262,7 @@ Baseline (always fire, 6 agents):
 - `simplification.md` — unnecessary complexity, redundant logic, dead branches.
 - `performance.md` — barrel imports, memory leaks, N+1, memoization correctness.
 
-Conditional (fire only when their trigger flag is true, 10 agents):
+Conditional (fire only when their trigger flag is true, 11 agents):
 
 - `web3.md` — fires when `HAS_WEB3`. Contract interactions, transaction params, permit flows, chainId validation, vendored `.sol` diffs.
 - `react-next.md` — fires when `HAS_REACT`. Loads marketplace rubrics (see `references/marketplace-rubrics.md`).
@@ -272,8 +274,9 @@ Conditional (fire only when their trigger flag is true, 10 agents):
 - `ai-sdk.md` — fires when `HAS_AI_SDK`. Vercel AI SDK usage, streaming, tool calls, structured output.
 - `api-security.md` — fires when `HAS_SERVER_API`. Authn/authz on routes and server actions, boundary input validation, webhook signatures, SSRF, server-held signing keys.
 - `runtime-validation.md` — fires when `HAS_ROUTE_UI`. Boots dev server, navigates changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/facets:tib-ship` from its iteration loop.
+- `skill-authoring.md` — fires when `HAS_PLUGIN_SKILLS`. Reviews Claude Code skill/plugin authoring conformance against `references/skill-authoring.md` + the repo's conventions: required version bumps, the frontmatter contract, name-matches-directory, no XML brackets in frontmatter, `disable-model-invocation`, and the cross-file inventory invariants.
 
-The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 16 agents (6 baseline + 10 conditional).
+The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 17 agents (6 baseline + 11 conditional).
 
 Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
 
@@ -359,7 +362,7 @@ Caller (`pr-review-gh`) hands in:
 
 Expected behavior:
 - Step 4 sets `HAS_WORKFLOWS=true`; all other framework/domain flags false.
-- Step 5 launches: 6 baseline + `ci-security` (only conditional whose trigger matches) = 7 agents in parallel. `release-integrity`, `dependencies`, `react-next`, `web3`, `ai-sdk`, `styling`, `accessibility`, `runtime-validation` are skipped.
+- Step 5 launches: 6 baseline + `ci-security` (only conditional whose trigger matches) = 7 agents in parallel. `release-integrity`, `dependencies`, `react-next`, `web3`, `ai-sdk`, `styling`, `accessibility`, `api-security`, `runtime-validation`, `skill-authoring` are skipped.
 - Step 6 aggregates findings; the CI agent typically owns 1–3 high-severity findings on action pinning / `permissions:`.
 
 ### Example 2: Local-mode review with uncommitted changes
@@ -423,4 +426,5 @@ These exist so the deterministic logic isn't re-derived from English by every ca
 - `references/scope-filter.md` — full rule for the Markdown documentation-example filter, including CommonMark fence handling and known limitations.
 - `references/calibration.md` — rationale for the ±15 tolerance window and the `distance_to_nearest_changed_line` audit signal.
 - `references/marketplace-rubrics.md` — inventory of marketplace skills loaded by individual agents.
+- `references/skill-authoring.md` — canonical Claude Code skill/plugin authoring contract; the rubric for `skill-authoring`.
 - `references/secrets.md`, `references/injection.md`, `references/effect-cleanup.md` — shared rubric content cross-checked by multiple agents.

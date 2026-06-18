@@ -4,17 +4,17 @@ Repo-level guidance for Claude Code working on this repo.
 
 ## What this repo is
 
-A Claude Code **plugin marketplace** containing a single plugin (`facets`) with thirteen slash-command skills:
+A Claude Code **plugin marketplace** containing a single plugin (`facets`) with fourteen slash-command skills:
 
 - **PR navigation / review / fix** — `pr-switch` (check out a PR's branch from a URL/number), `pr-review-local`, `pr-review-gh`, `pr-fix`, `setup`
 - **PR / workflow authoring** — `pr-create` (draft PR from the current diff), `convert-tib-to-linear` (TIB/ADR → Linear project + milestones + issues), `tib-create` (scaffold a new TIB), `tip-create` (scaffold a TIP — concrete implementation plan paired with a TIB), `tib-ship` (yolo execute a TIB end-to-end: scaffold TIPs → implement TDD-style → review→fix loop → ready-to-push branch)
 - **Conventions** — `ts-conventions` (write/refresh global `~/.claude/CLAUDE.md` with a language-agnostic `## Engineering principles` section — three altitude tiers from solution architecture down to code design, incl. security/supply-chain/change-management — plus a stack-tailored `## TypeScript conventions` section — preferred stack, frontend stack, type system & strictness, modules/exports, lint/test rules, anti-patterns — inside idempotent managed markers)
 - **dApp testing** — `inject-wallet` (boot a dev server + browser, inject a test wallet — EIP-1193 provider announced over EIP-6963 — so an agent gets past the Reown AppKit connect modal, then screenshot the connected UI; Anvil-fork or read-only-RPC backend, env-gated wagmi `mock`-connector fallback; a TypeScript Node CLI under `scripts/` run via native type-stripping, the SKILL.md wraps it)
-- **Feedback** — `feedback` (capture a facets improvement idea from any repo as a GitHub issue on the facets repo, or a local backlog with `--local`; grounds the note in the current repo/branch/PR, scrubs sensitive detail for private repos, previews before posting; target defaults to `0xbulma/facets`, override via `--repo` / `FACETS_REPO`)
+- **Feedback / self-improvement** — `feedback` (capture a facets improvement idea from any repo as a GitHub issue on the facets repo, or a local backlog with `--local`; grounds the note in the current repo/branch/PR, scrubs sensitive detail for private repos, previews before posting; target defaults to `0xbulma/facets`, override via `--repo` / `FACETS_REPO`), `implement-feedback` (the counterpart — pick up a feedback issue/backlog entry and implement it in the facets plugin to the repo's conventions, validate, open a draft PR that closes the issue; `--goal` runs the full review→fix→re-review loop before the PR; must run inside a facets clone, mirroring `pr-switch`'s cross-repo guard)
 
 The review side and its persona library are **optimized for TypeScript + React + Vercel** codebases — JSX/TSX detection, Server Components, React 19 APIs, Tailwind, Vercel's Web Interface Guidelines, Web3 (viem/wagmi/ethers) when present, and route-level runtime validation via `agent-browser`. It works on any project, but the conditional personas are tuned for the TS/React/Vercel stack. The four authoring skills (`pr-create`, `convert-tib-to-linear`, `tib-create`, `tip-create`) are repo-agnostic; `tib-ship` is repo-agnostic for orchestration but its inner per-block loop and `runtime-validation` step assume a JS/TS toolchain.
 
-Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install facets@facets`. They invoke the skills as `/facets:pr-switch`, `/facets:pr-review-local`, `/facets:pr-review-gh`, `/facets:pr-fix`, `/facets:setup`, `/facets:pr-create`, `/facets:convert-tib-to-linear`, `/facets:tib-create`, `/facets:tip-create`, `/facets:tib-ship`, `/facets:ts-conventions`, `/facets:inject-wallet`, `/facets:feedback`.
+Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install facets@facets`. They invoke the skills as `/facets:pr-switch`, `/facets:pr-review-local`, `/facets:pr-review-gh`, `/facets:pr-fix`, `/facets:setup`, `/facets:pr-create`, `/facets:convert-tib-to-linear`, `/facets:tib-create`, `/facets:tip-create`, `/facets:tib-ship`, `/facets:ts-conventions`, `/facets:inject-wallet`, `/facets:feedback`, `/facets:implement-feedback`.
 
 ## Mental model
 
@@ -27,10 +27,10 @@ Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install 
                           ├─ skills/
                           │   ├─ {pr-switch,pr-review-local,pr-review-gh,pr-fix,setup,
                           │   │    pr-create,convert-tib-to-linear,tib-create,tip-create,tib-ship,
-                          │   │    ts-conventions,inject-wallet,feedback}/SKILL.md
+                          │   │    ts-conventions,inject-wallet,feedback,implement-feedback}/SKILL.md
                           │   └─ pr-review-engine/
                           │       ├─ SKILL.md             ← shared Steps 3–6 (the dispatcher)
-                          │       ├─ agents/*.md          ← 16 versioned reviewers (6 baseline + 10 conditional)
+                          │       ├─ agents/*.md          ← 17 versioned reviewers (6 baseline + 11 conditional)
                           │       ├─ references/*.md      ← shared rubrics loaded on demand by agents
                           │       └─ scripts/             ← deterministic helpers (changed-lines build, finding validation, fix-rubric discovery)
                           ├─ hooks/hooks.json            ← SessionStart auto-install

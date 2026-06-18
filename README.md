@@ -13,9 +13,9 @@
 
 > **F**ullstack&nbsp;·&nbsp;**A**gentic&nbsp;·&nbsp;**C**laude&nbsp;·&nbsp;**E**ngine&nbsp;·&nbsp;**T**ypeScript&nbsp;·&nbsp;**S**hipping
 >
-> **Self-review every _facet_ of your PR — then ship it.** A 16-agent Claude review engine that runs locally, with no cloud review bill.
+> **Self-review every _facet_ of your PR — then ship it.** A 17-agent Claude review engine that runs locally, with no cloud review bill.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with thirteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with fourteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 17-agent review library (6 baseline + 11 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -53,10 +53,11 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │   ├── ts-conventions/SKILL.md        # /facets:ts-conventions [--preview]
 │   │   ├── inject-wallet/SKILL.md        # /facets:inject-wallet [--anvil|--rpc] [--url …]
 │   │   ├── feedback/SKILL.md              # /facets:feedback <note>
+│   │   ├── implement-feedback/SKILL.md    # /facets:implement-feedback <issue>
 │   │   ├── setup/SKILL.md                 # /facets:setup
 │   │   └── pr-review-engine/              # shared review engine (dispatcher + agents + references)
 │   │       ├── SKILL.md                   # dispatcher: Steps 3–6
-│   │       ├── agents/                    # 16 reviewers (6 baseline + 10 conditional)
+│   │       ├── agents/                    # 17 reviewers (6 baseline + 11 conditional)
 │   │       │   ├── correctness.md         # baseline
 │   │       │   ├── docs.md                # baseline
 │   │       │   ├── performance.md         # baseline
@@ -71,6 +72,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │       │   ├── react-next.md          # conditional (<HAS_REACT>)
 │   │       │   ├── release-integrity.md   # conditional (<HAS_RELEASE>)
 │   │       │   ├── runtime-validation.md  # conditional (<HAS_ROUTE_UI>)
+│   │       │   ├── skill-authoring.md      # conditional (<HAS_PLUGIN_SKILLS>)
 │   │       │   ├── styling.md             # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
 │   │       │   └── web3.md                # conditional (<HAS_WEB3>)
 │   │       ├── references/                # shared rubrics loaded on demand
@@ -112,6 +114,7 @@ A **TIB** (Technical Implementation Brief — a lightweight ADR/RFC) captures th
 **Utility**
 
 - **`/facets:feedback <note>`** — log a facets improvement idea from whatever repo you're working in, as a GitHub issue on the facets repo (or appended to a local backlog with `--local`). Grounds the note in the current repo/branch/PR, scrubs sensitive detail when the working repo is private, and previews before posting. Target repo defaults to `0xbulma/facets` (override with `--repo` or `FACETS_REPO`).
+- **`/facets:implement-feedback <issue>`** — the counterpart to `feedback`: pick up a logged improvement (a feedback issue, or `--local` backlog entry), implement it in the facets plugin to the repo's conventions (version bumps, cross-file invariants, tests), validate, and open a draft PR that closes the issue. `--goal` runs the full review→fix→re-review loop before the PR. Runs only inside a facets clone (mirrors `pr-switch`'s cross-repo guard); shares the `skill-authoring` rubric so what it writes is what passes review.
 - **`/facets:setup`** — manually install the rubric prereqs (also runs in the background on every session start).
 
 ## Rubric prereqs (auto-installed)
@@ -209,7 +212,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `simplification` — unnecessary complexity, redundant logic, over-engineering.
 - `performance` — barrel imports, memory leaks, N+1, memoization correctness.
 
-10 conditional (fire only when their flag matches the diff):
+11 conditional (fire only when their flag matches the diff):
 
 - `react-next` — `<HAS_REACT>` — Server Components, hooks, React 19 APIs, Next.js conventions, Cache Components. Loads `vercel-react-best-practices`, `vercel-composition-patterns`, `next-best-practices`, `next-cache-components`, `building-components` (+ `vercel-react-native-skills` when RN code detected).
 - `styling` — `<HAS_TAILWIND> OR <HAS_STYLING>` — Tailwind, design tokens, styling-architecture consistency. Loads `tailwind-design-system`, `web-design-guidelines`, `building-components` (+ `ai-elements`/`streamdown` when their imports are present).
@@ -221,6 +224,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `release-integrity` — `<HAS_RELEASE>` — publish flow, provenance, release-commit signing, Changesets wiring. Loads `deploy-to-vercel`, `vercel-cli-with-tokens`.
 - `dependencies` — `<HAS_DEPS>` — lockfile drift, `.npmrc` hygiene, typosquats, postinstall scripts.
 - `runtime-validation` — `<HAS_ROUTE_UI>` — boots the dev server, navigates the changed route(s), captures console errors / network 4xx-5xx / screenshots. Loads `agent-browser`; `tib-ship` excludes it from its iteration loop and runs it once after static convergence.
+- `skill-authoring` — `<HAS_PLUGIN_SKILLS>` — Claude Code skill/plugin authoring conformance: required version bumps, the frontmatter contract, name-matches-directory, no XML brackets in frontmatter, `disable-model-invocation`, and the cross-file inventory invariants. Grades against the in-repo `references/skill-authoring.md` rubric layered with the repo's own conventions; shared with the `implement-feedback` skill.
 
 ## License
 
