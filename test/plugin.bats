@@ -240,9 +240,9 @@ setup() {
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
 }
 
-@test "engine ships the three new references/ files" {
+@test "engine ships its bundled references/ files" {
   REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
-  for f in changed-lines.md scope-filter.md calibration.md; do
+  for f in changed-lines.md scope-filter.md calibration.md skill-authoring.md; do
     [ -f "$REFS_DIR/$f" ] || { echo "missing reference: $REFS_DIR/$f" >&2; return 1; }
   done
 }
@@ -323,7 +323,7 @@ setup() {
   # Only treat backticked tokens as consumer names if a matching agent
   # file actually exists under $AGENTS_DIR/<name>.md — otherwise we'd
   # pick up incidental code-formatted prose like `eval()` or `0x...`.
-  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md; do
+  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md "$REFS_DIR"/skill-authoring.md; do
     ref_name=$(basename "$ref_file")
     consumers=$(awk '/^## Consumers/,EOF' "$ref_file" | grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | sort -u)
     for c in $consumers; do

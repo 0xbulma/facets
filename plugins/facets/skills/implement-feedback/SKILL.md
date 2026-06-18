@@ -92,10 +92,15 @@ Check the exit code. On non-zero (auth missing, network down, issue not found, p
 ### 2b: No argument → interactive pick
 
 ```bash
+# Prefer the `enhancement` label, but fall back to all open issues — `feedback`
+# creates issues WITHOUT a label when `enhancement` doesn't exist on the target
+# repo (feedback/SKILL.md Step 4), so a label-only filter would hide them.
 gh issue list --repo <FACETS_REPO> --label enhancement --state open --json number,title,url
+# If that returns nothing, re-list without the label filter before concluding:
+gh issue list --repo <FACETS_REPO> --state open --json number,title,url,labels
 ```
 
-Print the list (number — title) and ask the user which issue to implement. If the list is empty, say so and suggest `/facets:feedback` to log one first (or `--local`). Once chosen, fetch its body as in 2a.
+Print the list (number — title) and ask the user which issue to implement. Only if the **unfiltered** list is also empty, say so and suggest `/facets:feedback` to log one first (or `--local`). Once chosen, fetch its body as in 2a.
 
 ### 2c: `--local` → backlog entry
 
@@ -125,6 +130,13 @@ Resolve the default branch and create a feature branch off it:
 
 ```bash
 DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+# Guard (mirrors the Step 2a exit-code check): a failed `gh repo view` (auth
+# dropped, network down) yields an empty value that would corrupt every
+# downstream ref — `git fetch origin ""`, `origin/`, `gh pr create --base ""`.
+if [ -z "$DEFAULT_BRANCH" ]; then
+  echo "implement-feedback: could not resolve the default branch (is gh authenticated?). Aborting." >&2
+  exit 1
+fi
 git fetch origin "$DEFAULT_BRANCH"
 git checkout -b <BRANCH> "origin/$DEFAULT_BRANCH"
 ```
@@ -143,15 +155,12 @@ Read the **canonical authoring checklist** — the same rubric the `skill-author
 cat "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/references/skill-authoring.md"
 ```
 
-That reference is the shared source of truth; the repo's `CLAUDE.md` / `AGENTS.md` are its binding refinements and win on any conflict. For the facets repo specifically, the checklist comes down to:
+That reference is the shared source of truth; the repo's `CLAUDE.md` / `AGENTS.md` are its binding refinements and win on any conflict. **Satisfy every item in that reference** — in particular its version-bump rules, the cross-file inventory invariants, and the conditional-agent trigger-flag rule. Do not restate them here, so the reference stays the single contract both this skill and the `skill-authoring` review agent grade against.
 
-1. **Bump `plugins/facets/.claude-plugin/plugin.json` `version`.** This is the dominant failure mode — `CLAUDE.md`'s "common gotchas" hammers it: without the bump, `/plugin marketplace update` serves the stale cache forever. Pick patch/minor/major per the repo's semver rules (new skill/agent/flag/prereq → minor).
-2. **Bump the per-file `version:`** of any `SKILL.md` or agent you touched.
-3. **Keep the cross-file invariants in sync** — if the change adds/renames/removes a skill or agent, update *every* place that enumerates them: `marketplace.json`'s description count + list, both `README.md` files (counts + trees + bullets), `CLAUDE.md`'s skill list / mental-model counts, and the `SKILLS_ALL` list / agent-count / smoke-grep assertions in `test/plugin.bats`. The bats suite locks several of these — a missed one is a red test, not a silent drift.
-4. **Conditional agent?** If the proposal adds a `kind: conditional` agent, also extend the engine's Step 4 flag-detection block (`skills/pr-review-engine/SKILL.md`) with its trigger flag — an undeclared flag never fires.
-5. **Add or extend tests** for the behavior the proposal introduces, matching the existing suite (`test/plugin.bats` for plugin shape; colocated `*.test.ts` for any script).
+Two facets-specific notes the reference does not carry:
 
-Honor whatever additional rules the repo's own `CLAUDE.md` / `AGENTS.md` document — they win over these defaults on any conflict.
+- **Semver for the plugin `version` bump** — new skill / agent / conditional flag / prereq → minor; prompt-only edit → patch; trigger-flag rename or output-shape change → major.
+- **Add or extend tests** for the behavior the proposal introduces, matching the existing suite (`test/plugin.bats` for plugin shape; colocated `*.test.ts` for any script). The reference locks *inventory* invariants but not feature tests.
 
 ## Step 6: Validate
 
