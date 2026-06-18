@@ -190,11 +190,16 @@ Detect gates generically from the repo (don't assume): a `test/` dir with `.bats
 Stage deliberately — never `git add -A` blind (mirror `pr-create` Step 3): stage tracked modifications with `git add -u`, and add new files only when they belong to this change (skip `*.local`, `.env*`, keys, scratch). List anything deliberately left out.
 
 ```bash
-git commit -m "<type>: <short summary of the implemented feedback>"
-git push -u origin <BRANCH>
+# Chain commit + push and abort on failure. A failed commit (nothing staged, a
+# rejected hook, a signing failure) followed by an unconditional push would push
+# the base commit — and the PR below would then carry `Closes #<ISSUE>` with NO
+# implementation, silently closing a real issue on merge.
+git commit -m "<type>: <short summary of the implemented feedback>" \
+  && git push -u origin <BRANCH> \
+  || { echo "implement-feedback: commit or push failed; not opening a PR." >&2; exit 1; }
 ```
 
-Open the draft PR (reuse `pr-create` Step 4 conventions — derive everything from the change, ask nothing):
+Open the draft PR **only after** the commit + push above succeeded (reuse `pr-create` Step 4 conventions — derive everything from the change, ask nothing):
 
 ```bash
 gh pr create \
@@ -225,7 +230,7 @@ Then go to Step 8.
 
 ### Step 7b: Goal loop, then PR (`--goal`)
 
-After committing the implementation (same deliberate staging as 7a, but do **not** push yet), run the proven autonomous loop instead of opening the PR immediately:
+After committing the implementation (same deliberate staging and commit guard as 7a — abort if the commit fails, so the loop never reviews an empty diff — but do **not** push yet), run the proven autonomous loop instead of opening the PR immediately:
 
 1. **Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-local/SKILL.md` and execute its "Goal mode" section** against the branch's commits — `DIFF_SOURCE=local`, base = `<DEFAULT_BRANCH>`, honoring its pre-flight gates and the `--max-iters` / `--no-runtime` flags passed here. Do not re-implement the loop — delegate to it so the sentinels and per-iteration `fix(review)` commits stay identical.
 2. **On `GOAL_CLEAN`** → the branch is clean and committed (the implementation commit plus any `fix(review)` iteration commits the loop made). Push and open the draft PR using **only Step 7a's push + `gh pr create`** — the commit already happened in this step, so do NOT re-run 7a's commit (there is nothing staged). The PR body still carries `Closes #<ISSUE>`. Then go to Step 8.
