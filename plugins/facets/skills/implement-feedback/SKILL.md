@@ -93,8 +93,9 @@ Check the exit code. On non-zero (auth missing, network down, issue not found, p
 
 ```bash
 # Prefer the `enhancement` label, but fall back to all open issues — `feedback`
-# creates issues WITHOUT a label when `enhancement` doesn't exist on the target
-# repo (feedback/SKILL.md Step 4), so a label-only filter would hide them.
+# ensures that label exists and applies it (feedback/SKILL.md Step 4), yet may
+# still post unlabeled under a read-only token, and older issues predate the
+# label, so a label-only filter could hide them.
 gh issue list --repo <FACETS_REPO> --label enhancement --state open --json number,title,url
 # If that returns nothing, re-list without the label filter before concluding:
 gh issue list --repo <FACETS_REPO> --state open --json number,title,url,labels
