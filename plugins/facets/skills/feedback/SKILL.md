@@ -87,14 +87,18 @@ On confirm, ensure the discovery label exists, then create the issue with it —
 ```bash
 # Ensure the `enhancement` label exists (idempotent: create only if absent) so every feedback
 # issue is discoverable by implement-feedback. Label-create needs the same write access issue-create does.
+# If it can't be ensured (read-only token), drop the flag and post unlabeled rather than erroring —
+# the chain self-resolves so the snippet matches the fallback below.
+LABEL_FLAG="--label enhancement"
 gh label list --repo <FACETS_REPO> --json name --jq '.[].name' | grep -qx enhancement \
-  || gh label create enhancement --repo <FACETS_REPO> --description "facets improvement idea" --color a2eeef 2>/dev/null || true
+  || gh label create enhancement --repo <FACETS_REPO> --description "facets improvement idea" --color a2eeef 2>/dev/null \
+  || LABEL_FLAG=""   # couldn't ensure the label — post unlabeled; implement-feedback's unlabeled fallback still finds it
 
-gh issue create --repo <FACETS_REPO> --title "<title>" --label enhancement --body-file <tmpfile>
+gh issue create --repo <FACETS_REPO> --title "<title>" $LABEL_FLAG --body-file <tmpfile>
 ```
 
 - Write the body to a temp file and pass `--body-file` (avoids shell-quoting issues with backticks/code).
-- If the label still can't be applied (read-only token), retry the create **without** `--label` rather than failing — but warn that `implement-feedback`'s default listing filters on `enhancement`, so an unlabeled issue is only reached via its unlabeled fallback.
+- The `LABEL_FLAG` fallback above means a read-only token posts the issue **unlabeled** rather than failing — warn the user when this happens, since `implement-feedback`'s default listing filters on `enhancement` and only reaches an unlabeled issue via its unlabeled fallback.
 - If `gh` is unavailable or the create fails outright, fall back to **Step 5**.
 
 Print the returned issue URL.
