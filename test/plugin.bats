@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet pr-review-engine"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet feedback implement-feedback pr-review-engine"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,7 +37,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "thirteen skills exist at expected paths" {
+@test "fifteen skills exist at expected paths" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
   done
@@ -117,13 +117,14 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "agent inventory is exactly 16 files" {
-  # 6 baseline + 10 conditional. Three combos (ci-release-security,
+@test "agent inventory is exactly 17 files" {
+  # 6 baseline + 11 conditional. Three combos (ci-release-security,
   # ui-styling-accessibility, code-simplifier-performance) split per
   # TIP-2026-05-20-persona-refinement (11 - 3 + 7 = 15); api-security
-  # added for the server-side trust boundary: 15 + 1 = 16.
+  # added for the server-side trust boundary: 15 + 1 = 16; skill-authoring
+  # added for the skill/plugin authoring surface: 16 + 1 = 17.
   count=$(find "$AGENTS_DIR" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  [ "$count" = "16" ]
+  [ "$count" = "17" ]
 }
 
 @test "list-fix-rubric-agents.sh returns exit 0 + empty stdout when no agent matches" {
@@ -239,9 +240,9 @@ setup() {
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
 }
 
-@test "engine ships the three new references/ files" {
+@test "engine ships its bundled references/ files" {
   REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
-  for f in changed-lines.md scope-filter.md calibration.md; do
+  for f in changed-lines.md scope-filter.md calibration.md skill-authoring.md; do
     [ -f "$REFS_DIR/$f" ] || { echo "missing reference: $REFS_DIR/$f" >&2; return 1; }
   done
 }
@@ -322,7 +323,7 @@ setup() {
   # Only treat backticked tokens as consumer names if a matching agent
   # file actually exists under $AGENTS_DIR/<name>.md — otherwise we'd
   # pick up incidental code-formatted prose like `eval()` or `0x...`.
-  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md; do
+  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md "$REFS_DIR"/skill-authoring.md; do
     ref_name=$(basename "$ref_file")
     consumers=$(awk '/^## Consumers/,EOF' "$ref_file" | grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | sort -u)
     for c in $consumers; do
@@ -421,7 +422,7 @@ setup() {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
-  # The 10 model-invokable skills should appear; `setup` is intentionally
+  # The 13 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
   # `</dev/null` is required: claude waits on stdin otherwise.
   run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
@@ -448,4 +449,6 @@ setup() {
   echo "$output" | grep -q "facets:tib-ship"
   echo "$output" | grep -q "facets:ts-conventions"
   echo "$output" | grep -q "facets:inject-wallet"
+  echo "$output" | grep -q "facets:feedback"
+  echo "$output" | grep -q "facets:implement-feedback"
 }
