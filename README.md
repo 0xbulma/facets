@@ -15,7 +15,7 @@
 >
 > **Self-review every _facet_ of your PR — then ship it.** A 16-agent Claude review engine that runs locally, with no cloud review bill.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with eleven user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with twelve user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -53,7 +53,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │   ├── ts-conventions/SKILL.md        # /facets:ts-conventions [--preview]
 │   │   ├── inject-wallet/SKILL.md        # /facets:inject-wallet [--anvil|--rpc] [--url …]
 │   │   ├── setup/SKILL.md                 # /facets:setup
-│   │   └── pr-review-engine/              # shared review engine (was lib/ + personas/)
+│   │   └── pr-review-engine/              # shared review engine (dispatcher + agents + references)
 │   │       ├── SKILL.md                   # dispatcher: Steps 3–6
 │   │       ├── agents/                    # 16 reviewers (6 baseline + 10 conditional)
 │   │       │   ├── correctness.md         # baseline
@@ -91,6 +91,8 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 - **`/facets:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a 5-minute cron fix loop (don't pair it with a `pr-review-gh --watch` on the same PR — the two watchers re-trigger each other).
 
 **PR / workflow authoring**
+
+A **TIB** (Technical Implementation Brief — a lightweight ADR/RFC) captures the decision; one or more **TIP**s (Technical Implementation Plan) spell out how to build it.
 
 - **`/facets:pr-create`** — open a draft PR from the current diff. Derives branch name, title, body, and label without asking.
 - **`/facets:convert-tib-to-linear <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan (milestones + issues with dependencies).
@@ -144,7 +146,7 @@ Claude Code's `plugin.json` `dependencies` field only resolves other **plugins**
 
 - `gh` CLI authenticated (`gh auth status`) — for the GitHub PR skills.
 - `git` ≥ 2.30 — for `--name-status --find-renames`.
-- **Node ≥ 22.18** — the review skills' bundled helpers (`build-changed-lines.ts`, `validate-findings.ts`) run via Node's native TypeScript type-stripping; `npx` (Node) also drives the prereq installer. (Python is no longer required.)
+- **Node ≥ 22.18** — the review skills' bundled helpers (`build-changed-lines.ts`, `validate-findings.ts`) run via Node's native TypeScript type-stripping; `npx` (Node) also drives the prereq installer.
 
 ## Install
 
@@ -190,7 +192,7 @@ The plugin's `version` field in `plugins/facets/.claude-plugin/plugin.json` cont
 
 ## Local development
 
-After editing any file under `plugins/facets/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks) and `pnpm verify` (Biome + tsc + Vitest — covers the changed-lines builder and finding validator, now TypeScript) to validate.
+After editing any file under `plugins/facets/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks) and `pnpm verify` (Biome + tsc + Vitest — covers the changed-lines builder and finding validator) to validate.
 
 See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versioning rules, and forking notes.
 
