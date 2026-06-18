@@ -100,7 +100,9 @@ gh issue list --repo <FACETS_REPO> --label enhancement --state open --json numbe
 gh issue list --repo <FACETS_REPO> --state open --json number,title,url,labels
 ```
 
-Print the list (number — title) and ask the user which issue to implement. Only if the **unfiltered** list is also empty, say so and suggest `/facets:feedback` to log one first (or `--local`). Once chosen, fetch its body as in 2a.
+Check the exit code of each `gh issue list` (as in 2a): on non-zero, surface gh's stderr verbatim and stop — a failed call (auth dropped, network down) returns empty output indistinguishable from a genuinely empty list, so only a **clean** exit with empty output means "no open feedback issues".
+
+Print the list (number — title) and ask the user which issue to implement. Only if the **unfiltered** list is also empty (on a clean exit), say so and suggest `/facets:feedback` to log one first (or `--local`). Once chosen, fetch its body as in 2a.
 
 ### 2c: `--local` → backlog entry
 
@@ -137,8 +139,13 @@ if [ -z "$DEFAULT_BRANCH" ]; then
   echo "implement-feedback: could not resolve the default branch (is gh authenticated?). Aborting." >&2
   exit 1
 fi
-git fetch origin "$DEFAULT_BRANCH"
-git checkout -b <BRANCH> "origin/$DEFAULT_BRANCH"
+# Chain the fetch + branch creation and abort on either failure — otherwise a
+# failed fetch (transient network) or missing `origin/$DEFAULT_BRANCH` ref leaves
+# no feature branch, and the procedure would land Step 5's edits on the CURRENT
+# branch (often the default branch after the clean-tree check) and push them.
+git fetch origin "$DEFAULT_BRANCH" \
+  && git checkout -b <BRANCH> "origin/$DEFAULT_BRANCH" \
+  || { echo "implement-feedback: failed to fetch/create the branch off origin/$DEFAULT_BRANCH; aborting before any edits." >&2; exit 1; }
 ```
 
 `<SLUG>` is a short kebab-case slug from the issue title (e.g. `pr-review-local: cache findings` → `cache-findings`). `<BRANCH>` = `feat/feedback-<ISSUE>-<SLUG>` (or `feat/feedback-<SLUG>` in `--local` mode).
