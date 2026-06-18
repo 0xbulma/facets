@@ -212,7 +212,7 @@ Then go to Step 8.
 After committing the implementation (same deliberate staging as 7a, but do **not** push yet), run the proven autonomous loop instead of opening the PR immediately:
 
 1. **Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-local/SKILL.md` and execute its "Goal mode" section** against the branch's commits — `DIFF_SOURCE=local`, base = `<DEFAULT_BRANCH>`, honoring its pre-flight gates and the `--max-iters` / `--no-runtime` flags passed here. Do not re-implement the loop — delegate to it so the sentinels and per-iteration `fix(review)` commits stay identical.
-2. **On `GOAL_CLEAN`** → the branch is clean and committed. Push and open the draft PR exactly as in Step 7a (body still carries `Closes #<ISSUE>`), then go to Step 8.
+2. **On `GOAL_CLEAN`** → the branch is clean and committed (the implementation commit plus any `fix(review)` iteration commits the loop made). Push and open the draft PR using **only Step 7a's push + `gh pr create`** — the commit already happened in this step, so do NOT re-run 7a's commit (there is nothing staged). The PR body still carries `Closes #<ISSUE>`. Then go to Step 8.
 3. **On any non-success sentinel** (`GOAL_ABORTED`, `GOAL_STUCK`, `GOAL_MAXED`, `GOAL_RUNTIME_RED`) → **do NOT open the PR.** Surface the sentinel and the residual findings, and stop for the user. The branch is left at its last green commit (the loop's own clean-up guarantees this). The user can re-run with a higher `--max-iters`, fix the sticking point, or open the PR by hand.
 
 `--goal` supersedes the default: the PR is opened only through the converged path in step 2 above.
