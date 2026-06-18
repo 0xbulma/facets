@@ -283,6 +283,23 @@ setup() {
   grep -q '±15'    "$engine"                 || { echo "engine missing the ±15 adjacent-code tolerance window" >&2; return 1; }
 }
 
+@test "pr-review-local SKILL.md documents the --goal loop contract" {
+  # The --goal autonomous loop is a documented contract: the flags plus the
+  # full five-sentinel state machine — GOAL_CLEAN (success) and the
+  # GOAL_ABORTED / GOAL_STUCK / GOAL_MAXED / GOAL_RUNTIME_RED safety rails
+  # (the "Autonomous, not careless" exits). Lock the whole set so a future
+  # edit can't silently gut a rail while leaving the description in place.
+  # Mirrors the scope-filter test, which locks every DROPPED_* counter, not
+  # one representative.
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  for token in GOAL_CLEAN GOAL_ABORTED GOAL_STUCK GOAL_MAXED GOAL_RUNTIME_RED; do
+    grep -q "$token" "$skill" || { echo "pr-review-local missing $token sentinel" >&2; return 1; }
+  done
+  for flag in --goal --max-iters --no-runtime; do
+    grep -q -- "$flag" "$skill" || { echo "pr-review-local missing $flag flag" >&2; return 1; }
+  done
+}
+
 @test "every references/*.md pointer in agents resolves to a real file" {
   REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
   # Every "Cross-check `references/X.md`" pointer in an agent body must
