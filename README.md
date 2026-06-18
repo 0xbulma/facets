@@ -15,7 +15,7 @@
 >
 > **Self-review every _facet_ of your PR — then ship it.** A 16-agent Claude review engine that runs locally, with no cloud review bill.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with twelve user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with thirteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 16-agent review library (6 baseline + 10 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
@@ -52,6 +52,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │   ├── tib-ship/SKILL.md              # /facets:tib-ship <tib-path> [--max-iters N] [--no-runtime]
 │   │   ├── ts-conventions/SKILL.md        # /facets:ts-conventions [--preview]
 │   │   ├── inject-wallet/SKILL.md        # /facets:inject-wallet [--anvil|--rpc] [--url …]
+│   │   ├── feedback/SKILL.md              # /facets:feedback <note>
 │   │   ├── setup/SKILL.md                 # /facets:setup
 │   │   └── pr-review-engine/              # shared review engine (dispatcher + agents + references)
 │   │       ├── SKILL.md                   # dispatcher: Steps 3–6
@@ -110,6 +111,7 @@ A **TIB** (Technical Implementation Brief — a lightweight ADR/RFC) captures th
 
 **Utility**
 
+- **`/facets:feedback <note>`** — log a facets improvement idea from whatever repo you're working in, as a GitHub issue on the facets repo (or appended to a local backlog with `--local`). Grounds the note in the current repo/branch/PR, scrubs sensitive detail when the working repo is private, and previews before posting. Target repo defaults to `0xbulma/facets` (override with `--repo` or `FACETS_REPO`).
 - **`/facets:setup`** — manually install the rubric prereqs (also runs in the background on every session start).
 
 ## Rubric prereqs (auto-installed)

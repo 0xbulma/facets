@@ -14,7 +14,7 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet pr-review-engine"
+  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet feedback pr-review-engine"
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,7 +37,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "thirteen skills exist at expected paths" {
+@test "fourteen skills exist at expected paths" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
   done
@@ -421,7 +421,7 @@ setup() {
   command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
 
   # Non-interactive smoke: load the plugin and ask Claude to list skills.
-  # The 10 model-invokable skills should appear; `setup` is intentionally
+  # The 12 model-invokable skills should appear; `setup` is intentionally
   # disable-model-invocation: true and may not appear in the listing.
   # `</dev/null` is required: claude waits on stdin otherwise.
   run claude --plugin-dir "$PLUGIN_DIR" -p "List the plugin slash commands you can see. Just print their names." </dev/null 2>&1
@@ -448,4 +448,5 @@ setup() {
   echo "$output" | grep -q "facets:tib-ship"
   echo "$output" | grep -q "facets:ts-conventions"
   echo "$output" | grep -q "facets:inject-wallet"
+  echo "$output" | grep -q "facets:feedback"
 }

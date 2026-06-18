@@ -1,6 +1,6 @@
 # facets
 
-Eleven user-invokable slash-command skills + one engine skill (`pr-review-engine`, invoked by other skills, not directly).
+Thirteen user-invokable slash-command skills + one engine skill (`pr-review-engine`, invoked by other skills, not directly).
 
 **PR navigation / review / fix** (review side delegates to the shared `pr-review-engine` skill + its 16-agent library)
 
@@ -23,6 +23,7 @@ Eleven user-invokable slash-command skills + one engine skill (`pr-review-engine
 
 **Utility**
 
+- **`/facets:feedback <note>`** — capture a facets improvement idea from whatever repo you're in, as a GitHub issue on the facets repo (or `--local` to append to a backlog file). Grounds the note in the current repo/branch/PR, scrubs sensitive detail for private repos, and previews before posting. Target defaults to `0xbulma/facets` (override via `--repo` / `FACETS_REPO`). Captures feedback only — never edits facets or opens PRs.
 - **`/facets:setup`** — manually install the 17 rubric skills used by the conditional review personas. Same script also runs in the background on every Claude Code session start.
 
 The PR review/fix skills delegate Steps 3–6 to `skills/pr-review-engine/SKILL.md`, which walks `skills/pr-review-engine/agents/*.md` and dispatches one sub-agent per matching file in parallel. Baseline agents always fire; conditional agents fire when their trigger flag matches the diff (Web3, React/Next, Tailwind/styling, CI/release). Shared rubric content lives in `skills/pr-review-engine/references/` and is loaded on demand by agents that cite it.
