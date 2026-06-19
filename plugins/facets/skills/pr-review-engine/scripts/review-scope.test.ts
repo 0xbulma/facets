@@ -79,6 +79,7 @@ describe("CLI --run-hash (real git fixture)", () => {
 			g("init", "-q");
 			g("config", "user.email", "a@b.c");
 			g("config", "user.name", "x");
+			g("config", "commit.gpgsign", "false"); // fixture must not depend on the dev's signing agent
 			writeFileSync(join(dir, "f.txt"), "v1\n");
 			g("add", "f.txt");
 			g("commit", "-qm", "init");
