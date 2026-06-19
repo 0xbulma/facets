@@ -354,6 +354,24 @@ setup() {
   local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
   grep -q -- '--check-cache' "$ledger"   || { echo "findings-ledger.ts missing the --check-cache mode" >&2; return 1; }
   grep -q 'Idempotency cache' "$local_skill" || { echo "pr-review-local missing the Step 2c idempotency cache" >&2; return 1; }
+  # feedback #32 (reshaped): goal mode stamps the ledger ONCE at convergence so a
+  # later run inherits what --goal resolved — not per-iteration.
+  grep -q 'Post-convergence ledger stamp' "$local_skill" \
+    || { echo "pr-review-local goal mode missing the converge-time ledger stamp (#32)" >&2; return 1; }
+}
+
+@test "implement-feedback gates on relevance + desirability before implementing" {
+  # A logged feedback issue is a proposal, not a work order — implement-feedback
+  # must assess relevance/desirability (stale / superseded / conflicts / value)
+  # and surface a proceed/reshape/skip verdict before branching, never blindly
+  # implement. Lock the gate so a future edit can't drop it.
+  skill="$SKILLS_DIR/implement-feedback/SKILL.md"
+  grep -q 'Assess relevance and desirability' "$skill" \
+    || { echo "implement-feedback missing the relevance/desirability gate" >&2; return 1; }
+  for verdict in proceed reshape skip; do
+    grep -q -- "**$verdict**" "$skill" || grep -qi "$verdict" "$skill" \
+      || { echo "implement-feedback gate missing the '$verdict' verdict" >&2; return 1; }
+  done
 }
 
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {

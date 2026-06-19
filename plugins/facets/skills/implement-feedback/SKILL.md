@@ -1,6 +1,6 @@
 ---
 name: implement-feedback
-version: 1.0.0
+version: 1.1.0
 description: Pick up a logged facets improvement and implement it in the facets plugin — the counterpart to /facets:feedback. Reads a feedback GitHub issue (or a local backlog entry), branches, implements the change to the repo's conventions (version bumps, cross-file invariants, tests), validates, and opens a draft PR that closes the issue. Use when user says /facets:implement-feedback, "implement this feedback", "build the feedback issue", "action a facets improvement", or "do the implement counterpart". Takes a feedback issue number; --local reads the backlog; --goal runs the full review/fix/re-review loop before the PR.
 ---
 
@@ -120,6 +120,23 @@ Read the repo's conventions so the implementation conforms:
 3. The specific files the proposal touches (the target `SKILL.md` / agent / reference / script), plus their siblings, so the change matches local style.
 
 Identify the **change surface**: which skill, agent, reference, script, hook, or manifest the proposal affects.
+
+## Step 3.5: Assess relevance and desirability (gate)
+
+A logged feedback issue is a *proposal*, not a work order — it was written at a point in time and may now be stale, already done, or a net-negative idea. **Before** branching or writing any code, judge whether implementing it (as written) is still the right move, using the spec + the conventions you just read + the current repo state. Check, concretely:
+
+- **Already done / superseded.** Has merged work already addressed it? Grep the change surface for the proposal's markers (the flag, function, doc section it asks for). If it already exists, the issue is stale — recommend closing, don't re-implement.
+- **Conflicts with conventions or a stated preference.** Does it violate `CLAUDE.md` (the agent contract, layering, versioning) or a known maintainer preference? A live example: this repo favors **behavior/auto over new user-facing flags** — a proposal whose core is "add a `--flag`" should usually be reshaped to a flag-free form, not built as-written.
+- **Value vs cost.** Is the benefit worth the surface/complexity it adds? Be especially skeptical of a gap that was **deliberately deferred** in an earlier change (the deferral was a judgment; re-confirm it changed) or that couples two mechanisms that are cleaner apart.
+- **Shape.** Could a narrower or different design deliver most of the value at far less cost?
+
+Emit a one-line **verdict** and stop accordingly:
+
+- **proceed** — still relevant and desirable as written → continue to Step 4.
+- **reshape** — worth doing, but not as written (e.g. drop a proposed flag, narrow the scope) → state the reshaped scope and **confirm with the user before continuing**; implement the reshaped version, and note the deviation in the PR.
+- **skip** — stale, superseded, conflicts, or net-negative → **do NOT branch or implement.** Surface the reasoning, recommend the disposition (close the issue, defer, or reopen the design), and stop for the user.
+
+Never silently implement an issue that fails this gate, and never silently *skip* one either — the verdict and its reasoning are for the user to confirm. (For a clearly-relevant issue with a `proceed` verdict, a one-line note is enough; don't belabor it.)
 
 ## Step 4: Clean-tree check and branch
 
