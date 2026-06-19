@@ -5,7 +5,7 @@ where every channel lands), then record the demo (it gates the launch posts), th
 
 ## Positioning (use everywhere)
 
-**Hook:** Self-review every facet of your PR — locally. No cloud bill, no waiting on CI.
+**Hook:** Self-review every facet of your PR — then ship it. A local PR pipeline in Claude Code: plan, review, fix, and open the PR. No cloud bill, no waiting on CI.
 
 **Three pillars:**
 1. **Local-first, no per-seat cloud bill.** Runs in your Claude Code session against a
@@ -38,12 +38,13 @@ team-wide coverage. facets wins on cost, privacy, and stack-specific depth.
 
 ### Show HN (title + first comment)
 
-> **Show HN: facets – local multi-agent PR review in Claude Code (no cloud bill)**
+> **Show HN: facets – a local PR pipeline in Claude Code (review, fix, ship; no cloud bill)**
 >
 > I wanted CodeRabbit-style review without the per-seat subscription or shipping my private
-> repo to someone's cloud. facets is a Claude Code plugin that runs a 17-agent review panel
-> locally against your diff, posts findings as inline GitHub comments (never auto-approves),
-> and applies the safe fixes. 6 agents always run; 11 fire only on what your change touches —
+> repo to someone's cloud — but really I wanted the whole loop, not just the review. facets is
+> a Claude Code plugin that takes a change from plan to opened PR locally: it runs a 17-agent
+> review against your diff, posts findings as inline GitHub comments (never auto-approves),
+> applies the safe fixes, and opens the PR. 6 agents always run; 11 fire only on what your change touches —
 > so a CSS-only PR doesn't pay for a Web3 review. Tuned for TS/React/Vercel/Web3; it can even
 > boot your dev server and screenshot a wallet-gated dApp.
 >
@@ -56,8 +57,8 @@ team-wide coverage. facets wins on cost, privacy, and stack-specific depth.
 
 > Tired of paying per-seat for a cloud bot to review your PRs?
 >
-> facets runs a 17-agent review panel locally in Claude Code, posts inline GitHub comments,
-> and fixes the safe stuff. No cloud bill. Your code never leaves your machine.
+> facets is a local PR pipeline in Claude Code — it reviews your diff with a 17-agent panel,
+> applies the safe fixes, and opens the PR. No cloud bill. Your code never leaves your machine.
 >
 > [native demo video]
 >
