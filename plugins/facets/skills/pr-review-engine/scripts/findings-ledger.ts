@@ -34,7 +34,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const VALID_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
@@ -232,7 +232,12 @@ function readFileSafe(path: string): string | null {
 
 function writeFileMkdir(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, text);
+	// Atomic: write a sibling temp then rename (same-dir rename is atomic), so a
+	// crash mid-write can't leave a truncated ledger that the next run would treat
+	// as corrupt and overwrite — losing the operator's wontfix marks.
+	const tmp = `${path}.tmp`;
+	writeFileSync(tmp, text);
+	renameSync(tmp, path);
 }
 
 /**

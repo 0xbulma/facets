@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	asFindingArray,
@@ -227,6 +230,19 @@ describe("loadLedger / saveLedger (injected IO)", () => {
 			},
 		});
 		expect(written).toBe(`${JSON.stringify({ findings: [] }, null, 2)}\n`);
+	});
+
+	it("round-trips through the real (atomic) default writer + loadLedger, leaving no .tmp", () => {
+		const dir = mkdtempSync(join(tmpdir(), "fl-"));
+		try {
+			const path = join(dir, "sub", "ledger.json"); // nested dir → exercises mkdirSync
+			const merged = mergeLedger({ ledger: EMPTY, findings: [finding()], headSha: "sha1" });
+			saveLedger({ path, ledger: merged.ledger });
+			expect(loadLedger(path)).toEqual(merged.ledger);
+			expect(existsSync(`${path}.tmp`)).toBe(false); // atomic rename left no temp behind
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
