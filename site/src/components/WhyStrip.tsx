@@ -7,19 +7,19 @@ type WhyStripProps = { agentCount: number };
 export function WhyStrip({ agentCount }: WhyStripProps) {
   const pillars: Pillar[] = [
     {
+      icon: GitPullRequest,
+      title: 'A local PR pipeline',
+      body: 'From the first diff to an opened PR — plan, review, fix, and ship, all inside Claude Code. No cloud bill, no CI wait, and your code never leaves your machine.',
+    },
+    {
       icon: ShieldCheck,
-      title: 'Local-first, no cloud bill',
-      body: 'The review runs in your Claude Code session against a locally-computed diff. No per-seat subscription, no third party reading your private repo.',
+      title: 'Review that earns the merge',
+      body: `A ${agentCount}-agent panel — six always run, the rest fire only on what your diff touches. Findings post as inline GitHub comments (never an auto-approve); the safe fixes get applied on demand.`,
     },
     {
       icon: Layers,
-      title: `A ${agentCount}-agent panel, not one pass`,
-      body: 'Six reviewers always run; the rest fire only on what your diff touches — React, Web3, accessibility, AI-SDK, CI security, and more.',
-    },
-    {
-      icon: GitPullRequest,
-      title: 'Closes the review → fix → ship loop',
-      body: 'Posts findings as inline GitHub comments (never auto-approves), applies safe fixes on demand, and scaffolds the TIB → TIP → PR paper trail.',
+      title: 'Or ship it autonomously',
+      body: 'tib-ship takes a brief, implements it test-driven, self-reviews in a loop, and hands you a ready-to-push branch — with the TIB → TIP → PR paper trail, so the why ships with the code.',
     },
   ];
 

@@ -14,11 +14,11 @@ export function SkillCatalog({ skills }: SkillCatalogProps) {
       <div className="mx-auto max-w-6xl px-6 py-20">
         <header className="max-w-2xl">
           <h2 className="text-3xl font-bold tracking-tight text-white">
-            {skills.length} skills, one plugin
+            {skills.length} skills, from plan to merge
           </h2>
           <p className="mt-3 text-slate-400">
-            Slash commands you run inside Claude Code. Click any card for its triggers and what it
-            does.
+            Slash commands that carry a change all the way to a shipped PR — review and fix are just
+            two stops on the line. Click any card for its triggers and what it does.
           </p>
         </header>
 

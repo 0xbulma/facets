@@ -19,11 +19,14 @@ export function Hero({ plugin, skillCount, agentCount }: HeroProps) {
           Claude Code plugin · v{plugin.version} · {plugin.license}
         </span>
         <h1 className="mt-6 text-balance text-4xl font-bold tracking-tight text-white sm:text-6xl">
-          Self-review every <span className="text-brand">facet</span> of your PR — locally.
+          Self-review every <span className="text-brand">facet</span> of your PR.
+          <br />
+          <span className="text-brand">Then ship it.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-slate-300">
-          No cloud bill, no waiting on CI. A {agentCount}-agent review panel runs on your machine,
-          posts inline GitHub comments, and applies the safe fixes.
+          facets is your local PR pipeline in Claude Code — plan the change, run a {agentCount}
+          -agent review on your machine, apply the safe fixes, and open the PR. No cloud bill, no
+          waiting on CI.
         </p>
         <InstallBlock
           command={plugin.installCommand}
