@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.2.0
+version: 2.3.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -128,6 +128,12 @@ fi
 - `DIFF_SOURCE` = `local` (include uncommitted diff)
 - `HEAD_REF` = `HEAD`
 - `EXCLUDE_AGENTS` = `["docs"]` when `FAST=1`, otherwise empty
+- `INTENT_CONTEXT` = changed-commit messages only, built locally:
+  ```bash
+  MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
+  git log --format='%h %s%n%b' "$MERGE_BASE..HEAD"
+  ```
+  This lets agents tell a deliberate, commit-documented change from a regression. **Built from `git` only — never `gh`** (the PR title/body lives behind GitHub and would break this skill's zero-GitHub contract; that richer `INTENT_CONTEXT` is `pr-review-gh`'s job). Empty when the branch has no commits beyond the merge-base (pure uncommitted-only review).
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 
@@ -284,7 +290,7 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 
 `prev_findings_hash = ""`. For `i = 1..MAX_ITERS` (default `5` — a ceiling, not a target; expect convergence by iteration 2–3):
 
-1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
+1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
 2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
 3. **Success check.** If `actionable` is empty → **break, success** (carry the lows forward to the summary).
 4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).

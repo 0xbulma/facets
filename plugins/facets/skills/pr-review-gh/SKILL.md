@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.2.0
+version: 2.3.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -66,6 +66,19 @@ fi
 
 Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that all three branch/SHA fields are non-empty AND not whitespace-only (use `[ -z "${X//[[:space:]]/}" ]` — bare `[ -z "$X" ]` lets whitespace pass). If `state` is not `OPEN`, inform the user and stop. Then `git fetch origin`.
 
+## Step 2b: Assemble `INTENT_CONTEXT` (PR body + commit messages)
+
+Give the review agents the *intent* behind the diff so they don't over-rate deliberate, documented changes (the recurring false-positive class: a commit-documented test/feature removal flagged as lost coverage). Gather the changed-commit messages:
+
+```bash
+MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" "origin/<HEAD_BRANCH>")
+
+# Changed-commit messages (subject + body) for this PR's range.
+git log --format='%h %s%n%b' "$MERGE_BASE..origin/<HEAD_BRANCH>"
+```
+
+Assemble these — plus the PR `title`/`body` already in `PR_JSON` (Step 2) — into a single `INTENT_CONTEXT` text block (PR title+body, then commit messages). If both are empty, leave `INTENT_CONTEXT` empty.
+
 ## Steps 3–6: Shared review base
 
 **Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md` and follow Steps 3–6 there**, with these inputs:
@@ -73,6 +86,7 @@ Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that a
 - `DIFF_SOURCE` = `pr`
 - `HEAD_REF` = `origin/<HEAD_BRANCH>`
 - `EXCLUDE_AGENTS` = `["docs"]` when `--fast` was passed, otherwise empty
+- `INTENT_CONTEXT` = the block assembled in Step 2b (empty if nothing was gathered)
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 

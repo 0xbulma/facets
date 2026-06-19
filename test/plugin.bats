@@ -301,6 +301,28 @@ setup() {
   done
 }
 
+@test "engine documents the INTENT_CONTEXT envelope input" {
+  # feedback #25: the Step 5 envelope injects caller-supplied intent/history
+  # (commit messages; PR body + prior comments for GitHub-aware callers) so
+  # agents don't over-rate deliberate, documented changes. Lock the contract
+  # token so a future edit can't drop the slot while leaving callers passing it.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  grep -q 'INTENT_CONTEXT' "$engine" || { echo "engine missing INTENT_CONTEXT envelope input" >&2; return 1; }
+}
+
+@test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
+  # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
+  # must NOT gain a --post flag and must keep advertising zero GitHub
+  # interaction. Its INTENT_CONTEXT is commit-messages-only (git, never gh).
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q 'Zero GitHub interaction' "$skill" \
+    || { echo "pr-review-local lost its 'Zero GitHub interaction' contract line" >&2; return 1; }
+  if grep -q -- '--post' "$skill"; then
+    echo "pr-review-local must not gain a --post flag (feedback #21: posting stays in pr-review-gh)" >&2
+    return 1
+  fi
+}
+
 @test "every references/*.md pointer in agents resolves to a real file" {
   REFS_DIR="$SKILLS_DIR/pr-review-engine/references"
   # Every "Cross-check `references/X.md`" pointer in an agent body must
