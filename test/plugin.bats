@@ -374,6 +374,20 @@ setup() {
   done
 }
 
+@test "pr-review-gh reuses a prior local review via the ledger, never a --post on local (feedback #21)" {
+  # feedback #21 (reshaped): the local→post handoff is gh reading the branch-keyed
+  # ledger pr-review-local wrote and posting without re-running the panel — NOT a
+  # --post flag on the zero-GitHub local skill. Lock the reuse path + the no-flag stance.
+  gh="$SKILLS_DIR/pr-review-gh/SKILL.md"
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q 'Reuse a prior local review' "$gh" || { echo "pr-review-gh missing the local-review reuse path" >&2; return 1; }
+  grep -q 'branch-' "$gh" || { echo "pr-review-gh reuse must read the branch-keyed ledger" >&2; return 1; }
+  if grep -q -- '--post' "$local_skill"; then
+    echo "pr-review-local must still NOT gain a --post flag (#21 reshaped to gh-side reuse)" >&2
+    return 1
+  fi
+}
+
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
   # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
   # must NOT gain a --post flag and must keep advertising zero GitHub

@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.7.0
+version: 2.8.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -91,6 +91,32 @@ git log --format='%h %s%n%b' "$MERGE_BASE..origin/<HEAD_BRANCH>"
 ```
 
 Assemble these — plus the PR `title`/`body` already in `PR_JSON` (Step 2) — into a single `INTENT_CONTEXT` text block (PR title+body, then commit messages). If both are empty, leave `INTENT_CONTEXT` empty.
+
+## Step 2c: Reuse a prior local review (skip the panel)
+
+The common workflow is `pr-review-local` → post the same findings to GitHub. When the PR head is byte-identical to what `pr-review-local` already reviewed, posting shouldn't re-run the 10-agent panel — reuse the findings it left in the ledger (feedback #21; this is the bridge the rejected `--post`-on-local idea was reaching for, done without breaking local's zero-GitHub contract). **Immediate review only — a `--watch` cycle always runs fresh** (unattended re-reviews favor coverage over cost).
+
+Attempt reuse **only when the local checkout *is* the PR head with a clean tree** (the review-local→post case); otherwise fall straight through to Steps 3–6:
+
+```bash
+if [ "$(git rev-parse HEAD)" = "<HEAD_SHA>" ] && [ -z "$(git status --porcelain)" ]; then
+  MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
+  slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+  LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+  # pr-review-local writes the BRANCH-keyed ledger — read that one (not the pr<N> key).
+  LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "<HEAD_BRANCH>" | tr '/ ' '-').json"
+  RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
+  node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+    --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH"
+fi
+```
+
+The clean-HEAD guard is what makes the run-hash match safe: `review-scope --run-hash` folds in `git diff HEAD`, so it only equals the value `pr-review-local` stored when that local review was also clean and at this exact commit — never when uncommitted/unpushed work diverged.
+
+- **`cache_hit` true** → a local review of this exact input exists. **Ask the user:** _"Reuse the N findings from your local review (unchanged since `<head_sha>`) and post them, or run a fresh review?"_ On **fresh** → Steps 3–6 as normal. On **reuse**:
+  1. Re-derive `snapped_line` (the ledger doesn't store it) with the **cheap deterministic scripts only — no agents**: `build-changed-lines.ts --base "$MERGE_BASE" --head "origin/<HEAD_BRANCH>"` → changed-lines; write the cached `findings` to a file; `validate-findings.ts --findings <file> --changed-lines <cl>` → kept findings now carrying `snapped_line`, plus any dropped.
+  2. Set `FINDINGS` = the kept set, `COUNTS` from it, `DROPPED_FINDINGS` from the validator, `FAILED_AGENTS` = 0 (no agents ran), then go to **Step 7** — skipping Steps 3–6 and 6b (the ledger already holds this run). The expensive panel is skipped; the correctness pipeline (snap + resilient POST) is not.
+- **`cache_hit` false, not on the PR head, dirty tree, or `--watch`** → run Steps 3–6 normally.
 
 ## Steps 3–6: Shared review base
 
