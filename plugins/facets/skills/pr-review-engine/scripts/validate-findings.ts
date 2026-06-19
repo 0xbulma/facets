@@ -16,7 +16,12 @@
  *
  * Output (stdout): JSON object
  *   {
- *     "kept":    [<finding>, ...],
+ *     "kept":    [<finding + "snapped_line": <int>>, ...],  // snapped_line is the
+ *                // nearest actual diff line for the finding (== line when the cited
+ *                // line is itself a changed line; the matched changed line when the
+ *                // finding sat within ±tolerance). It is the line a GitHub inline
+ *                // comment must anchor on. Omitted for runtime/pure-rename/schema-only
+ *                // keeps, which have no diff line to snap to.
  *     "dropped": [{"finding": <finding>, "drop_reason": "...",
  *                  "distance_to_nearest_changed_line": <int|null>}, ...],
  *     "counts":  {"out_of_scope": N, "pre_existing": N, "doc_example": N,
@@ -61,6 +66,9 @@ type ValidatedFinding = Record<string, unknown> & {
 	file: string;
 	line: number;
 	description: string;
+	/** Nearest actual diff line — the anchor a GitHub inline comment must use.
+	 *  Set on diff-line keeps; absent for runtime/pure-rename/schema-only keeps. */
+	snapped_line?: number;
 };
 
 type DropReason = "file-out-of-scope" | "line-pre-existing" | "doc-example-fp";
@@ -138,6 +146,24 @@ export function distanceToNearest(line: number, changedLines: readonly number[])
 	for (const cl of changedLines) {
 		const d = Math.abs(line - cl);
 		if (d < nearest) nearest = d;
+	}
+	return nearest;
+}
+
+/**
+ * Return the changed line nearest to `line` (the snap target), or null when the
+ * set is empty. Ties resolve to the lower line (first encountered at equal
+ * distance), which keeps the anchor inside the hunk above the cited line.
+ */
+export function nearestChangedLine(line: number, changedLines: readonly number[]): number | null {
+	let nearest: number | null = null;
+	let best = Number.POSITIVE_INFINITY;
+	for (const cl of changedLines) {
+		const d = Math.abs(line - cl);
+		if (d < best) {
+			best = d;
+			nearest = cl;
+		}
 	}
 	return nearest;
 }
@@ -320,6 +346,10 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 
 		const line = finding.line;
 		let dist = 0;
+		// snapped_line is the anchor a GitHub inline comment must use. Default to
+		// the cited line (already a changed line); when the finding sat within
+		// tolerance of a changed line, snap to that nearest changed line instead.
+		let snappedLine = line;
 		if (!changed.includes(line)) {
 			const d = distanceToNearest(line, changed);
 			if (d === null || d > opts.lineTolerance) {
@@ -332,6 +362,8 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 				continue;
 			}
 			dist = d;
+			const nearest = nearestChangedLine(line, changed);
+			if (nearest !== null) snappedLine = nearest;
 		}
 
 		// Markdown documentation-example filter.
@@ -348,7 +380,7 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 			}
 		}
 
-		kept.push(finding);
+		kept.push({ ...finding, snapped_line: snappedLine });
 	}
 
 	return { kept, dropped, counts, failed };

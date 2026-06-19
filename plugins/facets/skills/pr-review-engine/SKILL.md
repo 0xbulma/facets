@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.9.0
+version: 0.10.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -301,6 +301,8 @@ Merge all agent results into a single list:
    - If `finding.line` is outside the set but within ±15 lines of any changed line → keep (adjacent-code tolerance).
    - Otherwise → **drop** and increment `DROPPED_PRE_EXISTING`. The finding is tagged with `distance_to_nearest_changed_line` for audit purposes.
 
+   Each kept finding is tagged with `snapped_line` — the nearest actual diff line (equal to `line` when the cited line is itself changed; the matched changed line when it sat within tolerance). A GitHub inline comment must anchor on `snapped_line`, because the reviews API rejects any comment whose line is not an exact diff line. The `runtime` sentinel and pure-rename keeps have no diff line and carry no `snapped_line`.
+
    The ±15 tolerance window is a fixed engine constant. See `references/calibration.md` for the rationale.
 
    **Markdown documentation-example filter.** Drop findings on `.md` files whose `description` matches secret/injection FP-suspect patterns AND whose cited line falls inside a fenced code block. The full rule (CommonMark fence handling, off-by-one, limitations) lives in `references/scope-filter.md`. Implementation ships as a script:
@@ -347,7 +349,7 @@ Severity labels:
 
 The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/facets:pr-fix` / `/facets:tib-ship`) consumes:
 
-- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description}`.
+- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, snapped_line?}`. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
 - `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.
@@ -419,7 +421,7 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 ## Bundled scripts
 
 - `scripts/build-changed-lines.ts` — parses `git diff --unified=0` and emits the `CHANGED_LINES` JSON map. Handles deletion-only and pure-rename edge cases. Run via `node` (Node ≥ 22.18, native type-stripping).
-- `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`, and tags each kept finding with `snapped_line` (the nearest diff line to anchor an inline comment on). Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").
