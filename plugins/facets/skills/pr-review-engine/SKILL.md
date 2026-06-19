@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.10.0
+version: 0.11.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -358,6 +358,8 @@ The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/fac
 
 The caller formats and routes these per its mode (GitHub COMMENT / terminal output / fix application). `pr-review-gh` and `pr-review-local` both surface `DROPPED_FINDINGS` as a collapsible "Audit trail" section in Step 7. `pr-fix` ignores `DROPPED_FINDINGS` (it operates on the kept findings only). `tib-ship` summarizes counters in its convergence log.
 
+**Stateful re-runs (optional, caller-side).** The engine is stateless — it recomputes `FINDINGS` from the full diff every run. A caller that wants memory across runs of an evolving PR pipes `FINDINGS` through `scripts/findings-ledger.ts` (see Bundled scripts), which merges them into a persisted ledger and returns `net_new` / `recurring` / `resolved` / `suppressed` (wontfix) sets. The ledger lives **outside** the repo under review (default `~/.claude/facets/reviews/<owner>-<repo>-<key>.json`, override the dir with `FACETS_LEDGER_DIR`) so it never trips a clean-tree guard. This keeps the functional core (the engine) stateless and confines the I/O to the shell (the consuming skill).
+
 ## Examples
 
 ### Example 1: PR-mode review of a CI-workflow-only change
@@ -422,6 +424,7 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 
 - `scripts/build-changed-lines.ts` — parses `git diff --unified=0` and emits the `CHANGED_LINES` JSON map. Handles deletion-only and pure-rename edge cases. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`, and tags each kept finding with `snapped_line` (the nearest diff line to anchor an inline comment on). Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/findings-ledger.ts` — merges a fresh review's findings into a persisted per-PR/branch ledger and classifies each as net-new / recurring / resolved / suppressed (wontfix). Pure merge core + injected IO; run by the **caller** (`pr-review-gh` / `pr-review-local`), not the engine, which stays stateless. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").

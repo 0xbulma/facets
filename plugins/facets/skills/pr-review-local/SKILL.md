@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.4.0
+version: 2.5.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -150,6 +150,30 @@ fi
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 
+## Step 6b: Findings ledger (stateful re-runs)
+
+Re-running on an evolving branch shouldn't re-surface findings you've already seen or deliberately deferred. Merge this run's `FINDINGS` into a persisted ledger (feedback #19). This runs in the **single-shot path only** — goal mode tracks progress across its own iterations via `prev_findings_hash`, so it does not touch the ledger.
+
+```bash
+slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
+LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
+
+# FINDINGS as a JSON array on stdin; --write persists the updated ledger.
+printf '%s' "$FINDINGS_JSON" \
+  | node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+      --ledger "$LEDGER" --head-sha "$HEAD_SHA" --write
+```
+
+The merge returns `net_new` / `recurring` / `resolved` / `suppressed`. Feed them into Step 7:
+
+- **Drop every `suppressed` (wontfix) finding from the displayed list** — that is the entire point of the manual wontfix mark.
+- Tag each surfaced finding **NEW** (its id is in `net_new`) or **seen** (in `recurring`), and print the one-line ledger summary in Step 7.
+
+This stays **git-only** (owner/repo from `git remote`, never `gh`) and the ledger lives **outside** the repo, so both the zero-GitHub and clean-tree contracts hold.
+
+**Marking a finding wontfix:** set its `status` to `"wontfix"` in the ledger JSON by hand (no flag); future runs auto-suppress it.
+
 ## Step 7: Output to terminal
 
 Format directly in the conversation:
@@ -159,6 +183,7 @@ Format directly in the conversation:
 
 **Branch:** <HEAD_BRANCH> -> <BASE_BRANCH>  |  **Files:** <count>  |  **Range:** <MERGE_BASE_SHORT>..<HEAD_SHA_SHORT>
 **Uncommitted files included:** <U>  |  **Mode:** Local-only
+**Ledger:** <net_new> new · <recurring> seen before · <resolved> resolved since last run · <suppressed> wontfix-suppressed
 
 | Severity | Count |
 |----------|-------|
@@ -169,7 +194,7 @@ Format directly in the conversation:
 
 ### Critical (X)
 
-- **[CRITICAL]** <file_path>:L<line> — <description>
+- **[CRITICAL]** **[NEW]** <file_path>:L<line> — <description>
   _Suggestion: <how to fix>_
 
 ### High (X)
@@ -182,6 +207,8 @@ Format directly in the conversation:
 ```
 
 **Order findings by severity (Critical → High → Medium → Low), not by file.** Re-sort the `FINDINGS` list from Step 6 by severity DESC, then file path ASC, then line ASC, and group under one heading per severity bucket. Each finding shows its `<file_path>:L<line>` inline so the reader can jump to the source. Omit any severity heading whose bucket is empty.
+
+**Ledger annotations (from Step 6b).** Drop every `suppressed` (wontfix) finding from these sections entirely. Prefix each finding that is in `net_new` with a `**[NEW]**` tag (findings in `recurring` carry no tag — they were seen in an earlier run). The `**Ledger:**` header line summarizes the four counts. When Step 6b did not run (no commits, or the ledger is unreadable), omit the `**Ledger:**` line and the `[NEW]` tags rather than guessing.
 
 ### Audit trail (dropped findings)
 

@@ -228,15 +228,17 @@ setup() {
   [ -z "$bad" ] || { printf 'XML brackets found in frontmatter:%b\n' "$bad" >&2; return 1; }
 }
 
-@test "engine ships scripts/ with the three bundled helpers" {
+@test "engine ships scripts/ with the four bundled helpers" {
   # The Anthropic Skills guide (p. 26) recommends scripting deterministic
-  # logic instead of expressing it only in language. The three helpers
-  # implement the diff-line build (TS, run via `node`), the finding validator
-  # (TS), and the fix-rubric agent discovery (bash) — locking the file list
-  # catches a future edit that removes any of them.
+  # logic instead of expressing it only in language. The four helpers
+  # implement the diff-line build (TS), the finding validator (TS), the
+  # findings-ledger merge for stateful re-runs (TS, feedback #19), and the
+  # fix-rubric agent discovery (bash) — locking the file list catches a future
+  # edit that removes any of them.
   SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
   [ -x "$SCRIPTS_DIR/build-changed-lines.ts" ]   || { echo "missing/non-executable: build-changed-lines.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/validate-findings.ts" ]     || { echo "missing/non-executable: validate-findings.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/findings-ledger.ts" ]       || { echo "missing/non-executable: findings-ledger.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
 }
 

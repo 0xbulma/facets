@@ -32,7 +32,7 @@ Users install via `/plugin marketplace add 0xbulma/facets` → `/plugin install 
                           │       ├─ SKILL.md             ← shared Steps 3–6 (the dispatcher)
                           │       ├─ agents/*.md          ← 17 versioned reviewers (6 baseline + 11 conditional)
                           │       ├─ references/*.md      ← shared rubrics loaded on demand by agents
-                          │       └─ scripts/             ← deterministic helpers (changed-lines build, finding validation, fix-rubric discovery)
+                          │       └─ scripts/             ← deterministic helpers (changed-lines build, finding validation, findings-ledger merge, fix-rubric discovery)
                           ├─ hooks/hooks.json            ← SessionStart auto-install
                           └─ bin/install-prereqs.sh      ← idempotent prereq install
 ```
