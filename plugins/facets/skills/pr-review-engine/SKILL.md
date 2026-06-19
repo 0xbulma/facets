@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.8.0
+version: 0.9.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -40,6 +40,7 @@ How a caller knows the engine is working (rough targets, not hard thresholds):
 | `DIFF_SOURCE` | `pr` (use `origin/BASE...origin/HEAD`) OR `local` (use `origin/BASE...HEAD` and overlay uncommitted) |
 | `HEAD_REF` | `origin/HEAD_BRANCH` for `DIFF_SOURCE=pr`, `HEAD` for `DIFF_SOURCE=local` |
 | `EXCLUDE_AGENTS` | Optional list of agent names to skip in Step 5 (e.g. `["runtime-validation"]` from `tib-ship` during iterations). Defaults to empty. |
+| `INTENT_CONTEXT` | Optional caller-supplied intent/history block — changed-commit messages, and (when the caller talks to GitHub) the PR title+body. Injected into the Step 5 envelope between items 6 and 7. Empty by default; callers that can't reach the data omit it. |
 
 Note on placeholder syntax: throughout this document, identifiers like `HEAD_REF` or `CHANGED_LINES` in code blocks and tables are template variables the caller fills in. They are deliberately written without `< >` brackets to keep the frontmatter and YAML elsewhere in the plugin free of XML angle brackets (per the Anthropic Skills guide, `< >` are forbidden inside frontmatter).
 
@@ -207,7 +208,9 @@ For every spawned sub-agent, the dispatcher **must** assemble the launch prompt 
 7. **The "Shared per-agent contract" bullets below, copied verbatim into the prompt.** Without this injection, agents won't know to emit the schema and Step 6.2 will route every finding as malformed.
 8. **The calibration example pair** (the kept-finding + dropped-finding pair below), copied verbatim. Anchors the agent's output shape.
 
-**Ordering rule:** any extra caller-supplied context (an orchestrator's iteration history, exclusion rationale, TIP excerpts) goes between items 6 and 7 — items 7–8 must be the **final** content of the prompt. Dogfood data: agents given verification-style context narrate their answer unless the output contract is the last instruction they read (6 of 26 runs wrapped their JSON in prose when the contract sat mid-prompt).
+**Caller-supplied `INTENT_CONTEXT` (item 6b).** When the caller passes `INTENT_CONTEXT`, inject it verbatim here, between items 6 and 7, under a `## Intent / history` heading. It carries the changed-commit messages and — for GitHub-aware callers — the PR title+body. Its purpose is to let an agent distinguish a deliberate, documented change from a regression before it rates one. Omit the block entirely when `INTENT_CONTEXT` is empty.
+
+**Ordering rule:** any extra caller-supplied context (`INTENT_CONTEXT`, plus an orchestrator's iteration history, exclusion rationale, TIP excerpts) goes between items 6 and 7 — items 7–8 must be the **final** content of the prompt. Dogfood data: agents given verification-style context narrate their answer unless the output contract is the last instruction they read (6 of 26 runs wrapped their JSON in prose when the contract sat mid-prompt).
 
 The dispatcher should NOT paraphrase or summarize these parts — copy them. Drift between the dispatcher's notion of the contract and what the agent receives is exactly the failure mode the engine's schema check is supposed to prevent.
 
@@ -221,6 +224,7 @@ The dispatcher should NOT paraphrase or summarize these parts — copy them. Dri
 - **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15. **Exception:** the `runtime-validation` agent may emit the sentinel shape `file: "runtime", line: 0` for findings that can't be pinned to a source line; these pass the schema check and bypass the scope filters.
 - **Stay in scope (avoid scope creep).** Focus on the diff: flag issues introduced by these changes, and issues in adjacent code only when the diff makes that adjacent code materially worse. Do NOT flag pre-existing issues, propose unrelated refactors, suggest new features, or recommend cleanups outside the PR's intent. When in doubt, omit.
 - **Don't nitpick.** Polish, wording, naming preferences, stylistic alternatives, and "you could also" suggestions are not findings — omit them regardless of severity label.
+- **Intentional changes aren't defects.** When `INTENT_CONTEXT` shows a change is deliberate — a commit message documents the removal/refactor, or the PR body states it — do not flag it as a finding unless the change itself is wrong. Verify intent against the provided commit messages before rating a removal as lost coverage or a behaviour change as a regression.
 - Only **actionable** findings — no praise, no summaries.
 
 #### Calibration examples (apply to every agent)
