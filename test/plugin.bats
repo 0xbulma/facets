@@ -320,6 +320,19 @@ setup() {
   grep -q 'snapped_line' "$gh"     || { echo "pr-review-gh must anchor inline comments on snapped_line" >&2; return 1; }
 }
 
+@test "review skills document the SSH->HTTPS fetch + pnpm pre-run-install fallbacks (feedback #24)" {
+  # feedback #24: a downed ssh-agent must not block a fetch (HTTPS fallback,
+  # git-only so pr-review-local stays zero-GitHub), and pnpm's
+  # verify-deps-before-run must not sink a lint/test gate on a native-build repo.
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  gh="$SKILLS_DIR/pr-review-gh/SKILL.md"
+  grep -q 'verify-deps-before-run' "$local_skill" || { echo "pr-review-local missing pnpm pre-run-install guard" >&2; return 1; }
+  # Anchor on `remote.origin.url=` — the distinctive HTTPS-retry form unique to
+  # the #24 fallback — not a bare URL (which pre-existing prose already matches).
+  grep -q 'remote.origin.url=' "$local_skill" || { echo "pr-review-local missing SSH->HTTPS fetch fallback" >&2; return 1; }
+  grep -q 'remote.origin.url=' "$gh"          || { echo "pr-review-gh missing SSH->HTTPS fetch fallback" >&2; return 1; }
+}
+
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
   # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
   # must NOT gain a --post flag and must keep advertising zero GitHub

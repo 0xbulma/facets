@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.3.0
+version: 2.4.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -74,7 +74,20 @@ Parse positional and flag args:
 ## Step 2: Resolve branches
 
 ```bash
-git fetch origin
+# Fetch refs. If SSH auth fails (e.g. the ssh-agent / 1Password agent is down),
+# retry the SAME fetch over HTTPS. Use `git -c remote.origin.url=…` (NOT a bare
+# `git fetch <url>`, which only moves FETCH_HEAD) so origin's refspec runs and
+# refs/remotes/origin/* actually update — every step below reads origin/<BASE>.
+# Still git-only (no `gh`), so the zero-GitHub contract holds. Don't silence the
+# SSH error; surface it, and stop loudly if HTTPS also fails (never review on
+# stale refs).
+if ! git fetch origin; then
+  https_url=$(git remote get-url origin \
+    | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')
+  echo "git fetch origin failed; retrying over HTTPS: $https_url" >&2
+  git -c remote.origin.url="$https_url" fetch origin \
+    || { echo "fetch failed over SSH and HTTPS — refs may be stale; fix auth/network before reviewing." >&2; exit 1; }
+fi
 
 HEAD_BRANCH=$(git branch --show-current)
 if [ -z "$HEAD_BRANCH" ]; then
@@ -221,6 +234,8 @@ For each file with findings (files in any order; findings within a file ordered 
    - `pyproject.toml` with ruff config → `ruff check <file>`
    - `Cargo.toml` → `cargo check` (cannot scope to a single file)
    - None of the above → skip linter validation
+
+   **Package-manager pre-run-install guard.** `pnpm exec <tool>` (and `pnpm <script>`) can trigger pnpm's `verify-deps-before-run` → an implicit `pnpm install`, which fails in repos with a from-source native build (e.g. `sharp` / node-gyp) — aborting validation for a reason unrelated to the lint result. Avoid it: prefer the resolved binary directly (`./node_modules/.bin/<tool>`), or disable the pre-run check for the call (`pnpm --config.verify-deps-before-run=false exec <tool>` — the flag must precede `exec`, pnpm rejects it after — or env `npm_config_verify_deps_before_run=false`). If a pre-run install still fails, surface that one line and fall back to the direct binary — do **not** abort the whole `--fix` over a dependency-install failure that has nothing to do with the finding.
 4. **All-or-nothing revert.** If lint passes, mark every finding for this file as `applied`. If lint fails, run `git checkout -- <file>` to revert the entire file (safe because the pre-condition guarantees the working tree was clean before the loop), and mark every finding for this file as `skipped: lint rejected the batch`. Do NOT report partial success — the user sees a consistent picture in `git diff`.
 5. Track per-file outcomes: applied count, skipped count, skip reason.
 
@@ -260,6 +275,8 @@ Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — St
 ### Command sniff (once)
 
 Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — the pre-flight gates below depend on `<TEST_CMD>`.
+
+> **Package-manager pre-run-install guard (same as Step 7b).** When the resolved `<exec>` is `pnpm exec` or a `pnpm` script, pnpm's `verify-deps-before-run` can fire an implicit `pnpm install` that fails on a from-source native build and sinks an otherwise-green gate. Prefer the resolved binary (`./node_modules/.bin/<tool>`) or disable the check (`pnpm --config.verify-deps-before-run=false exec <tool>` — flag before `exec` — or env `npm_config_verify_deps_before_run=false`). A failed pre-run install is a tooling failure to surface — not a gate result, and not grounds to treat the iteration as red.
 
 ### Pre-flight gates (stop-and-ask)
 
