@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.7.0
+version: 2.8.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -410,6 +410,27 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
    `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the third non-success exit the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
+
+### Post-convergence ledger stamp (single write)
+
+So a later **single-shot `pr-review-local`** run inherits what `--goal` resolved (rather than re-surfacing it as net-new), stamp the findings ledger **once, here at convergence** — not per iteration (feedback #32, reshaped). (Only `pr-review-local` inherits it — it shares the `branch-<name>` ledger key; `pr-review-gh` keys by `pr<PR_NUMBER>` and does not read this file.) Goal mode does not otherwise read or write the ledger during the loop, so `prev_findings_hash` stays its sole stuck-check and there's no `wontfix`-vs-auto-fix interaction to reconcile (at convergence no actionable findings remain).
+
+**Write the converged `low` findings** (the triage list — the only findings left) to `/tmp/facets-findings.json` as a JSON array — write `[]` when there are none, so a stale file from an earlier run can't leak in. Then merge it into the branch-keyed ledger (same key as Step 6b) with the converged HEAD's run-hash:
+
+```bash
+slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
+FINAL_HEAD=$(git rev-parse HEAD)   # the last fix(review) commit; tree is clean here
+RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
+
+# (Write the converged low findings — or [] — to /tmp/facets-findings.json first, per the line above.)
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$FINAL_HEAD" --run-hash "$RUN_HASH" --write \
+  || echo "goal-mode ledger stamp failed (non-fatal); the converge result still stands." >&2
+```
+
+The merge persists the remaining lows and records the run-hash so an immediately-following unchanged single-shot run cache-hits (Step 2c). If a **prior** single-shot run on this branch had recorded findings as `open`, the ones goal has since fixed (now absent from the converged set) flip to `resolved`; on a branch reviewed only via `--goal` the ledger had no prior entry, so goal-fixed findings simply never appear (nothing to resolve) — either way a later run won't re-surface them as net-new. Best-effort: a failed stamp is non-fatal — the `--goal` result already stands in the commits. Skip the stamp when no commits were made (already-clean branch) — there's nothing new to record.
 
 ### Final summary
 
