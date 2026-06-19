@@ -303,6 +303,15 @@ setup() {
   done
 }
 
+@test "engine documents the merge-base recompute + merge-in-range warning (feedback #20)" {
+  # feedback #20: recompute the merge-base each run (so a base-branch merge can't
+  # inflate the diff) and warn when merge commits are in the review range. Lock
+  # the detection so a future edit can't quietly drop the merge-noise guard.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  grep -q 'MERGES_IN_RANGE' "$engine"       || { echo "engine missing the merge-in-range detection" >&2; return 1; }
+  grep -q 'rev-list --merges' "$engine"     || { echo "engine missing the rev-list --merges count" >&2; return 1; }
+}
+
 @test "engine documents the INTENT_CONTEXT envelope input" {
   # feedback #25: the Step 5 envelope injects caller-supplied intent/history
   # (commit messages; PR body + prior comments for GitHub-aware callers) so
