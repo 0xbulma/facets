@@ -140,16 +140,6 @@ export function schemaOk(finding: unknown): finding is ValidatedFinding {
 	return true;
 }
 
-export function distanceToNearest(line: number, changedLines: readonly number[]): number | null {
-	if (changedLines.length === 0) return null;
-	let nearest = Number.POSITIVE_INFINITY;
-	for (const cl of changedLines) {
-		const d = Math.abs(line - cl);
-		if (d < nearest) nearest = d;
-	}
-	return nearest;
-}
-
 /**
  * Return the changed line nearest to `line` (the snap target), or null when the
  * set is empty. Ties resolve to the lower line (first encountered at equal
@@ -166,6 +156,16 @@ export function nearestChangedLine(line: number, changedLines: readonly number[]
 		}
 	}
 	return nearest;
+}
+
+/**
+ * Distance from `line` to the nearest changed line, or null when the set is
+ * empty. Derived from `nearestChangedLine` so the scan + tie-break live in one
+ * place; the distance is the same regardless of the tie-break.
+ */
+export function distanceToNearest(line: number, changedLines: readonly number[]): number | null {
+	const nearest = nearestChangedLine(line, changedLines);
+	return nearest === null ? null : Math.abs(line - nearest);
 }
 
 /**
