@@ -335,6 +335,16 @@ setup() {
   grep -q 'remote.origin.url=' "$gh"          || { echo "pr-review-gh missing SSH->HTTPS fetch fallback" >&2; return 1; }
 }
 
+@test "findings-ledger + pr-review-local document the idempotency cache (feedback #23)" {
+  # feedback #23: an unchanged-input re-run short-circuits the agent panel via a
+  # run-identity cache stored in the ledger. Lock the script mode + the Step 2c
+  # wiring so a future edit can't quietly drop either half.
+  ledger="$SKILLS_DIR/pr-review-engine/scripts/findings-ledger.ts"
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q -- '--check-cache' "$ledger"   || { echo "findings-ledger.ts missing the --check-cache mode" >&2; return 1; }
+  grep -q 'Idempotency cache' "$local_skill" || { echo "pr-review-local missing the Step 2c idempotency cache" >&2; return 1; }
+}
+
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
   # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
   # must NOT gain a --post flag and must keep advertising zero GitHub

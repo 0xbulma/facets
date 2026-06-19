@@ -3,8 +3,9 @@
  * findings-ledger.ts — persist a per-PR/branch findings ledger so re-runs are
  * stateful (feedback #19). Run with Node's native TypeScript support (Node >= 22.18):
  *
- *   node findings-ledger.ts --ledger <path> --findings findings.json --head-sha <sha> [--write]
+ *   node findings-ledger.ts --ledger <path> --findings findings.json --head-sha <sha> [--run-hash <h>] [--write]
  *   echo '[...]' | node findings-ledger.ts --ledger <path> --head-sha <sha> --write
+ *   node findings-ledger.ts --ledger <path> --check-cache --run-hash <h>   # idempotency cache (feedback #23)
  *
  * The ledger is review *state*, not repo content: callers store it OUTSIDE the
  * repo under review (default `~/.claude/facets/reviews/<owner>-<repo>-<key>.json`,
@@ -27,8 +28,16 @@
  *     "recurring":  [<entry>, ...],   // ids already open in the ledger
  *     "resolved":   [<entry>, ...],   // ledger entries that were open but absent this run
  *     "suppressed": [<entry>, ...],   // ids the ledger marks wontfix (kept out of surfaced output)
- *     "ledger":     {"findings": [<entry>, ...]}   // the updated ledger (persisted iff --write)
+ *     "ledger":     {"findings": [<entry>, ...], "last_run": {...}}   // updated ledger (persisted iff --write)
  *   }
+ *
+ * With --run-hash, the merge stamps `ledger.last_run = { hash, head_sha }` (the
+ * run's input identity, computed by the caller as a digest of merge-base + head
+ * SHA + worktree porcelain). With --check-cache, output is instead
+ *   { "cache_hit": <bool>, "head_sha": <stored|null>, "findings": [<open entry>...],
+ *     "counts": {critical,high,medium,low} }
+ * so a caller can short-circuit the agent panel and reprint the cached review
+ * when the input is byte-identical to the last run.
  *
  * Exit code: 0 on a produced result; 2 on CLI misuse.
  */
@@ -63,7 +72,10 @@ type LedgerEntry = {
 	posted_comment_id: number | null;
 };
 
-type Ledger = { findings: LedgerEntry[] };
+/** The last review's input identity — `hash` over (merge-base, head SHA, worktree porcelain), computed by the caller. Lets a re-run short-circuit when nothing changed (feedback #23). */
+type LastRun = { hash: string; head_sha: string };
+
+type Ledger = { findings: LedgerEntry[]; last_run?: LastRun };
 
 type MergeResult = {
 	net_new: LedgerEntry[];
@@ -128,7 +140,54 @@ export function parseLedger(text: string): Ledger {
 		...entry,
 		posted_comment_id: typeof entry.posted_comment_id === "number" ? entry.posted_comment_id : null,
 	}));
-	return { findings };
+	const ledger: Ledger = { findings };
+	const lastRun = parsed.last_run;
+	if (
+		isRecord(lastRun) &&
+		typeof lastRun.hash === "string" &&
+		typeof lastRun.head_sha === "string"
+	) {
+		ledger.last_run = { hash: lastRun.hash, head_sha: lastRun.head_sha };
+	}
+	return ledger;
+}
+
+/** True iff `runHash` is non-empty and matches the ledger's last recorded run — i.e. the review input is byte-identical to the cached run. */
+export function isCacheHit(ledger: Ledger, runHash: string): boolean {
+	return runHash !== "" && ledger.last_run?.hash === runHash;
+}
+
+/** The reusable kept findings from a cached run: the entries still `open` (wontfix + resolved are excluded, matching a live review's surfaced set). */
+export function openFindings(ledger: Ledger): LedgerEntry[] {
+	return ledger.findings.filter((entry) => entry.status === "open");
+}
+
+/** Severity tally for a findings list (the cached counts a short-circuited review reprints). */
+export function severityCounts(
+	findings: readonly { severity: Severity }[],
+): Record<Severity, number> {
+	const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+	for (const finding of findings) counts[finding.severity] += 1;
+	return counts;
+}
+
+type CacheResult = {
+	cache_hit: boolean;
+	head_sha: string | null;
+	findings: LedgerEntry[];
+	counts: Record<Severity, number>;
+};
+
+/** The cache-check envelope the caller branches on (Step 2c). Pure: a hit returns the reusable open findings + their counts; a miss returns an empty set. */
+export function buildCacheResult(ledger: Ledger, runHash: string): CacheResult {
+	const hit = isCacheHit(ledger, runHash);
+	const findings = hit ? openFindings(ledger) : [];
+	return {
+		cache_hit: hit,
+		head_sha: ledger.last_run?.head_sha ?? null,
+		findings,
+		counts: severityCounts(findings),
+	};
 }
 
 /** True when `text` is non-empty but does NOT parse to a `{findings: [...]}` shape — i.e. corrupt/truncated, not legitimately empty. */
@@ -156,6 +215,7 @@ export function mergeLedger(opts: {
 	ledger: Ledger;
 	findings: readonly InputFinding[];
 	headSha: string;
+	runHash?: string;
 }): MergeResult {
 	const { headSha } = opts;
 	const byId = new Map<string, LedgerEntry>();
@@ -210,13 +270,13 @@ export function mergeLedger(opts: {
 		}
 	}
 
-	return {
-		net_new: netNew,
-		recurring,
-		resolved,
-		suppressed,
-		ledger: { findings: [...byId.values()] },
-	};
+	const newLedger: Ledger = { findings: [...byId.values()] };
+	// Stamp this run's identity when given; otherwise carry the prior one forward
+	// so a merge that doesn't supply a hash doesn't wipe the cache marker.
+	if (opts.runHash !== undefined) newLedger.last_run = { hash: opts.runHash, head_sha: headSha };
+	else if (opts.ledger.last_run !== undefined) newLedger.last_run = opts.ledger.last_run;
+
+	return { net_new: netNew, recurring, resolved, suppressed, ledger: newLedger };
 }
 
 type ReadFileText = (path: string) => string | null;
@@ -286,8 +346,10 @@ export class UsageError extends Error {}
 type CliArgs = {
 	ledger: string;
 	findings?: string;
-	headSha: string;
+	headSha?: string;
 	write: boolean;
+	runHash?: string;
+	checkCache: boolean;
 };
 
 export function parseArgs(argv: readonly string[]): CliArgs {
@@ -304,19 +366,27 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 	let findings: string | undefined;
 	let headSha: string | undefined;
 	let write = false;
+	let runHash: string | undefined;
+	let checkCache = false;
 
 	for (; i < args.length; i += 1) {
 		const arg = args[i];
 		if (arg === "--ledger") ledger = valueAt("--ledger");
 		else if (arg === "--findings") findings = valueAt("--findings");
 		else if (arg === "--head-sha") headSha = valueAt("--head-sha");
+		else if (arg === "--run-hash") runHash = valueAt("--run-hash");
 		else if (arg === "--write") write = true;
+		else if (arg === "--check-cache") checkCache = true;
 		else throw new UsageError(`unknown argument: ${arg}`);
 	}
 
 	if (ledger === undefined) throw new UsageError("--ledger is required");
-	if (headSha === undefined) throw new UsageError("--head-sha is required");
-	return { ledger, findings, headSha, write };
+	if (checkCache) {
+		if (runHash === undefined) throw new UsageError("--check-cache requires --run-hash");
+	} else if (headSha === undefined) {
+		throw new UsageError("--head-sha is required");
+	}
+	return { ledger, findings, headSha, write, runHash, checkCache };
 }
 
 function readStdin(): string {
@@ -339,6 +409,21 @@ function main(): number {
 		throw error;
 	}
 
+	const ledger = loadLedger(cli.ledger);
+
+	// Cache-check mode: report whether the run hash matches the cached run, and
+	// hand back the reusable open findings so the caller can short-circuit the
+	// agent panel on an unchanged re-run (feedback #23). No findings input needed.
+	if (cli.checkCache) {
+		process.stdout.write(`${JSON.stringify(buildCacheResult(ledger, cli.runHash ?? ""))}\n`);
+		return 0;
+	}
+
+	if (cli.headSha === undefined) {
+		process.stderr.write("findings-ledger: --head-sha is required\n");
+		return 2;
+	}
+
 	const findingsText =
 		cli.findings !== undefined ? (readFileSafe(cli.findings) ?? "") : readStdin();
 	let parsedFindings: unknown;
@@ -349,8 +434,7 @@ function main(): number {
 	}
 	const findings = asFindingArray(parsedFindings);
 
-	const ledger = loadLedger(cli.ledger);
-	const result = mergeLedger({ ledger, findings, headSha: cli.headSha });
+	const result = mergeLedger({ ledger, findings, headSha: cli.headSha, runHash: cli.runHash });
 	if (cli.write) saveLedger({ path: cli.ledger, ledger: result.ledger });
 
 	process.stdout.write(`${JSON.stringify(result)}\n`);

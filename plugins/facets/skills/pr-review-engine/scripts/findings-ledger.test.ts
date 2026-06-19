@@ -4,14 +4,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	asFindingArray,
+	buildCacheResult,
 	findingId,
+	isCacheHit,
 	isCorruptLedgerText,
 	loadLedger,
 	mergeLedger,
 	normalize,
+	openFindings,
 	parseArgs,
 	parseLedger,
 	saveLedger,
+	severityCounts,
 	UsageError,
 	whatClause,
 } from "./findings-ledger.ts";
@@ -249,17 +253,106 @@ describe("loadLedger / saveLedger (injected IO)", () => {
 describe("parseArgs", () => {
 	it("parses the required flags and --write", () => {
 		const args = parseArgs(["--ledger", "/l.json", "--head-sha", "abc", "--write"]);
-		expect(args).toEqual({ ledger: "/l.json", findings: undefined, headSha: "abc", write: true });
+		expect(args).toEqual({
+			ledger: "/l.json",
+			findings: undefined,
+			headSha: "abc",
+			write: true,
+			runHash: undefined,
+			checkCache: false,
+		});
 	});
 	it("throws UsageError when --ledger is missing", () => {
 		expect(() => parseArgs(["--head-sha", "abc"])).toThrow(UsageError);
 	});
-	it("throws UsageError when --head-sha is missing", () => {
+	it("throws UsageError when --head-sha is missing (merge mode)", () => {
 		expect(() => parseArgs(["--ledger", "/l.json"])).toThrow(UsageError);
 	});
 	it("throws UsageError on an unknown flag", () => {
 		expect(() => parseArgs(["--ledger", "/l.json", "--head-sha", "a", "--bogus"])).toThrow(
 			UsageError,
 		);
+	});
+	it("parses --check-cache + --run-hash without requiring --head-sha", () => {
+		const args = parseArgs(["--ledger", "/l.json", "--check-cache", "--run-hash", "h1"]);
+		expect(args.checkCache).toBe(true);
+		expect(args.runHash).toBe("h1");
+		expect(args.headSha).toBeUndefined();
+	});
+	it("throws UsageError when --check-cache is given without --run-hash", () => {
+		expect(() => parseArgs(["--ledger", "/l.json", "--check-cache"])).toThrow(UsageError);
+	});
+});
+
+describe("idempotency cache (issue #23)", () => {
+	const seedFinding = () =>
+		mergeLedger({ ledger: EMPTY, findings: [finding()], headSha: "sha1", runHash: "h1" });
+
+	it("mergeLedger stamps last_run when given a runHash", () => {
+		const out = seedFinding();
+		expect(out.ledger.last_run).toEqual({ hash: "h1", head_sha: "sha1" });
+	});
+
+	it("mergeLedger preserves the prior last_run when no runHash is given", () => {
+		const seeded = seedFinding().ledger;
+		const next = mergeLedger({ ledger: seeded, findings: [finding()], headSha: "sha2" });
+		expect(next.ledger.last_run).toEqual({ hash: "h1", head_sha: "sha1" });
+	});
+
+	it("isCacheHit matches the stored hash, and never matches an empty hash", () => {
+		const ledger = seedFinding().ledger;
+		expect(isCacheHit(ledger, "h1")).toBe(true);
+		expect(isCacheHit(ledger, "h2")).toBe(false);
+		expect(isCacheHit(ledger, "")).toBe(false);
+		expect(isCacheHit(EMPTY, "h1")).toBe(false);
+	});
+
+	it("openFindings returns only open entries (wontfix + resolved excluded)", () => {
+		const ledger = {
+			findings: [
+				{ ...finding(), id: "a", status: "open" as const },
+				{ ...finding({ file: "b.ts" }), id: "b", status: "wontfix" as const },
+				{ ...finding({ file: "c.ts" }), id: "c", status: "resolved" as const },
+			].map((f) => ({
+				id: f.id,
+				file: f.file,
+				line: 1,
+				severity: "high" as const,
+				description: "WHAT: x. FIX: y.",
+				status: f.status,
+				first_seen_sha: "s",
+				last_seen_sha: "s",
+				posted_comment_id: null,
+			})),
+		};
+		expect(openFindings(ledger).map((f) => f.id)).toEqual(["a"]);
+	});
+
+	it("severityCounts tallies by severity", () => {
+		expect(
+			severityCounts([{ severity: "high" }, { severity: "high" }, { severity: "low" }]),
+		).toEqual({ critical: 0, high: 2, medium: 0, low: 1 });
+	});
+
+	it("parseLedger round-trips a valid last_run and drops a malformed one", () => {
+		const withRun = JSON.stringify({ findings: [], last_run: { hash: "h1", head_sha: "s1" } });
+		expect(parseLedger(withRun).last_run).toEqual({ hash: "h1", head_sha: "s1" });
+		const badRun = JSON.stringify({ findings: [], last_run: { hash: 5 } });
+		expect(parseLedger(badRun).last_run).toBeUndefined();
+	});
+
+	it("buildCacheResult: hit returns open findings + counts; miss returns empty + null head_sha", () => {
+		const seeded = seedFinding().ledger;
+		const hit = buildCacheResult(seeded, "h1");
+		expect(hit.cache_hit).toBe(true);
+		expect(hit.head_sha).toBe("sha1");
+		expect(hit.findings).toEqual(openFindings(seeded));
+		expect(hit.counts.high).toBe(1);
+
+		const miss = buildCacheResult(EMPTY, "h1");
+		expect(miss.cache_hit).toBe(false);
+		expect(miss.head_sha).toBeNull();
+		expect(miss.findings).toEqual([]);
+		expect(miss.counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
 	});
 });
