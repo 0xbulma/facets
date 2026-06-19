@@ -67,12 +67,17 @@ fi
 Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that all three branch/SHA fields are non-empty AND not whitespace-only (use `[ -z "${X//[[:space:]]/}" ]` — bare `[ -z "$X" ]` lets whitespace pass). If `state` is not `OPEN`, inform the user and stop. Then fetch refs, falling back to HTTPS if SSH auth fails (e.g. the ssh-agent / 1Password agent is down) so a broken agent can't block the review:
 
 ```bash
-git fetch origin 2>/dev/null || {
+# Use `git -c remote.origin.url=…` for the HTTPS retry (NOT a bare `git fetch
+# <url>`, which only moves FETCH_HEAD) so refs/remotes/origin/* actually update —
+# Step 2b and the engine read origin/<BASE>/origin/<HEAD>. Surface the SSH error;
+# stop loudly if HTTPS also fails rather than reviewing stale refs.
+if ! git fetch origin; then
   https_url=$(git remote get-url origin \
     | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')
-  echo "git fetch origin failed (SSH agent down?); retrying over HTTPS: $https_url" >&2
-  git fetch "$https_url"
-}
+  echo "git fetch origin failed; retrying over HTTPS: $https_url" >&2
+  git -c remote.origin.url="$https_url" fetch origin \
+    || { echo "fetch failed over SSH and HTTPS — cannot review reliably." >&2; exit 1; }
+fi
 ```
 
 ## Step 2b: Assemble `INTENT_CONTEXT` (PR body + commit messages)
@@ -243,7 +248,7 @@ Note on shell syntax: `set CYCLE_X = ...` is pseudocode for `CYCLE_X=$(cmd)` (ba
 CYCLE START:
 
 1. FETCH AND CHECK STATE:
-   Run: cd <REPO_PATH> && (git fetch origin 2>/dev/null || git fetch "$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')") — the HTTPS fallback keeps the watcher cycle alive if the SSH agent is down.
+   Run: cd <REPO_PATH> && git fetch origin. If it exits non-zero (SSH agent down), retry over HTTPS so origin/* actually updates (a bare `git fetch <url>` only moves FETCH_HEAD): `git -c remote.origin.url="$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')" fetch origin`. If BOTH the SSH and HTTPS fetch fail, that is a non-zero exit per the cycle rule above → say "Sentinel: WATCH_TRANSIENT_ERROR — step 1 (git fetch): SSH and HTTPS both failed" and end this cycle (never proceed on stale refs).
    set CYCLE_HEAD_SHA = `git rev-parse origin/<HEAD_BRANCH>` — abort if empty.
    set CYCLE_PR_STATE = `gh pr view <PR_NUMBER> --repo <OWNER>/<REPO> --json state --jq '.state'` — abort if gh fails or returns whitespace-only.
    If ${CYCLE_PR_STATE} is not "OPEN": say "Sentinel: WATCH_PR_CLOSED — PR #<PR_NUMBER> state=${CYCLE_PR_STATE}, watcher exiting." and end.
