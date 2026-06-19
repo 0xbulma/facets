@@ -9,10 +9,11 @@ export type Frontmatter = {
 /**
  * Split a markdown file into its YAML frontmatter scalars and body.
  *
- * Only top-level single-line `key: value` scalars are read — block scalars
- * (`applies: |`), lists (`out-of-scope:`), and indented continuations are
- * skipped. That covers every field the manifest needs (name, version,
- * description, kind, trigger, focus) without pulling in a YAML dependency.
+ * Reads top-level `key: value` single-line scalars and `key: |` / `key: >`
+ * block scalars (folded to a single line — agents write `focus: |` across
+ * several lines). Lists (`out-of-scope:`) and nested mappings are skipped.
+ * That covers every field the manifest needs (name, version, description,
+ * kind, trigger, focus) without pulling in a YAML dependency.
  */
 export function parseFrontmatter(raw: string): Frontmatter {
   const lines = raw.split('\n');
@@ -28,16 +29,31 @@ export function parseFrontmatter(raw: string): Frontmatter {
   if (end === -1) return { data: {}, body: raw };
 
   const data: Record<string, string> = {};
-  for (let i = 1; i < end; i++) {
-    const line = lines[i] ?? '';
-    const match = line.match(/^([A-Za-z][\w-]*):[ \t]?(.*)$/);
-    if (!match) continue;
+  let i = 1;
+  while (i < end) {
+    const match = (lines[i] ?? '').match(/^([A-Za-z][\w-]*):[ \t]?(.*)$/);
+    if (!match) {
+      i++;
+      continue;
+    }
     const key = match[1] ?? '';
     const value = (match[2] ?? '').trim();
-    // Empty value or a block-scalar marker means the content lives on the
-    // following (indented) lines — not a scalar we surface.
-    if (value === '' || value === '|' || value === '>') continue;
-    data[key] = value.replace(/^["']|["']$/g, '');
+    i++;
+
+    if (/^[|>][+-]?$/.test(value)) {
+      // Block scalar: gather the indented continuation lines, fold to one line.
+      const block: string[] = [];
+      while (i < end && (lines[i] ?? '').trim() !== '' && /^\s/.test(lines[i] ?? '')) {
+        block.push((lines[i] ?? '').trim());
+        i++;
+      }
+      data[key] = block.join(' ').replace(/\s+/g, ' ').trim();
+    } else if (value === '') {
+      // List or nested mapping — skip its indented block; we don't surface it.
+      while (i < end && /^\s/.test(lines[i] ?? '')) i++;
+    } else {
+      data[key] = value.replace(/^["']|["']$/g, '');
+    }
   }
 
   return { data, body: lines.slice(end + 1).join('\n') };
@@ -61,11 +77,15 @@ export function extractTrigger(
   description: string,
 ): { slashCommand: string; phrases: string[] } {
   const normalized = description.replace(/[“”]/g, '"');
-  const slash = normalized.match(/\/facets:[\w-]+/);
-  const phrases = [...normalized.matchAll(/"([^"]+)"/g)]
+  // Invocation phrases live in the "Use when …" clause; scope to it so a
+  // sibling /facets: reference or quoted text in the lead isn't captured.
+  const useWhen = normalized.match(/\bUse\s+(?:when|the)\b[\s\S]*$/i);
+  const phrases = [...(useWhen?.[0] ?? normalized).matchAll(/"([^"]+)"/g)]
     .map((m) => m[1] ?? '')
     .filter((p) => p.length > 0);
-  return { slashCommand: slash?.[0] ?? `/facets:${id}`, phrases };
+  // The command is always the skill's own id — never a sibling skill the
+  // description happens to mention before its own "Use when /facets:<id>".
+  return { slashCommand: `/facets:${id}`, phrases };
 }
 
 /** Trailing notes after the last quoted phrase, or null when there are none. */

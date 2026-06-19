@@ -10,8 +10,13 @@ export function SkillDetail({ skill, onClose }: SkillDetailProps) {
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose();
     }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [skill, onClose]);
 
   if (!skill) return null;
@@ -28,7 +33,7 @@ export function SkillDetail({ skill, onClose }: SkillDetailProps) {
         role="dialog"
         aria-modal="true"
         aria-label={`${skill.name} details`}
-        className="relative z-10 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl"
+        className="relative z-10 max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>

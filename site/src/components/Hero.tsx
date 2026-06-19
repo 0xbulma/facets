@@ -45,10 +45,6 @@ export function Hero({ plugin, skillCount, agentCount }: HeroProps) {
             <Github size={16} /> Source
           </a>
         </div>
-        <div className="mx-auto mt-14 flex aspect-video max-w-3xl flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 text-slate-500">
-          <span className="text-sm font-medium">Demo coming soon</span>
-          <span className="text-xs">A real review run posting inline GitHub comments.</span>
-        </div>
       </div>
     </section>
   );

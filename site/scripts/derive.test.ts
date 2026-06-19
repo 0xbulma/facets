@@ -24,13 +24,14 @@ describe('parseFrontmatter', () => {
     expect(body.trim()).toBe('# Web3\n\nBody text.'.trim());
   });
 
-  it('skips block scalars and list fields', () => {
+  it('captures block scalars (folded) and skips list fields', () => {
     const raw = [
       '---',
       'name: web3',
       'trigger: HAS_WEB3',
       'applies: |',
-      '  multi-line block that must not become a scalar',
+      '  first line of the block',
+      '  second line of the block',
       'out-of-scope:',
       '  - some excluded thing',
       'focus: Contract interactions and chain-id validation.',
@@ -40,8 +41,16 @@ describe('parseFrontmatter', () => {
     const { data } = parseFrontmatter(raw);
     expect(data.trigger).toBe('HAS_WEB3');
     expect(data.focus).toBe('Contract interactions and chain-id validation.');
-    expect(data.applies).toBeUndefined();
+    expect(data.applies).toBe('first line of the block second line of the block');
     expect(data['out-of-scope']).toBeUndefined();
+  });
+
+  it('folds a `focus: |` block scalar into a single line', () => {
+    const raw =
+      '---\nfocus: |\n  Memory leaks, N+1 patterns,\n  and expensive hot paths.\n---\nbody';
+    expect(parseFrontmatter(raw).data.focus).toBe(
+      'Memory leaks, N+1 patterns, and expensive hot paths.',
+    );
   });
 
   it('returns empty data when there is no frontmatter', () => {
@@ -86,8 +95,12 @@ describe('extractTrigger', () => {
     expect(extractTrigger('feedback', desc).phrases).toEqual(['log an idea']);
   });
 
-  it('falls back to the id when no slash command is present', () => {
-    expect(extractTrigger('setup', 'No command here.').slashCommand).toBe('/facets:setup');
+  it('derives the slash command from the skill id, ignoring sibling mentions in the lead', () => {
+    const desc =
+      'Capture an idea; /facets:implement-feedback can action it. Use when user says /facets:feedback, "log it".';
+    const { slashCommand, phrases } = extractTrigger('feedback', desc);
+    expect(slashCommand).toBe('/facets:feedback');
+    expect(phrases).toEqual(['log it']);
   });
 });
 
