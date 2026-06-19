@@ -106,23 +106,26 @@ The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `D
 
 ## Step 6b: Findings ledger (stateful re-runs)
 
-So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's `FINDINGS` into a persisted ledger (feedback #19), keyed by PR number:
+So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's findings into a persisted ledger (feedback #19), keyed by PR number. Write the Step 6 `FINDINGS` array (the kept findings) to `/tmp/facets-findings.json` as a JSON array, then merge it:
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
 LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+# `pr<PR_NUMBER>` namespace is distinct from pr-review-local's `branch-<name>` key.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
 
-# FINDINGS as a JSON array on stdin; --write persists the updated ledger.
-printf '%s' "$FINDINGS_JSON" \
-  | node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-      --ledger "$LEDGER" --head-sha "<HEAD_SHA>" --write
+# --write persists the updated ledger. If the merge fails (bad dir, disk), fall
+# back to posting the plain stateless Step 7 review — never assume unpersisted state.
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "<HEAD_SHA>" --write \
+  || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
 ```
 
-The merge returns `net_new` / `recurring` / `resolved` / `suppressed`. When building Step 7:
+The merge prints `net_new` / `recurring` / `resolved` / `suppressed`. When building Step 7:
 
 - **Exclude every `suppressed` (wontfix) finding** from `comments[]` AND the body — never re-post a finding the operator marked wontfix in the ledger.
 - Surface the `net_new` count in the body (e.g. `N new since the last review of this PR`).
+- **If the merge command failed**, post the plain Step 7 review (no ledger filtering) rather than assuming any wontfix/net-new state that wasn't persisted.
 - The ledger lives **outside** the repo (`~/.claude/facets/reviews/…`, override dir via `FACETS_LEDGER_DIR`). The `posted_comment_id` field is available to record the comment IDs the reviews POST returns, so a later run can recognize an already-posted finding rather than duplicate it.
 
 **Marking a finding wontfix:** set its `status` to `"wontfix"` in the ledger JSON by hand (no flag); future reviews stop posting it.

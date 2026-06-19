@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+	asFindingArray,
 	findingId,
-	ledgerPath,
+	isCorruptLedgerText,
 	loadLedger,
 	mergeLedger,
 	normalize,
@@ -17,7 +18,6 @@ type Finding = {
 	file: string;
 	line: number;
 	description: string;
-	lens?: string;
 };
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -63,15 +63,6 @@ describe("findingId", () => {
 		const b = findingId({ file: "src/X.ts", description: "WHAT: race. FIX: x." });
 		expect(a).not.toBe(b);
 	});
-	it("separates lens so the same WHAT under different lenses is distinct", () => {
-		const a = findingId({ file: "src/X.ts", lens: "perf", description: "WHAT: leak. FIX: x." });
-		const b = findingId({
-			file: "src/X.ts",
-			lens: "correctness",
-			description: "WHAT: leak. FIX: x.",
-		});
-		expect(a).not.toBe(b);
-	});
 });
 
 describe("parseLedger", () => {
@@ -81,27 +72,31 @@ describe("parseLedger", () => {
 	it("returns an empty ledger when findings is missing", () => {
 		expect(parseLedger('{"x":1}')).toEqual(EMPTY);
 	});
-	it("drops malformed entries and keeps valid ones", () => {
+	it("drops malformed entries, keeps valid ones, and coerces posted_comment_id", () => {
+		const valid = (over: Record<string, unknown>) => ({
+			id: "abc",
+			file: "src/X.ts",
+			line: 1,
+			severity: "high",
+			description: "WHAT: a. FIX: b.",
+			status: "open",
+			first_seen_sha: "s1",
+			last_seen_sha: "s1",
+			...over,
+		});
 		const text = JSON.stringify({
 			findings: [
-				{
-					id: "abc",
-					file: "src/X.ts",
-					line: 1,
-					severity: "high",
-					lens: "",
-					description: "WHAT: a. FIX: b.",
-					status: "open",
-					first_seen_sha: "s1",
-					last_seen_sha: "s1",
-					posted_comment_id: null,
-				},
-				{ id: "bad", severity: "nope" },
+				valid({ id: "num", posted_comment_id: 4242 }), // numeric id preserved
+				valid({ id: "str", posted_comment_id: "nope" }), // non-number coerced to null
+				valid({ id: "missing" }), // absent coerced to null
+				{ id: "bad", severity: "nope" }, // dropped (invalid)
 			],
 		});
 		const ledger = parseLedger(text);
-		expect(ledger.findings).toHaveLength(1);
-		expect(ledger.findings[0]?.id).toBe("abc");
+		expect(ledger.findings.map((f) => f.id)).toEqual(["num", "str", "missing"]);
+		expect(ledger.findings[0]?.posted_comment_id).toBe(4242);
+		expect(ledger.findings[1]?.posted_comment_id).toBeNull();
+		expect(ledger.findings[2]?.posted_comment_id).toBeNull();
 	});
 });
 
@@ -156,13 +151,26 @@ describe("mergeLedger", () => {
 		expect(absent.ledger.findings[0]?.status).toBe("wontfix");
 	});
 
-	it("re-opens a resolved finding that reappears (counted recurring)", () => {
+	it("re-opens a resolved finding that reappears (counted recurring, first_seen preserved)", () => {
 		const first = mergeLedger({ ledger: EMPTY, findings: [finding()], headSha: "sha1" });
 		const gone = mergeLedger({ ledger: first.ledger, findings: [], headSha: "sha2" });
 		const back = mergeLedger({ ledger: gone.ledger, findings: [finding()], headSha: "sha3" });
 		expect(back.net_new).toEqual([]);
 		expect(back.recurring).toHaveLength(1);
 		expect(back.recurring[0]?.status).toBe("open");
+		expect(back.recurring[0]?.first_seen_sha).toBe("sha1");
+		expect(back.recurring[0]?.last_seen_sha).toBe("sha3");
+	});
+
+	it("preserves posted_comment_id across a recurring merge and a resolve", () => {
+		const base = mergeLedger({ ledger: EMPTY, findings: [finding()], headSha: "sha1" }).ledger
+			.findings[0];
+		if (base === undefined) throw new Error("seed setup failed");
+		const seeded = { findings: [{ ...base, posted_comment_id: 4242 }] };
+		const recur = mergeLedger({ ledger: seeded, findings: [finding()], headSha: "sha2" });
+		expect(recur.recurring[0]?.posted_comment_id).toBe(4242);
+		const resolved = mergeLedger({ ledger: seeded, findings: [], headSha: "sha2" });
+		expect(resolved.resolved[0]?.posted_comment_id).toBe(4242);
 	});
 
 	it("de-dupes identical findings within a single run", () => {
@@ -179,17 +187,35 @@ describe("mergeLedger", () => {
 	});
 });
 
-describe("ledgerPath", () => {
-	it("joins dir/owner-repo-key.json and sanitizes the key", () => {
-		expect(ledgerPath({ dir: "/tmp/led", owner: "o", repo: "r", key: "feat/x y" })).toBe(
-			"/tmp/led/o-r-feat-x-y.json",
-		);
+describe("asFindingArray", () => {
+	it("keeps well-formed findings and drops malformed / non-array input", () => {
+		expect(asFindingArray("not an array")).toEqual([]);
+		const out = asFindingArray([
+			{ severity: "high", file: "a.ts", line: 1, description: "WHAT: x. FIX: y." },
+			{ severity: "nope", file: "b.ts", line: 2, description: "bad sev" }, // dropped
+			{ file: "c.ts", line: 3 }, // missing severity/description, dropped
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0]?.file).toBe("a.ts");
+	});
+});
+
+describe("isCorruptLedgerText", () => {
+	it("is false for empty/whitespace and a valid ledger, true for garbage/wrong-shape", () => {
+		expect(isCorruptLedgerText("")).toBe(false);
+		expect(isCorruptLedgerText("   \n")).toBe(false);
+		expect(isCorruptLedgerText('{"findings":[]}')).toBe(false);
+		expect(isCorruptLedgerText("{ truncated")).toBe(true);
+		expect(isCorruptLedgerText('{"x":1}')).toBe(true);
 	});
 });
 
 describe("loadLedger / saveLedger (injected IO)", () => {
 	it("loadLedger returns an empty ledger when the reader yields null", () => {
 		expect(loadLedger("/nope.json", () => null)).toEqual(EMPTY);
+	});
+	it("loadLedger returns empty for a present-but-corrupt ledger (and does not throw)", () => {
+		expect(loadLedger("/corrupt.json", () => "{ truncated")).toEqual(EMPTY);
 	});
 	it("saveLedger writes pretty JSON with a trailing newline", () => {
 		let written = "";

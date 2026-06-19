@@ -152,23 +152,29 @@ The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `D
 
 ## Step 6b: Findings ledger (stateful re-runs)
 
-Re-running on an evolving branch shouldn't re-surface findings you've already seen or deliberately deferred. Merge this run's `FINDINGS` into a persisted ledger (feedback #19). This runs in the **single-shot path only** — goal mode tracks progress across its own iterations via `prev_findings_hash`, so it does not touch the ledger.
+Re-running on an evolving branch shouldn't re-surface findings you've already seen or deliberately deferred. Merge this run's findings into a persisted ledger (feedback #19). This runs in the **single-shot path only** — goal mode tracks progress across its own iterations via `prev_findings_hash`, so it does not touch the ledger.
+
+Write the Step 6 `FINDINGS` array (the kept findings) to `/tmp/facets-findings.json` as a JSON array, then merge it:
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
 LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
-LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
+# Namespace the key with `branch-` so a branch literally named `pr5` can't collide
+# with pr-review-gh's `pr5` PR ledger.
+LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
 
-# FINDINGS as a JSON array on stdin; --write persists the updated ledger.
-printf '%s' "$FINDINGS_JSON" \
-  | node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-      --ledger "$LEDGER" --head-sha "$HEAD_SHA" --write
+# --write persists the updated ledger. If the merge fails (bad dir, disk), fall
+# back to the plain stateless Step 7 output — never assume unpersisted state.
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$HEAD_SHA" --write \
+  || echo "findings-ledger failed; continuing with the plain (stateless) Step 7 output." >&2
 ```
 
-The merge returns `net_new` / `recurring` / `resolved` / `suppressed`. Feed them into Step 7:
+The merge prints `net_new` / `recurring` / `resolved` / `suppressed`. Feed them into Step 7:
 
 - **Drop every `suppressed` (wontfix) finding from the displayed list** — that is the entire point of the manual wontfix mark.
 - Tag each surfaced finding **NEW** (its id is in `net_new`) or **seen** (in `recurring`), and print the one-line ledger summary in Step 7.
+- **If the merge command failed**, skip the ledger annotations entirely and emit the plain Step 7 output — do not invent NEW/seen tags from state that wasn't persisted.
 
 This stays **git-only** (owner/repo from `git remote`, never `gh`) and the ledger lives **outside** the repo, so both the zero-GitHub and clean-tree contracts hold.
 

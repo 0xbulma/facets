@@ -138,7 +138,7 @@ pnpm install && pnpm verify # all skill TS scripts: Biome + tsc + Vitest
 ```
 
 - `test/plugin.bats` — manifest shape, skill discovery, frontmatter (including the `version:` field), agent/trigger invariants, no leaked legacy paths, hook + bin presence, and (if `claude` CLI is on PATH) a local plugin-dir smoke install.
-- **Skill TypeScript scripts** — the only non-doc source in the repo. Root `biome.json` (strict), `tsconfig.json` (extends `tsconfig.base.json`), `vitest.config.ts` — all scoped to `plugins/facets/skills/**/scripts/**`. `pnpm verify` runs `biome check` + `tsc -p tsconfig.json` + `vitest run`. Covers the `inject-wallet` scripts and the `pr-review-engine` helpers (`build-changed-lines.ts`, `validate-findings.ts`, each with a colocated `*.test.ts`). The scripts run dependency-free via Node's native type-stripping (Node ≥ 22.18); the toolchain is dev-only (`node_modules/` is gitignored).
+- **Skill TypeScript scripts** — the only non-doc source in the repo. Root `biome.json` (strict), `tsconfig.json` (extends `tsconfig.base.json`), `vitest.config.ts` — all scoped to `plugins/facets/skills/**/scripts/**`. `pnpm verify` runs `biome check` + `tsc -p tsconfig.json` + `vitest run`. Covers the `inject-wallet` scripts and the `pr-review-engine` helpers (`build-changed-lines.ts`, `validate-findings.ts`, `findings-ledger.ts`, each with a colocated `*.test.ts`). The scripts run dependency-free via Node's native type-stripping (Node ≥ 22.18); the toolchain is dev-only (`node_modules/` is gitignored).
 
 ## Common gotchas
 
