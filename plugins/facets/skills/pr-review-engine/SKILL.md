@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.12.0
+version: 0.13.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -60,6 +60,22 @@ git diff --name-only $MERGE_BASE..${HEAD_REF}
 # cited line lies far outside any line the diff actually touched.
 git diff --unified=0 $MERGE_BASE..${HEAD_REF}
 ```
+
+**Recompute + report the merge-base every run (feedback #20).** `MERGE_BASE` is recomputed from `origin/${BASE_BRANCH}` on each run, so a base-branch merge into the PR branch does **not** inflate the diff — the review stays scoped to the true PR delta `merge-base..HEAD`, never a naive `last-reviewed..HEAD` (which balloons with merged-in upstream — dogfooding saw it jump from 67 to 462 files after a `main` merge). Report the scope so it's visible:
+
+> `Review scope: <N> file(s), <MERGE_BASE_SHORT>..<HEAD_REF_SHORT>.`
+
+Then detect base-branch merges in the range and warn — their conflict resolutions surface as PR-authored changes:
+
+```bash
+MERGES_IN_RANGE=$(git rev-list --merges --count "$MERGE_BASE..${HEAD_REF}")
+```
+
+If `MERGES_IN_RANGE` > 0, print one line:
+
+> `WARNING: <N> merge commit(s) in the review range. The diff is scoped to the recomputed merge-base, so cleanly-merged upstream is excluded — but conflict resolutions appear as PR changes. For a PR-authored-only commit view: git log --first-parent $MERGE_BASE..${HEAD_REF}.`
+
+This is **informational** — it never changes the review scope (the recomputed `merge-base..HEAD` is the correct PR delta); it tells the operator why the scope is what it is and how to narrow further. A true "delta since my last review" mode (diffing against the ledger's `last_run.head_sha`, first-parent-scoped) is a documented follow-up, not automatic here.
 
 Build `CHANGED_LINES` as a map `{ "<file-path>": <sorted-int-set> }` by parsing the unified=0 hunk headers. The deterministic implementation ships as a bundled script — prefer it over re-implementing the parser by hand:
 
