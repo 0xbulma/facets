@@ -15,7 +15,18 @@
 >
 > **Self-review every _facet_ of your PR — then ship it.** A 17-agent Claude review engine that runs locally, with no cloud review bill.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with fourteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 17-agent review library (6 baseline + 11 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
+<p align="center">
+  <a href="https://github.com/0xbulma/facets/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://code.claude.com/docs/en/plugin-marketplaces"><img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-8A63D2.svg"></a>
+  <img alt="Plugin version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2F0xbulma%2Ffacets%2Fmain%2Fplugins%2Ffacets%2F.claude-plugin%2Fplugin.json&query=%24.version&label=plugin&color=22c55e&prefix=v">
+  <a href="https://github.com/0xbulma/facets/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/0xbulma/facets?color=eab308"></a>
+</p>
+
+<!-- TODO(demo): replace this note with a real review-run recording (docs/marketing/demo.gif).
+     Shot list + capture guide live in docs/marketing/demo-storyboard.md -->
+<p align="center"><em>▶ Demo coming soon — a real multi-agent review run posting inline GitHub comments. See <a href="docs/marketing/demo-storyboard.md">demo-storyboard.md</a>.</em></p>
+
+A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with fourteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 17-agent review library (6 baseline + 11 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs a separate set of 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry. (Two distinct 17s: the review-agent library that runs the review, and the rubric skills it leans on as guidance.)
 
 Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
 
