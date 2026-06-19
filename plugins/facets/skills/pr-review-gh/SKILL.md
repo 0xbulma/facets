@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.3.0
+version: 2.4.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -102,7 +102,7 @@ Build a JSON object at `/tmp/facets:pr-review-gh-<PR_NUMBER>-comments.json`:
   "comments": [
     {
       "path": "<file>",
-      "line": <line_number>,
+      "line": <snapped_line>,
       "side": "RIGHT",
       "body": "**[SEVERITY]** <description>\n\nSuggestion: <how to fix>"
     }
@@ -111,6 +111,8 @@ Build a JSON object at `/tmp/facets:pr-review-gh-<PR_NUMBER>-comments.json`:
 ```
 
 Always use `"event": "COMMENT"` — never auto-approve or request changes.
+
+**Anchor every inline comment on `snapped_line`, not the raw `line`.** The reviews API requires each comment's `line` to be an exact diff line; the engine already computes `snapped_line` (the nearest changed line) for each kept finding for exactly this. Use `snapped_line` as the comment `line`. A kept finding with **no** `snapped_line` (the `runtime` sentinel handled below, or a pure-rename finding with no diff line) cannot be anchored — keep it out of `comments[]` and surface it in the `### Runtime findings` / audit section of the body instead, with a one-line note that it was not postable inline. This is the deterministic version of the old hand re-anchoring; never post a raw `line` that isn't a diff line, or the batch 422s.
 
 **Runtime-sentinel findings never go in `comments[]`.** A finding with `file: "runtime"` (the `runtime-validation` sentinel for issues with no source location) has no valid `path`/`line` for the GitHub reviews API — including one would 422 the entire POST and collapse every inline comment into the fallback. Route those findings into the review `body` instead, as a `### Runtime findings` section (one `**[SEVERITY]** <description>` line each); only real-path findings go inline.
 
@@ -150,7 +152,9 @@ If `<FAILED_AGENTS>` is non-zero, prepend `> WARNING: <FAILED_AGENTS> of <TOTAL_
 
 If zero findings AND zero failures, submit with empty `comments[]` and a body saying `Sentinel: REVIEW_CLEAN — no issues found in this review.`. If zero findings BUT non-zero failures, the body must say `Sentinel: REVIEW_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no findings does NOT mean clean.`
 
-### Submit
+### Submit (resilient — one bad anchor can't sink the batch)
+
+First try the batch review (one API call, all comments at once):
 
 ```bash
 gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/reviews \
@@ -158,9 +162,24 @@ gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/reviews \
   --input "$REVIEW_FILE"
 ```
 
-Atomic — no partial reviews. Clean up: `rm -f "$REVIEW_FILE"`.
+On success, clean up (`rm -f "$REVIEW_FILE"`) and go to Step 8.
 
-Fallback on failure (permissions, line numbers out of range): post a single PR-level comment via `gh api repos/<OWNER>/<REPO>/issues/<PR_NUMBER>/comments`.
+**On a non-zero exit (typically a 422 from a line that isn't an exact diff line), do NOT fall straight to a single PR-level comment** — that throws away every good comment because of one bad anchor. Instead degrade in two stages:
+
+1. **Per-comment retry.** Post the review `body` first as a standalone review (empty `comments[]`, `event=COMMENT`), then post each inline comment individually so a single rejection only drops that one:
+
+   ```bash
+   gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments \
+     --method POST \
+     -f commit_id="<HEAD_SHA>" -f path="<file>" -F line=<snapped_line> -f side=RIGHT \
+     -f body="**[SEVERITY]** <description> …"
+   ```
+
+   Collect the comments that still 422 and list them in the terminal (file/line/why) so they aren't silently lost.
+
+2. **Last resort.** If even the standalone `body` review fails (permissions, auth), post the whole report as a single PR-level comment via `gh api repos/<OWNER>/<REPO>/issues/<PR_NUMBER>/comments`.
+
+Always `event=COMMENT`; never approve or request changes, in any path. Clean up `$REVIEW_FILE` when done.
 
 ## Step 8: Report
 
@@ -241,10 +260,10 @@ CYCLE START:
 
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
-6. POST REVIEW to GitHub as a single atomic call:
-   Build a JSON file at /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Findings with file=="runtime" go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path 422s the whole POST).
+6. POST REVIEW to GitHub:
+   Build a JSON file at /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Anchor each inline comment on the finding's snapped_line (never a raw line that isn't a diff line). Findings with file=="runtime" — or any kept finding lacking snapped_line — go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path/line 422s the whole POST).
    If ${CYCLE_FAILED_AGENTS} > 0, prepend "> WARNING: ${CYCLE_FAILED_AGENTS} of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete." to the body.
-   Run: gh api repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/reviews --method POST --input /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json — abort cycle if non-zero exit.
+   Submit using the resilient procedure from Step 7's "Submit" section (batch POST, then per-comment retry on 422, then a single PR-level comment as last resort) instead of aborting the cycle on the first non-zero exit.
    Clean up: rm -f /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json
 
 7. Say "Sentinel: WATCH_REVIEW_DONE — PR #<PR_NUMBER> commit ${CYCLE_HEAD_SHA_SHORT}: <N> findings (X critical, Y high, Z medium, W low)."

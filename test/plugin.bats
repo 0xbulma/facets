@@ -310,6 +310,16 @@ setup() {
   grep -q 'INTENT_CONTEXT' "$engine" || { echo "engine missing INTENT_CONTEXT envelope input" >&2; return 1; }
 }
 
+@test "engine + pr-review-gh document the snapped_line posting contract" {
+  # feedback #22: validate-findings tags each kept finding with snapped_line
+  # (nearest diff line), and pr-review-gh must anchor inline comments on it so
+  # the GitHub reviews API doesn't 422 the whole batch on one off-diff line.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  gh="$SKILLS_DIR/pr-review-gh/SKILL.md"
+  grep -q 'snapped_line' "$engine" || { echo "engine missing snapped_line output contract" >&2; return 1; }
+  grep -q 'snapped_line' "$gh"     || { echo "pr-review-gh must anchor inline comments on snapped_line" >&2; return 1; }
+}
+
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
   # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
   # must NOT gain a --post flag and must keep advertising zero GitHub

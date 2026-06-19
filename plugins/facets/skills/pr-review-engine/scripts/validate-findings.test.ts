@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseFindingsText, validateFindingsFromText } from "./validate-findings.ts";
+import {
+	nearestChangedLine,
+	parseFindingsText,
+	validateFindingsFromText,
+} from "./validate-findings.ts";
 
 type Out = ReturnType<typeof validateFindingsFromText>;
 
@@ -639,5 +643,78 @@ describe("CLI shell", () => {
 		const res = cli(["--changed-lines", "/no/such/cl.json"], "[]");
 		expect(res.status).toBe(0);
 		expect(JSON.parse(res.stdout).error).toContain("cannot read changed-lines file");
+	});
+});
+
+describe("snapped_line (issue #22)", () => {
+	it("equals the cited line when it is itself a changed line", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "high", file: "src/X.ts", line: 10, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [9, 10, 11] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.snapped_line).toBe(10);
+	});
+
+	it("snaps to the nearest changed line when the finding sits within tolerance", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "high", file: "src/X.ts", line: 20, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [10, 17, 40] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		// 20 is +3 from 17 and -20 from 40 → nearest changed line is 17 (within ±15).
+		expect(out.kept[0]?.snapped_line).toBe(17);
+	});
+
+	it("omits snapped_line on the runtime sentinel", () => {
+		const out = ok(
+			run({
+				findings: [{ severity: "high", file: "runtime", line: 0, description: "WHAT: x. FIX: y." }],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]).not.toHaveProperty("snapped_line");
+	});
+
+	it("omits snapped_line on a pure-rename keep (empty changed set)", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "high", file: "src/X.ts", line: 99, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]).not.toHaveProperty("snapped_line");
+	});
+
+	it("omits snapped_line in schema-only mode", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "high", file: "src/X.ts", line: 999, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: {},
+				schemaOnly: true,
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]).not.toHaveProperty("snapped_line");
+	});
+
+	it("nearestChangedLine returns the closest line, null on empty", () => {
+		expect(nearestChangedLine(20, [10, 17, 40])).toBe(17);
+		expect(nearestChangedLine(10, [10])).toBe(10);
+		expect(nearestChangedLine(5, [])).toBeNull();
 	});
 });
