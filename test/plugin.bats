@@ -74,6 +74,25 @@ setup() {
   done
 }
 
+@test "plugin.json version is bumped past origin/main when plugins/ changed (feedback #33)" {
+  # The marketplace keys cache invalidation off plugin.json `version` (CLAUDE.md
+  # Common Gotchas). bats already checks it's valid semver; this checks it
+  # actually MOVED past main *when the branch touches plugins/facets/*, so a
+  # forgotten or stale/duplicate bump (the classic stacked-PR collision) fails a
+  # gate instead of silently serving the stale cache. Skips otherwise.
+  git -C "$REPO_ROOT" rev-parse --verify --quiet origin/main >/dev/null 2>&1 || skip "origin/main not available (offline / shallow)"
+  [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" = "$(git -C "$REPO_ROOT" rev-parse origin/main)" ] && skip "HEAD is origin/main — nothing to advance past"
+  changed=$(git -C "$REPO_ROOT" diff --name-only origin/main...HEAD -- plugins/facets/ 2>/dev/null)
+  [ -n "$changed" ] || skip "branch does not touch plugins/facets/ — no plugin bump required"
+  ver() { grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([0-9][0-9.]*)".*/\1/'; }
+  cur=$(ver < "$PLUGIN_MANIFEST")
+  base=$(git -C "$REPO_ROOT" show origin/main:plugins/facets/.claude-plugin/plugin.json 2>/dev/null | ver)
+  [ -n "$base" ] || skip "origin/main plugin.json not readable"
+  largest=$(printf '%s\n%s\n' "$cur" "$base" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+  { [ "$cur" != "$base" ] && [ "$largest" = "$cur" ]; } \
+    || { echo "plugin.json version $cur must be > origin/main's $base — bump it (the marketplace cache keys off this field)." >&2; return 1; }
+}
+
 @test "no leaked @morpho-org references in plugins/" {
   run grep -rn '@morpho-org' "$PLUGIN_DIR"
   # grep returns 1 when no match — that's what we want.
