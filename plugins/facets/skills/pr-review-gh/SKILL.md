@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.4.0
+version: 2.5.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -64,7 +64,16 @@ if [ $? -ne 0 ]; then
 fi
 ```
 
-Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that all three branch/SHA fields are non-empty AND not whitespace-only (use `[ -z "${X//[[:space:]]/}" ]` — bare `[ -z "$X" ]` lets whitespace pass). If `state` is not `OPEN`, inform the user and stop. Then `git fetch origin`.
+Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that all three branch/SHA fields are non-empty AND not whitespace-only (use `[ -z "${X//[[:space:]]/}" ]` — bare `[ -z "$X" ]` lets whitespace pass). If `state` is not `OPEN`, inform the user and stop. Then fetch refs, falling back to HTTPS if SSH auth fails (e.g. the ssh-agent / 1Password agent is down) so a broken agent can't block the review:
+
+```bash
+git fetch origin 2>/dev/null || {
+  https_url=$(git remote get-url origin \
+    | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')
+  echo "git fetch origin failed (SSH agent down?); retrying over HTTPS: $https_url" >&2
+  git fetch "$https_url"
+}
+```
 
 ## Step 2b: Assemble `INTENT_CONTEXT` (PR body + commit messages)
 
@@ -234,7 +243,7 @@ Note on shell syntax: `set CYCLE_X = ...` is pseudocode for `CYCLE_X=$(cmd)` (ba
 CYCLE START:
 
 1. FETCH AND CHECK STATE:
-   Run: cd <REPO_PATH> && git fetch origin
+   Run: cd <REPO_PATH> && (git fetch origin 2>/dev/null || git fetch "$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')") — the HTTPS fallback keeps the watcher cycle alive if the SSH agent is down.
    set CYCLE_HEAD_SHA = `git rev-parse origin/<HEAD_BRANCH>` — abort if empty.
    set CYCLE_PR_STATE = `gh pr view <PR_NUMBER> --repo <OWNER>/<REPO> --json state --jq '.state'` — abort if gh fails or returns whitespace-only.
    If ${CYCLE_PR_STATE} is not "OPEN": say "Sentinel: WATCH_PR_CLOSED — PR #<PR_NUMBER> state=${CYCLE_PR_STATE}, watcher exiting." and end.
