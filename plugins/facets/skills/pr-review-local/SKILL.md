@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.6.0
+version: 2.7.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -83,8 +83,7 @@ Parse positional and flag args:
 # SSH error; surface it, and stop loudly if HTTPS also fails (never review on
 # stale refs).
 if ! git fetch origin; then
-  https_url=$(git remote get-url origin \
-    | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')
+  https_url=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --to-https "$(git remote get-url origin)")
   echo "git fetch origin failed; retrying over HTTPS: $https_url" >&2
   git -c remote.origin.url="$https_url" fetch origin \
     || { echo "fetch failed over SSH and HTTPS — refs may be stale; fix auth/network before reviewing." >&2; exit 1; }
@@ -145,12 +144,10 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
 MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
 # Run identity = merge-base + head SHA (these pin the committed diff) + the
-# CONTENT of the uncommitted overlay. Hash `git diff HEAD`, NOT
-# `git status --porcelain`: porcelain is content-blind, so editing an
-# already-modified file keeps the same status line and would falsely reuse
-# stale findings against changed code. (shasum -a 256 is the macOS default;
-# substitute sha256sum on Linux.)
-RUN_HASH=$({ printf '%s\n%s\n' "$MERGE_BASE" "$HEAD_SHA"; git diff HEAD; } | shasum -a 256 | cut -d' ' -f1)
+# CONTENT of the uncommitted overlay. The recipe + its content-not-porcelain
+# rationale live in the tested review-scope.ts (so the #23 content-blindness
+# regression is covered by a gate, not just prose).
+RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
 
 # Fail open: capture the result, and on any error fall through to a normal
 # review — never skip the review on an unreadable cache result.

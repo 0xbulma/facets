@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.13.0
+version: 0.14.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -441,6 +441,7 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 - `scripts/build-changed-lines.ts` — parses `git diff --unified=0` and emits the `CHANGED_LINES` JSON map. Handles deletion-only and pure-rename edge cases. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`, and tags each kept finding with `snapped_line` (the nearest diff line to anchor an inline comment on). Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/findings-ledger.ts` — merges a fresh review's findings into a persisted per-PR/branch ledger and classifies each as net-new / recurring / resolved / suppressed (wontfix). Also serves the **idempotency cache** (`--check-cache --run-hash`): records each run's input identity (`last_run`) and reports a cache hit so a caller can short-circuit the agent panel on an unchanged re-run. Pure core + injected IO; run by the **caller** (`pr-review-gh` / `pr-review-local`), not the engine, which stays stateless. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/review-scope.ts` — testable git-scope helpers extracted from the review skills' inline bash (feedback #31): `toHttpsUrl` (SSH→HTTPS rewrite for the fetch fallback) and `runHash` (the content-based idempotency-cache identity). Pure cores are unit-tested; the CLI shells to git and is integration-tested against a fixture repo. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").

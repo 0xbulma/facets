@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.6.0
+version: 2.7.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -72,8 +72,7 @@ Extract `<BASE_BRANCH>`, `<HEAD_BRANCH>`, `<HEAD_SHA>`, `state`. Validate that a
 # Step 2b and the engine read origin/<BASE>/origin/<HEAD>. Surface the SSH error;
 # stop loudly if HTTPS also fails rather than reviewing stale refs.
 if ! git fetch origin; then
-  https_url=$(git remote get-url origin \
-    | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')
+  https_url=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --to-https "$(git remote get-url origin)")
   echo "git fetch origin failed; retrying over HTTPS: $https_url" >&2
   git -c remote.origin.url="$https_url" fetch origin \
     || { echo "fetch failed over SSH and HTTPS — cannot review reliably." >&2; exit 1; }
@@ -274,7 +273,7 @@ Note on shell syntax: `set CYCLE_X = ...` is pseudocode for `CYCLE_X=$(cmd)` (ba
 CYCLE START:
 
 1. FETCH AND CHECK STATE:
-   Run: cd <REPO_PATH> && git fetch origin. If it exits non-zero (SSH agent down), retry over HTTPS so origin/* actually updates (a bare `git fetch <url>` only moves FETCH_HEAD): `git -c remote.origin.url="$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#^ssh://git@github\.com/#https://github.com/#')" fetch origin`. If BOTH the SSH and HTTPS fetch fail, that is a non-zero exit per the cycle rule above → say "Sentinel: WATCH_TRANSIENT_ERROR — step 1 (git fetch): SSH and HTTPS both failed" and end this cycle (never proceed on stale refs).
+   Run: cd <REPO_PATH> && git fetch origin. If it exits non-zero (SSH agent down), retry over HTTPS so origin/* actually updates (a bare `git fetch <url>` only moves FETCH_HEAD): `git -c remote.origin.url="$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --to-https "$(git remote get-url origin)")" fetch origin`. If BOTH the SSH and HTTPS fetch fail, that is a non-zero exit per the cycle rule above → say "Sentinel: WATCH_TRANSIENT_ERROR — step 1 (git fetch): SSH and HTTPS both failed" and end this cycle (never proceed on stale refs).
    set CYCLE_HEAD_SHA = `git rev-parse origin/<HEAD_BRANCH>` — abort if empty.
    set CYCLE_PR_STATE = `gh pr view <PR_NUMBER> --repo <OWNER>/<REPO> --json state --jq '.state'` — abort if gh fails or returns whitespace-only.
    If ${CYCLE_PR_STATE} is not "OPEN": say "Sentinel: WATCH_PR_CLOSED — PR #<PR_NUMBER> state=${CYCLE_PR_STATE}, watcher exiting." and end.
