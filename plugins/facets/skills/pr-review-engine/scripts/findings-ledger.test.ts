@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	asFindingArray,
+	buildCacheResult,
 	findingId,
 	isCacheHit,
 	isCorruptLedgerText,
@@ -338,5 +339,20 @@ describe("idempotency cache (issue #23)", () => {
 		expect(parseLedger(withRun).last_run).toEqual({ hash: "h1", head_sha: "s1" });
 		const badRun = JSON.stringify({ findings: [], last_run: { hash: 5 } });
 		expect(parseLedger(badRun).last_run).toBeUndefined();
+	});
+
+	it("buildCacheResult: hit returns open findings + counts; miss returns empty + null head_sha", () => {
+		const seeded = seedFinding().ledger;
+		const hit = buildCacheResult(seeded, "h1");
+		expect(hit.cache_hit).toBe(true);
+		expect(hit.head_sha).toBe("sha1");
+		expect(hit.findings).toEqual(openFindings(seeded));
+		expect(hit.counts.high).toBe(1);
+
+		const miss = buildCacheResult(EMPTY, "h1");
+		expect(miss.cache_hit).toBe(false);
+		expect(miss.head_sha).toBeNull();
+		expect(miss.findings).toEqual([]);
+		expect(miss.counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
 	});
 });

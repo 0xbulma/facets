@@ -144,16 +144,23 @@ slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##') 
 LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
 MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
-# Run identity: merge-base + head SHA + uncommitted worktree state.
-# (shasum -a 256 is the macOS default; substitute sha256sum on Linux.)
-RUN_HASH=$(printf '%s\n%s\n%s' "$MERGE_BASE" "$HEAD_SHA" "$(git status --porcelain)" | shasum -a 256 | cut -d' ' -f1)
+# Run identity = merge-base + head SHA (these pin the committed diff) + the
+# CONTENT of the uncommitted overlay. Hash `git diff HEAD`, NOT
+# `git status --porcelain`: porcelain is content-blind, so editing an
+# already-modified file keeps the same status line and would falsely reuse
+# stale findings against changed code. (shasum -a 256 is the macOS default;
+# substitute sha256sum on Linux.)
+RUN_HASH=$({ printf '%s\n%s\n' "$MERGE_BASE" "$HEAD_SHA"; git diff HEAD; } | shasum -a 256 | cut -d' ' -f1)
 
-node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH"
+# Fail open: capture the result, and on any error fall through to a normal
+# review — never skip the review on an unreadable cache result.
+CACHE_JSON=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+  --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH") || CACHE_JSON=""
 ```
 
 - **`cache_hit` true** → do NOT run Steps 3–6. Reprint the returned `findings` + `counts` as the Step 7 output, header marked `(cached — input unchanged since the last review of <head_sha>)`, then ask the user: **reuse this, or force a fresh review?** On *reuse* → emit the matching `REVIEW_*` sentinel from the cached counts and stop. On *force / re-review* → fall through to Steps 3–6 as a normal run. (No `--force` flag — the prompt is the bypass, keeping the flag surface flat.)
 - **`cache_hit` false** → proceed to Steps 3–6 normally.
+- **`CACHE_JSON` empty or missing a `cache_hit` field** (the check errored — old Node, bad path, etc.) → treat as a miss and proceed to Steps 3–6. The cache is an optimization; an unreadable result must never skip the review.
 
 Carry `RUN_HASH` forward to Step 6b so the fresh run is recorded (`--run-hash`).
 

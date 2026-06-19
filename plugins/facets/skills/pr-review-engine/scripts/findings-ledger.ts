@@ -171,6 +171,25 @@ export function severityCounts(
 	return counts;
 }
 
+type CacheResult = {
+	cache_hit: boolean;
+	head_sha: string | null;
+	findings: LedgerEntry[];
+	counts: Record<Severity, number>;
+};
+
+/** The cache-check envelope the caller branches on (Step 2c). Pure: a hit returns the reusable open findings + their counts; a miss returns an empty set. */
+export function buildCacheResult(ledger: Ledger, runHash: string): CacheResult {
+	const hit = isCacheHit(ledger, runHash);
+	const findings = hit ? openFindings(ledger) : [];
+	return {
+		cache_hit: hit,
+		head_sha: ledger.last_run?.head_sha ?? null,
+		findings,
+		counts: severityCounts(findings),
+	};
+}
+
 /** True when `text` is non-empty but does NOT parse to a `{findings: [...]}` shape — i.e. corrupt/truncated, not legitimately empty. */
 export function isCorruptLedgerText(text: string): boolean {
 	if (text.trim() === "") return false;
@@ -396,17 +415,7 @@ function main(): number {
 	// hand back the reusable open findings so the caller can short-circuit the
 	// agent panel on an unchanged re-run (feedback #23). No findings input needed.
 	if (cli.checkCache) {
-		const runHash = cli.runHash ?? "";
-		const hit = isCacheHit(ledger, runHash);
-		const findings = hit ? openFindings(ledger) : [];
-		process.stdout.write(
-			`${JSON.stringify({
-				cache_hit: hit,
-				head_sha: ledger.last_run?.head_sha ?? null,
-				findings,
-				counts: severityCounts(findings),
-			})}\n`,
-		);
+		process.stdout.write(`${JSON.stringify(buildCacheResult(ledger, cli.runHash ?? ""))}\n`);
 		return 0;
 	}
 
