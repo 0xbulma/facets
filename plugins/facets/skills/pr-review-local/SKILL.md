@@ -413,9 +413,9 @@ If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that 
 
 ### Post-convergence ledger stamp (single write)
 
-So a later single-shot or `pr-review-gh` run inherits what `--goal` resolved (rather than re-surfacing it as net-new), stamp the findings ledger **once, here at convergence** — not per iteration (feedback #32, reshaped). Goal mode does not otherwise read or write the ledger during the loop, so `prev_findings_hash` stays its sole stuck-check and there's no `wontfix`-vs-auto-fix interaction to reconcile (at convergence no actionable findings remain).
+So a later **single-shot `pr-review-local`** run inherits what `--goal` resolved (rather than re-surfacing it as net-new), stamp the findings ledger **once, here at convergence** — not per iteration (feedback #32, reshaped). (Only `pr-review-local` inherits it — it shares the `branch-<name>` ledger key; `pr-review-gh` keys by `pr<PR_NUMBER>` and does not read this file.) Goal mode does not otherwise read or write the ledger during the loop, so `prev_findings_hash` stays its sole stuck-check and there's no `wontfix`-vs-auto-fix interaction to reconcile (at convergence no actionable findings remain).
 
-Merge the converged state — the triaged `low` findings (the only ones left) — into the ledger, keyed by branch like Step 6b, with the converged HEAD's run-hash:
+**Write the converged `low` findings** (the triage list — the only findings left) to `/tmp/facets-findings.json` as a JSON array — write `[]` when there are none, so a stale file from an earlier run can't leak in. Then merge it into the branch-keyed ledger (same key as Step 6b) with the converged HEAD's run-hash:
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
@@ -424,13 +424,13 @@ LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" 
 FINAL_HEAD=$(git rev-parse HEAD)   # the last fix(review) commit; tree is clean here
 RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
 
-# The converged low findings as a JSON array → /tmp/facets-findings.json.
+# (Write the converged low findings — or [] — to /tmp/facets-findings.json first, per the line above.)
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
   --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$FINAL_HEAD" --run-hash "$RUN_HASH" --write \
   || echo "goal-mode ledger stamp failed (non-fatal); the converge result still stands." >&2
 ```
 
-The merge marks anything goal **fixed** as `resolved` (it's absent from the converged set), persists the remaining lows, and records the run-hash so an immediately-following unchanged single-shot run cache-hits (Step 2c). Best-effort: a failed stamp is non-fatal — the `--goal` result already stands in the commits. Skip the stamp when no commits were made (already-clean branch) — there's nothing new to record.
+The merge persists the remaining lows and records the run-hash so an immediately-following unchanged single-shot run cache-hits (Step 2c). If a **prior** single-shot run on this branch had recorded findings as `open`, the ones goal has since fixed (now absent from the converged set) flip to `resolved`; on a branch reviewed only via `--goal` the ledger had no prior entry, so goal-fixed findings simply never appear (nothing to resolve) — either way a later run won't re-surface them as net-new. Best-effort: a failed stamp is non-fatal — the `--goal` result already stands in the commits. Skip the stamp when no commits were made (already-clean branch) — there's nothing new to record.
 
 ### Final summary
 
