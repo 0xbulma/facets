@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.5.0
+version: 2.6.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -51,8 +51,9 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 | `--goal` runtime fix pass failed | `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
+| Re-run, input unchanged (cache hit) | cached findings reprinted under a `(cached — input unchanged since <head_sha>)` header + a reuse/re-review prompt; on *reuse*, the matching `REVIEW_*` sentinel from the cached counts (Step 2c — single-shot only) |
 
-Idempotency: re-running with no diff change produces the same sentinel + same counts; finding *text* may drift (LLM nondeterminism). The sentinel structure is deterministic.
+Idempotency: re-running with an unchanged input (same merge-base + head SHA + worktree) short-circuits via the Step 2c cache and reprints the cached findings + sentinel without re-running agents; finding *text* never drifts on a cache hit because nothing is recomputed. A genuine change (any of the three) misses the cache and runs a fresh review.
 
 ## Step 1: Validate environment + arguments
 
@@ -132,7 +133,29 @@ fi
 ## Routing: goal mode vs single-shot
 
 - If `GOAL=1` → **skip Steps 7 and 7b entirely** and follow the **Goal mode** section below. That section drives the engine (Steps 3–6) once per iteration and owns its own output. Do not also run the single-shot Step 7 output.
-- Otherwise → run Steps 3–6 once, then Step 7 (and Step 7b if `FIX=1`).
+- Otherwise → **Step 2c (idempotency cache)**, then Steps 3–6 once, then Step 7 (and Step 7b if `FIX=1`).
+
+## Step 2c: Idempotency cache (single-shot path; short-circuit unchanged re-runs)
+
+Before fanning out the agent panel (~1M tokens), check whether the review input is byte-identical to the last recorded run — if so, reuse the cached findings instead of reproducing them (feedback #23). Goal mode skips this (it runs its own loop).
+
+```bash
+slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
+LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
+MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
+# Run identity: merge-base + head SHA + uncommitted worktree state.
+# (shasum -a 256 is the macOS default; substitute sha256sum on Linux.)
+RUN_HASH=$(printf '%s\n%s\n%s' "$MERGE_BASE" "$HEAD_SHA" "$(git status --porcelain)" | shasum -a 256 | cut -d' ' -f1)
+
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+  --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH"
+```
+
+- **`cache_hit` true** → do NOT run Steps 3–6. Reprint the returned `findings` + `counts` as the Step 7 output, header marked `(cached — input unchanged since the last review of <head_sha>)`, then ask the user: **reuse this, or force a fresh review?** On *reuse* → emit the matching `REVIEW_*` sentinel from the cached counts and stop. On *force / re-review* → fall through to Steps 3–6 as a normal run. (No `--force` flag — the prompt is the bypass, keeping the flag surface flat.)
+- **`cache_hit` false** → proceed to Steps 3–6 normally.
+
+Carry `RUN_HASH` forward to Step 6b so the fresh run is recorded (`--run-hash`).
 
 ## Steps 3–6: Shared review base
 
@@ -163,10 +186,12 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 # with pr-review-gh's `pr5` PR ledger.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
 
-# --write persists the updated ledger. If the merge fails (bad dir, disk), fall
-# back to the plain stateless Step 7 output — never assume unpersisted state.
+# --write persists the updated ledger; --run-hash (from Step 2c) records this
+# run's input identity so the next unchanged re-run can short-circuit. If the
+# merge fails (bad dir, disk), fall back to the plain stateless Step 7 output —
+# never assume unpersisted state.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$HEAD_SHA" --write \
+  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$HEAD_SHA" --run-hash "$RUN_HASH" --write \
   || echo "findings-ledger failed; continuing with the plain (stateless) Step 7 output." >&2
 ```
 
