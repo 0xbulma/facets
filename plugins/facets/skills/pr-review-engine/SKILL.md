@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.14.1
+version: 0.14.2
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -202,13 +202,13 @@ Agent specs live in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
 
 ### Loop
 
-1. Read every file in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md`.
+1. Read **every** file in `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/*.md` FIRST, before launching anything. Resolve the full launch set (steps 2–3b) before issuing a single `Agent` call — do NOT fire an agent the moment you finish reading its file.
 2. For each agent, decide whether to launch:
    - `kind: baseline` → always launch.
    - `kind: conditional` → parse the `trigger:` value, look up each named flag from Step 4, evaluate the boolean expression. Compound triggers like `HAS_TAILWIND OR HAS_STYLING` are evaluated as written (split on whitespace, look up each flag, apply `OR` / `AND`).
 3. **Apply the caller's exclusion list.** If the caller provided `EXCLUDE_AGENTS` (a list of agent names), drop those from the launch set. Used by orchestrators like `/facets:tib-ship` to suppress an agent during inner iterations and run it once explicitly at the end (avoids paying dev-server boot N×, e.g. for `runtime-validation`).
 3b. **Doc-only fast path.** If every changed file is `*.md` / `*.mdx` / `*.txt`, drop `error-handling`, `tests`, `simplification`, and `performance` from the launch set — they have no surface on a docs-only diff and only add cost and noise. `docs` and `correctness` still launch (prose accuracy + secrets-in-docs). Conditionals need no special handling here: Step 4's content-based detectors already ignore matches inside doc files, so on a doc-only diff only path-based triggers can fire. Print one line: `Doc-only diff: skipping error-handling, tests, simplification, performance.`
-4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`).
+4. Launch ALL selected agents **in parallel** using the Agent tool (subagent_type: `"general-purpose"`): issue **every** `Agent` call in ONE assistant message — a single message carrying all the calls at once. Never launch incrementally or in batches as you read the persona files (step 1 already read them all). Batching the launches serializes the panel and defeats the parallelism the engine is built around.
 5. Track `TOTAL_AGENTS_LAUNCHED` = count of agents actually launched (baseline + any fired conditionals − excluded).
 
 ### Sub-agent prompt envelope (what the dispatcher must inject)
