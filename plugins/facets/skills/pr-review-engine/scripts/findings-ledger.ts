@@ -39,7 +39,7 @@
  * so a caller can short-circuit the agent panel and reprint the cached review
  * when the input is byte-identical to the last run.
  *
- * Exit code: 0 on a produced result; 2 on CLI misuse.
+ * Exit code: 0 on a produced result; 2 on CLI misuse or an unreadable/invalid --findings file.
  */
 
 import { createHash } from "node:crypto";
@@ -445,6 +445,15 @@ function main(): number {
 	try {
 		parsedFindings = JSON.parse(findingsText);
 	} catch {
+		// Same #43 guard as the unreadable case above: an explicit --findings file
+		// that isn't valid JSON is a real error, not "no findings" — exiting 2 keeps
+		// it from degrading to an empty merge that resolve-sweeps the ledger (wiping
+		// wontfix marks under --write). Only the stdin path degrades to [] (a caller
+		// that means "no findings" passes `echo '[]'`).
+		if (cli.findings !== undefined) {
+			process.stderr.write(`findings-ledger: --findings file is not valid JSON: ${cli.findings}\n`);
+			return 2;
+		}
 		parsedFindings = [];
 	}
 	const findings = asFindingArray(parsedFindings);

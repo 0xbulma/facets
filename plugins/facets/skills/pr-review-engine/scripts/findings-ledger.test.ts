@@ -7,6 +7,7 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -478,6 +479,75 @@ describe("CLI --findings on an unreadable file (feedback #43)", () => {
 			if (isExecError(caught)) expect(caught.status).toBe(2);
 			// Ledger file untouched: no resolve sweep, wontfix mark intact.
 			expect(readFileSync(ledgerPath, "utf8")).toBe(before);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("CLI --findings file read branch (feedback #43)", () => {
+	const SCRIPT = join(import.meta.dirname, "findings-ledger.ts");
+
+	type ExecError = { status: number | null; stderr: string };
+	const isExecError = (e: unknown): e is ExecError => {
+		if (typeof e !== "object" || e === null) return false;
+		return "status" in e && "stderr" in e && typeof e.stderr === "string";
+	};
+
+	it("reads a valid --findings file, exits 0, and merges its findings", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-read-")));
+		try {
+			const findingsPath = join(base, "findings.json");
+			writeFileSync(findingsPath, JSON.stringify([finding({ file: "new.ts" })]));
+			const out = execFileSync(
+				"node",
+				[
+					SCRIPT,
+					"--ledger",
+					join(base, "ledger.json"),
+					"--head-sha",
+					"abc123",
+					"--findings",
+					findingsPath,
+				],
+				{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+			);
+			const result = JSON.parse(out);
+			expect(result.net_new).toHaveLength(1);
+			expect(result.net_new[0].file).toBe("new.ts");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("exits 2 on a readable but invalid-JSON --findings file instead of degrading to an empty review", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-badjson-")));
+		try {
+			const findingsPath = join(base, "corrupt.json");
+			writeFileSync(findingsPath, "{ truncated");
+			let caught: unknown;
+			try {
+				execFileSync(
+					"node",
+					[
+						SCRIPT,
+						"--ledger",
+						join(base, "ledger.json"),
+						"--head-sha",
+						"deadbeef",
+						"--findings",
+						findingsPath,
+					],
+					{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+				);
+			} catch (error) {
+				caught = error;
+			}
+			expect(isExecError(caught)).toBe(true);
+			if (!isExecError(caught)) return;
+			expect(caught.status).toBe(2);
+			expect(caught.stderr).toContain("not valid JSON");
+			expect(caught.stderr).toContain(findingsPath);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}
