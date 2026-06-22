@@ -84,9 +84,13 @@ Build `CHANGED_LINES` as a map `{ "<file-path>": <sorted-int-set> }` by parsing 
 # the host /tmp) can't clobber each other's map mid-review. Note the value of
 # CHANGED_LINES_FILE and reuse the SAME path in Step 6 — it's a separate bash call,
 # so the shell variable won't survive; thread the literal path like HEAD_REF.
-CHANGED_LINES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-lines.XXXXXX")
+CHANGED_LINES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-lines.XXXXXX") || { echo "mktemp failed; cannot allocate the changed-lines path." >&2; exit 1; }
+# The redirect discards node's own exit, so check it explicitly: a failed or partial
+# build leaves an empty/truncated map, and the Step 6 scope filter would then over-drop
+# every finding — "no findings" would read as clean. Abort loudly instead of trusting it.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.ts" \
-  --base "$MERGE_BASE" --head "${HEAD_REF}" > "$CHANGED_LINES_FILE"
+  --base "$MERGE_BASE" --head "${HEAD_REF}" > "$CHANGED_LINES_FILE" \
+  || { echo "build-changed-lines failed; the scope filter would over-drop (no findings != clean) — fix before trusting this review." >&2; exit 1; }
 ```
 
 Edge-case handling (deletion-only hunks, pure renames) lives in `references/changed-lines.md`. Read it before adjusting the build rule.
