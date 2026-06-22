@@ -774,6 +774,33 @@ describe("normalized file on kept findings (issue #44)", () => {
 		expect(out.kept).toHaveLength(1);
 		expect(out.kept[0]?.file).toBe("src/X.ts");
 	});
+
+	it("does NOT rewrite file on a schema-only keep (passes through verbatim)", () => {
+		// schema-only mode keeps before the scope filter runs, so the path is
+		// never normalized — a prefixed file must survive unchanged.
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "medium", file: "b/src/X.ts", line: 10, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: {},
+				schemaOnly: true,
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("b/src/X.ts");
+	});
+
+	it("does NOT rewrite file on a runtime-sentinel keep", () => {
+		const out = ok(
+			run({
+				findings: [{ severity: "high", file: "runtime", line: 0, description: "WHAT: x. FIX: y." }],
+				changedLines: {},
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("runtime");
+	});
 });
 
 describe("repoRoot-containment guard on the fence-read (issue #44)", () => {
