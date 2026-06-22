@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.8.0
+version: 2.8.1
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -325,8 +325,23 @@ CYCLE START:
 
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
+5b. MERGE THE FINDINGS LEDGER (same PR-keyed merge as the initial run's Step 6b):
+   This is the stateful re-review the ledger exists for — without it, every watcher cycle reposts findings the operator already marked wontfix and never tags what is genuinely new. Run the SAME merge the initial run does, keyed by `pr<PR_NUMBER>` (the same key the initial Step 6b writes), before building the cycle's review. Write the Step 5 <FINDINGS> array to /tmp/facets-findings.json as a JSON array, then merge:
+   ```bash
+   slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
+   LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
+   LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
+   node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
+     --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha ${CYCLE_HEAD_SHA} --write \
+     || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
+   ```
+   The merge prints net_new / recurring / resolved / suppressed. When building Step 6's review:
+   - **Exclude every suppressed (wontfix) finding** from comments[] AND the body — never re-post a finding the operator marked wontfix in the ledger.
+   - **Tag every net_new finding as [NEW]** in its comment/body line, and surface the net_new count in the body (e.g. "N new since the last review of this PR").
+   - **Best-effort:** if the merge command exited non-zero, post the plain Step 6 review (no ledger filtering, no [NEW] tags) rather than assuming any wontfix/net-new state that wasn't persisted.
+
 6. POST REVIEW to GitHub:
-   Build a JSON file at /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Anchor each inline comment on the finding's snapped_line (never a raw line that isn't a diff line). Findings with file=="runtime" — or any kept finding lacking snapped_line — go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path/line 422s the whole POST).
+   Build a JSON file at /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Drop the suppressed (wontfix) findings and tag net_new as [NEW] per Step 5b. Anchor each inline comment on the finding's snapped_line (never a raw line that isn't a diff line). Findings with file=="runtime" — or any kept finding lacking snapped_line — go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path/line 422s the whole POST).
    If ${CYCLE_FAILED_AGENTS} > 0, prepend "> WARNING: ${CYCLE_FAILED_AGENTS} of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete." to the body.
    Submit using the resilient procedure from Step 7's "Submit" section (batch POST, then per-comment retry on 422, then a single PR-level comment as last resort) instead of aborting the cycle on the first non-zero exit.
    Clean up: rm -f /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json
@@ -352,7 +367,7 @@ After CronCreate returns the job ID:
 ## Notes
 
 - **`COMMENT` event only** — never auto-approve or request changes. The user reviews findings and decides.
-- **`--watch` semantics**: 5-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs.
+- **`--watch` semantics**: 5-minute cron, self-contained per cycle (no CronCreate-time SHA leakage); watcher cycles re-discover project context AND conditional flags per cycle so newly-added React/Web3/Tailwind code triggers the right agents on subsequent runs, and each cycle re-applies the same PR-keyed ledger merge as the initial run's Step 6b (Step 5b) so wontfix findings stay suppressed and net-new findings are tagged [NEW] across re-reviews.
 - **Pairs with `/facets:pr-fix`**: this skill posts findings; `/facets:pr-fix` applies them. **Do NOT run both watchers on the same PR** — the fix watcher's pushes re-trigger the review watcher, and any new finding re-triggers the fix watcher: an unattended ping-pong loop that burns tokens and spams the PR. Watch with one skill at a time and run the other on demand.
 
 ## Sentinel grammar
