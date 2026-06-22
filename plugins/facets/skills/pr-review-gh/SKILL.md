@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.8.1
+version: 2.8.2
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -131,7 +131,7 @@ The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `D
 
 ## Step 6b: Findings ledger (stateful re-runs)
 
-So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's findings into a persisted ledger (feedback #19), keyed by PR number. Write the Step 6 `FINDINGS` array (the kept findings) to `/tmp/facets-findings.json` as a JSON array, then merge it:
+So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's findings into a persisted ledger (feedback #19), keyed by PR number. Write the Step 6 `FINDINGS` array (the kept findings) to a **per-run** temp file (`FINDINGS_FILE`, minted with `mktemp` in the block below — never a shared `/tmp` literal, so a concurrent review can't clobber it) as a JSON array, then merge it:
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
@@ -139,10 +139,14 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 # `pr<PR_NUMBER>` namespace is distinct from pr-review-local's `branch-<name>` key.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
 
+# Per-run path (parallel workspaces share the host /tmp). Write the Step 6 FINDINGS
+# array as a JSON array to "$FINDINGS_FILE" before the merge below.
+FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")
+
 # --write persists the updated ledger. If the merge fails (bad dir, disk), fall
 # back to posting the plain stateless Step 7 review — never assume unpersisted state.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "<HEAD_SHA>" --write \
+  --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha "<HEAD_SHA>" --write \
   || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
 ```
 
@@ -157,7 +161,7 @@ The merge prints `net_new` / `recurring` / `resolved` / `suppressed`. When build
 
 ## Step 7: Post the review as `COMMENT`
 
-Build a JSON object at `/tmp/facets:pr-review-gh-<PR_NUMBER>-comments.json`:
+Mint a **per-run** path for the review payload — `REVIEW_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-pr-review-gh-comments.XXXXXX")` — never a shared `/tmp` literal (a concurrent review of the same PR would clobber it). Build this JSON object in `$REVIEW_FILE`:
 
 ```json
 {
@@ -204,14 +208,14 @@ Always use `"event": "COMMENT"` — never auto-approve or request changes.
 | Line pre-existing (outside ±15 of any changed line) | DROPPED_COUNTS.pre_existing |
 | Markdown documentation example | DROPPED_COUNTS.doc_example |
 
-If the filter dropped something it shouldn't have, the kept-finding list above will need a manual top-up — see the dropped JSON in `/tmp/pr-review-gh-<PR_NUMBER>-dropped.json` for the full details (file/line/description/distance_to_nearest_changed_line).
+If the filter dropped something it shouldn't have, the kept-finding list above will need a manual top-up — see the dropped JSON in `<DROPPED_FILE>` for the full details (file/line/description/distance_to_nearest_changed_line).
 
 </details>
 
 _Automated parallel review. Re-runs on new commits if `--watch` is active._
 ```
 
-The `<details>` audit block is rendered only when `DROPPED_FINDINGS` is non-empty; omit the entire block when zero findings were dropped (no noise on clean diffs). Write `DROPPED_FINDINGS` to `/tmp/pr-review-gh-<PR_NUMBER>-dropped.json` so the user can inspect locally — do NOT post the full dropped list inline (most are noise).
+The `<details>` audit block is rendered only when `DROPPED_FINDINGS` is non-empty; omit the entire block when zero findings were dropped (no noise on clean diffs). Mint a **per-run** path — `DROPPED_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-pr-review-gh-dropped.XXXXXX")`, never a shared `/tmp` literal — write `DROPPED_FINDINGS` there so the user can inspect locally, and substitute that real path into the `<DROPPED_FILE>` slot in the body above. Do NOT post the full dropped list inline (most are noise).
 
 If `<FAILED_AGENTS>` is non-zero, prepend `> WARNING: <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete.` to the body.
 
@@ -265,7 +269,7 @@ Use `CronCreate` to schedule a recurring job every 5 minutes (`*/5 * * * *`, rec
 Two kinds of placeholders in the watcher prompt:
 
 - **CronCreate-time placeholders** (substitute BEFORE CronCreate): `<PR_NUMBER>`, `<OWNER>`, `<REPO>`, `<REPO_PATH>`, `<HEAD_BRANCH>`, `<BASE_BRANCH>`, `<BOT_LOGIN>`. These seven are static.
-- **Cycle-derived** (do NOT substitute): `${CYCLE_HEAD_SHA}`, `${CYCLE_HEAD_SHA_SHORT}`, `${CYCLE_PR_STATE}`, `${CYCLE_LAST_REVIEWED_SHA}`, `${CYCLE_FAILED_AGENTS}`, `${CYCLE_LAST_REVIEWED_RAW}`. Computed inside each cycle.
+- **Cycle-derived** (do NOT substitute): `${CYCLE_HEAD_SHA}`, `${CYCLE_HEAD_SHA_SHORT}`, `${CYCLE_PR_STATE}`, `${CYCLE_LAST_REVIEWED_SHA}`, `${CYCLE_FAILED_AGENTS}`, `${CYCLE_LAST_REVIEWED_RAW}`, `${CYCLE_FILE}` (the per-run cycle payload path from `mktemp`). Computed inside each cycle.
 
 Pre-flight before CronCreate: refuse empty/whitespace-only prompt; refuse if any of the seven static placeholders remain unsubstituted.
 
@@ -326,13 +330,14 @@ CYCLE START:
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
 5b. MERGE THE FINDINGS LEDGER (same PR-keyed merge as the initial run's Step 6b):
-   This is the stateful re-review the ledger exists for — without it, every watcher cycle reposts findings the operator already marked wontfix and never tags what is genuinely new. Run the SAME merge the initial run does, keyed by `pr<PR_NUMBER>` (the same key the initial Step 6b writes), before building the cycle's review. Write the Step 5 <FINDINGS> array to /tmp/facets-findings.json as a JSON array, then merge:
+   This is the stateful re-review the ledger exists for — without it, every watcher cycle reposts findings the operator already marked wontfix and never tags what is genuinely new. Run the SAME merge the initial run does, keyed by `pr<PR_NUMBER>` (the same key the initial Step 6b writes), before building the cycle's review. Write the Step 5 <FINDINGS> array to a per-run temp file (FINDINGS_FILE, minted with mktemp in the block below — never a shared /tmp literal, so concurrent cycles/workspaces can't clobber it) as a JSON array, then merge:
    ```bash
    slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
    LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
    LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
+   FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")   # write the <FINDINGS> JSON here first
    node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-     --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha ${CYCLE_HEAD_SHA} --write \
+     --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha ${CYCLE_HEAD_SHA} --write \
      || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
    ```
    The merge prints net_new / recurring / resolved / suppressed. When building Step 6's review:
@@ -341,10 +346,10 @@ CYCLE START:
    - **Best-effort:** if the merge command exited non-zero, post the plain Step 6 review (no ledger filtering, no [NEW] tags) rather than assuming any wontfix/net-new state that wasn't persisted.
 
 6. POST REVIEW to GitHub:
-   Build a JSON file at /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Drop the suppressed (wontfix) findings and tag net_new as [NEW] per Step 5b. Anchor each inline comment on the finding's snapped_line (never a raw line that isn't a diff line). Findings with file=="runtime" — or any kept finding lacking snapped_line — go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path/line 422s the whole POST).
+   Mint a per-run path for the cycle payload — CYCLE_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-pr-review-gh-cycle.XXXXXX") — never a shared /tmp literal (concurrent cycles/workspaces would clobber it); note the path. Build the JSON file in ${CYCLE_FILE} with commit_id=${CYCLE_HEAD_SHA} (NOT a CronCreate-time SHA), event="COMMENT", body (summary table), and comments[] array. Drop the suppressed (wontfix) findings and tag net_new as [NEW] per Step 5b. Anchor each inline comment on the finding's snapped_line (never a raw line that isn't a diff line). Findings with file=="runtime" — or any kept finding lacking snapped_line — go into the body as a "Runtime findings" section, NEVER into comments[] (an invalid path/line 422s the whole POST).
    If ${CYCLE_FAILED_AGENTS} > 0, prepend "> WARNING: ${CYCLE_FAILED_AGENTS} of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>) — review may be incomplete." to the body.
    Submit using the resilient procedure from Step 7's "Submit" section (batch POST, then per-comment retry on 422, then a single PR-level comment as last resort) instead of aborting the cycle on the first non-zero exit.
-   Clean up: rm -f /tmp/facets:pr-review-gh-<PR_NUMBER>-cycle.json
+   Clean up: rm -f ${CYCLE_FILE}
 
 7. Say "Sentinel: WATCH_REVIEW_DONE — PR #<PR_NUMBER> commit ${CYCLE_HEAD_SHA_SHORT}: <N> findings (X critical, Y high, Z medium, W low)."
 

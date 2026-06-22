@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.14.2
+version: 0.14.3
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -80,8 +80,13 @@ This is **informational** — it never changes the review scope (the recomputed 
 Build `CHANGED_LINES` as a map `{ "<file-path>": <sorted-int-set> }` by parsing the unified=0 hunk headers. The deterministic implementation ships as a bundled script — prefer it over re-implementing the parser by hand:
 
 ```bash
+# Allocate a private, per-run path so concurrent reviews (parallel workspaces share
+# the host /tmp) can't clobber each other's map mid-review. Note the value of
+# CHANGED_LINES_FILE and reuse the SAME path in Step 6 — it's a separate bash call,
+# so the shell variable won't survive; thread the literal path like HEAD_REF.
+CHANGED_LINES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-lines.XXXXXX")
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.ts" \
-  --base "$MERGE_BASE" --head "${HEAD_REF}" > /tmp/changed-lines.json
+  --base "$MERGE_BASE" --head "${HEAD_REF}" > "$CHANGED_LINES_FILE"
 ```
 
 Edge-case handling (deletion-only hunks, pure renames) lives in `references/changed-lines.md`. Read it before adjusting the build rule.
@@ -325,7 +330,7 @@ Merge all agent results into a single list:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/validate-findings.ts" \
-     --findings findings.json --changed-lines /tmp/changed-lines.json
+     --findings findings.json --changed-lines "$CHANGED_LINES_FILE"   # the per-run path from Step 3
    ```
 
    The script emits the same `DROPPED_OUT_OF_SCOPE` / `DROPPED_PRE_EXISTING` / `DROPPED_DOC_EXAMPLE` counters as the inline rules above and tags each dropped finding with `drop_reason` plus, for line-level drops, `distance_to_nearest_changed_line`.
@@ -418,7 +423,7 @@ Likely path normalization disagreement. The agent returned absolute paths or pat
 
 ### Symptom: every finding on a renamed file is dropped
 
-Pure renames produce empty `CHANGED_LINES` for the file. The line-level filter is supposed to short-circuit on an empty set — if findings are still being dropped, the build step (`scripts/build-changed-lines.ts`) may have produced a stale or partial JSON. Delete `/tmp/changed-lines.json` and rerun.
+Pure renames produce empty `CHANGED_LINES` for the file. The line-level filter is supposed to short-circuit on an empty set — if findings are still being dropped, the build step (`scripts/build-changed-lines.ts`) may have produced a stale or partial JSON. Delete `$CHANGED_LINES_FILE` (the per-run path from Step 3) and rerun.
 
 ### Symptom: `FAILED_AGENTS` is non-empty but findings look fine
 

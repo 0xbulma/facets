@@ -38,7 +38,7 @@ The script emits compact JSON to stdout:
 }
 ```
 
-Pipe to `/tmp/changed-lines.json` (or any path the dispatcher chooses) and pass the path to `scripts/validate-findings.ts` via `--changed-lines`.
+Pipe to a per-run path the dispatcher allocates with `mktemp` (Step 3 uses `CHANGED_LINES_FILE`, never a shared `/tmp` literal) and pass that path to `scripts/validate-findings.ts` via `--changed-lines`.
 
 ## Known limitations
 
