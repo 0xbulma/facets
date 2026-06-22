@@ -16,10 +16,13 @@
  *
  * Output (stdout): JSON object
  *   {
- *     "kept":    [<finding + "snapped_line": <int>>, ...],  // snapped_line is the
- *                // nearest actual diff line for the finding (== line when the cited
- *                // line is itself a changed line; the matched changed line when the
- *                // finding sat within ±tolerance). It is the line a GitHub inline
+ *     "kept":    [<finding + "snapped_line": <int>>, ...],  // "file" is rewritten to
+ *                // the normalized repo-relative path (Step 6 rules) for every scope-
+ *                // filtered keep, so the GitHub review comments[].path the caller emits
+ *                // is repo-relative (runtime/schema-only keeps pass "file" through).
+ *                // snapped_line is the nearest actual diff line for the finding (== line
+ *                // when the cited line is itself a changed line; the matched changed line
+ *                // when the finding sat within ±tolerance). It is the line a GitHub inline
  *                // comment must anchor on. Omitted for runtime/pure-rename/schema-only
  *                // keeps, which have no diff line to snap to.
  *     "dropped": [{"finding": <finding>, "drop_reason": "...",
@@ -33,7 +36,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const LINE_TOLERANCE = 15; // see references/calibration.md
@@ -340,7 +343,7 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 		const changed = asLineList(changedLinesMap[norm]);
 		// Short-circuit: empty set (pure rename) → keep regardless of line.
 		if (changed.length === 0) {
-			kept.push(finding);
+			kept.push({ ...finding, file: norm });
 			continue;
 		}
 
@@ -366,21 +369,30 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 			if (nearest !== null) snappedLine = nearest;
 		}
 
-		// Markdown documentation-example filter.
+		// Markdown documentation-example filter. The fence-read is a path-inclusion
+		// sink (`norm` derives from agent output), so guard repoRoot containment
+		// before reading: resolve the target and skip the read if it escapes the
+		// root, keeping the finding rather than dropping it as a doc-example.
+		// Defense-in-depth — `norm` is already scope-filtered against the git
+		// changed-files set, which never yields a `..` path.
 		if (norm.endsWith(".md") && FP_PATTERNS.test(finding.description)) {
-			const text = readFileText(join(opts.repoRoot, norm));
-			if (text !== null && isInsideFence(text.split(/\r\n|\r|\n/), line)) {
-				dropped.push({
-					finding,
-					drop_reason: "doc-example-fp",
-					distance_to_nearest_changed_line: dist,
-				});
-				counts.doc_example += 1;
-				continue;
+			const root = resolve(opts.repoRoot);
+			const target = resolve(root, norm);
+			if (target === root || target.startsWith(`${root}/`)) {
+				const text = readFileText(target);
+				if (text !== null && isInsideFence(text.split(/\r\n|\r|\n/), line)) {
+					dropped.push({
+						finding,
+						drop_reason: "doc-example-fp",
+						distance_to_nearest_changed_line: dist,
+					});
+					counts.doc_example += 1;
+					continue;
+				}
 			}
 		}
 
-		kept.push({ ...finding, snapped_line: snappedLine });
+		kept.push({ ...finding, file: norm, snapped_line: snappedLine });
 	}
 
 	return { kept, dropped, counts, failed };
