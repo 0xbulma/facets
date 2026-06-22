@@ -182,7 +182,7 @@ The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `D
 
 Re-running on an evolving branch shouldn't re-surface findings you've already seen or deliberately deferred. Merge this run's findings into a persisted ledger (feedback #19). This runs in the **single-shot path only** — goal mode tracks progress across its own iterations via `prev_findings_hash`, so it does not touch the ledger.
 
-Write the Step 6 `FINDINGS` array (the kept findings) to a **per-run** temp file (`FINDINGS_FILE`, minted with `mktemp` in the block below — never a shared `/tmp` literal, so a concurrent review in another workspace can't clobber it) as a JSON array, then merge it:
+Merge this run's `FINDINGS` array (the kept findings) by piping it to `findings-ledger.ts` on **stdin** as a JSON array — no temp file, so there is nothing on the shared host `/tmp` for a concurrent review to clobber. (`findings-ledger.ts` reads stdin whenever `--findings` is omitted; that is the script's intended path for agent-produced findings — an explicit `--findings` *file* that can't be read is a hard error by design, never a silent empty merge.)
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
@@ -190,10 +190,6 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 # Namespace the key with `branch-` so a branch literally named `pr5` can't collide
 # with pr-review-gh's `pr5` PR ledger.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
-
-# Per-run path (parallel workspaces share the host /tmp). Write the Step 6 FINDINGS
-# array as a JSON array to "$FINDINGS_FILE" before the merge below.
-FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")
 
 # Stamp the cache identity (--run-hash, from Step 2c) so the next unchanged re-run
 # can short-circuit (Step 2c cache hit) — but ONLY when the panel completed: a run
@@ -210,8 +206,10 @@ fi
 # --write persists the updated ledger. If the merge fails (bad dir, disk), fall
 # back to the plain stateless Step 7 output — never assume unpersisted state.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha "$HEAD_SHA" "${RUN_HASH_ARG[@]}" --write \
+  --ledger "$LEDGER" --head-sha "$HEAD_SHA" "${RUN_HASH_ARG[@]}" --write <<'FINDINGS_JSON' \
   || echo "findings-ledger failed; continuing with the plain (stateless) Step 7 output." >&2
+[ ... the Step 6 kept FINDINGS as a JSON array here — write [] if there are none ... ]
+FINDINGS_JSON
 ```
 
 The merge prints `net_new` / `recurring` / `resolved` / `suppressed`. Feed them into Step 7:
@@ -430,7 +428,7 @@ If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that 
 
 So a later **single-shot `pr-review-local`** run inherits what `--goal` resolved (rather than re-surfacing it as net-new), stamp the findings ledger **once, here at convergence** — not per iteration (feedback #32, reshaped). (Only `pr-review-local` inherits it — it shares the `branch-<name>` ledger key; `pr-review-gh` keys by `pr<PR_NUMBER>` and does not read this file.) Goal mode does not otherwise read or write the ledger during the loop, so `prev_findings_hash` stays its sole stuck-check and there's no `wontfix`-vs-auto-fix interaction to reconcile (at convergence no actionable findings remain).
 
-**Write the converged `low` findings** (the triage list — the only findings left) to a **per-run** temp file (`FINDINGS_FILE`, minted with `mktemp` in the block below — never a shared `/tmp` literal) as a JSON array — write `[]` when there are none (a fresh per-run file also rules out an earlier run's content leaking in). Then merge it into the branch-keyed ledger (same key as Step 6b) with the converged HEAD's run-hash:
+**Merge the converged `low` findings** (the triage list — the only findings left) into the branch-keyed ledger (same key as Step 6b) by piping them to `findings-ledger.ts` on **stdin** as a JSON array — pipe `[]` when there are none. No temp file: stdin is the script's intended path for agent-produced findings (and a clean empty merge for `[]`), so there is nothing on the shared host `/tmp` to collide. Stamp with the converged HEAD's run-hash:
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
@@ -439,12 +437,12 @@ LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" 
 FINAL_HEAD=$(git rev-parse HEAD)   # the last fix(review) commit; tree is clean here
 RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
 
-# Per-run path (parallel workspaces share the host /tmp). Write the converged low
-# findings — or [] — to "$FINDINGS_FILE" first, per the line above.
-FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")
+# Pipe the converged low findings (a JSON array; `[]` if none) to the merge on stdin.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha "$FINAL_HEAD" --run-hash "$RUN_HASH" --write \
+  --ledger "$LEDGER" --head-sha "$FINAL_HEAD" --run-hash "$RUN_HASH" --write <<'FINDINGS_JSON' \
   || echo "goal-mode ledger stamp failed (non-fatal); the converge result still stands." >&2
+[ ... the converged low FINDINGS as a JSON array here — write [] if there are none ... ]
+FINDINGS_JSON
 ```
 
 The merge persists the remaining lows and records the run-hash so an immediately-following unchanged single-shot run cache-hits (Step 2c). If a **prior** single-shot run on this branch had recorded findings as `open`, the ones goal has since fixed (now absent from the converged set) flip to `resolved`; on a branch reviewed only via `--goal` the ledger had no prior entry, so goal-fixed findings simply never appear (nothing to resolve) — either way a later run won't re-surface them as net-new. Best-effort: a failed stamp is non-fatal — the `--goal` result already stands in the commits. Skip the stamp when no commits were made (already-clean branch) — there's nothing new to record.

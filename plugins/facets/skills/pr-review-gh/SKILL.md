@@ -131,7 +131,7 @@ The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `D
 
 ## Step 6b: Findings ledger (stateful re-runs)
 
-So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's findings into a persisted ledger (feedback #19), keyed by PR number. Write the Step 6 `FINDINGS` array (the kept findings) to a **per-run** temp file (`FINDINGS_FILE`, minted with `mktemp` in the block below — never a shared `/tmp` literal, so a concurrent review can't clobber it) as a JSON array, then merge it:
+So re-reviewing an evolving PR doesn't re-post findings already addressed or deliberately deferred, merge this run's findings into a persisted ledger (feedback #19), keyed by PR number. Merge the Step 6 `FINDINGS` array (the kept findings) by piping it to `findings-ledger.ts` on **stdin** as a JSON array — no temp file, so there is nothing on the shared host `/tmp` for a concurrent review to clobber. (`findings-ledger.ts` reads stdin whenever `--findings` is omitted; that is the script's intended path for agent-produced findings.)
 
 ```bash
 slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
@@ -139,15 +139,14 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 # `pr<PR_NUMBER>` namespace is distinct from pr-review-local's `branch-<name>` key.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
 
-# Per-run path (parallel workspaces share the host /tmp). Write the Step 6 FINDINGS
-# array as a JSON array to "$FINDINGS_FILE" before the merge below.
-FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")
-
-# --write persists the updated ledger. If the merge fails (bad dir, disk), fall
-# back to posting the plain stateless Step 7 review — never assume unpersisted state.
+# --write persists the updated ledger. The Step 6 FINDINGS array (a JSON array; `[]`
+# if none) is piped on stdin. If the merge fails (bad dir, disk), fall back to posting
+# the plain stateless Step 7 review — never assume unpersisted state.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha "<HEAD_SHA>" --write \
+  --ledger "$LEDGER" --head-sha "<HEAD_SHA>" --write <<'FINDINGS_JSON' \
   || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
+[ ... the Step 6 kept FINDINGS as a JSON array here — write [] if there are none ... ]
+FINDINGS_JSON
 ```
 
 The merge prints `net_new` / `recurring` / `resolved` / `suppressed`. When building Step 7:
@@ -330,15 +329,16 @@ CYCLE START:
    The base produces: <FINDINGS>, ${CYCLE_FAILED_AGENTS}, <COUNTS>, <TOTAL_AGENTS_LAUNCHED>.
 
 5b. MERGE THE FINDINGS LEDGER (same PR-keyed merge as the initial run's Step 6b):
-   This is the stateful re-review the ledger exists for — without it, every watcher cycle reposts findings the operator already marked wontfix and never tags what is genuinely new. Run the SAME merge the initial run does, keyed by `pr<PR_NUMBER>` (the same key the initial Step 6b writes), before building the cycle's review. Write the Step 5 <FINDINGS> array to a per-run temp file (FINDINGS_FILE, minted with mktemp in the block below — never a shared /tmp literal, so concurrent cycles/workspaces can't clobber it) as a JSON array, then merge:
+   This is the stateful re-review the ledger exists for — without it, every watcher cycle reposts findings the operator already marked wontfix and never tags what is genuinely new. Run the SAME merge the initial run does, keyed by `pr<PR_NUMBER>` (the same key the initial Step 6b writes), before building the cycle's review. Pipe the Step 5 <FINDINGS> array to the merge on stdin as a JSON array (no temp file — findings-ledger.ts reads stdin when --findings is omitted; nothing on the shared /tmp for concurrent cycles/workspaces to clobber):
    ```bash
    slug=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')   # owner/repo
    LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
    LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-pr<PR_NUMBER>.json"
-   FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-findings.XXXXXX")   # write the <FINDINGS> JSON here first
    node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-     --ledger "$LEDGER" --findings "$FINDINGS_FILE" --head-sha ${CYCLE_HEAD_SHA} --write \
+     --ledger "$LEDGER" --head-sha ${CYCLE_HEAD_SHA} --write <<'FINDINGS_JSON' \
      || echo "findings-ledger failed; posting the plain (stateless) review without ledger filtering." >&2
+[ ... the Step 5 <FINDINGS> as a JSON array here — write [] if there are none ... ]
+FINDINGS_JSON
    ```
    The merge prints net_new / recurring / resolved / suppressed. When building Step 6's review:
    - **Exclude every suppressed (wontfix) finding** from comments[] AND the body — never re-post a finding the operator marked wontfix in the ledger.
