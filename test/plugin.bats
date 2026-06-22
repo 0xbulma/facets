@@ -117,6 +117,22 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "no hardcoded shared /tmp review-state paths in plugins/" {
+  # The review engine + callers must allocate per-run temp paths with mktemp
+  # (feedback #56): parallel Conductor workspaces share the host /tmp, so a
+  # shared literal lets a concurrent review clobber the changed-lines map /
+  # findings ledger feed / dropped audit mid-run. Per-run paths only.
+  run grep -rn --exclude-dir=node_modules \
+    -e '/tmp/changed-lines.json' \
+    -e '/tmp/facets-findings.json' \
+    -e '/tmp/pr-review-local-dropped.json' \
+    -e '/tmp/facets:pr-review-gh-' \
+    -e '/tmp/pr-review-gh-' \
+    "$PLUGIN_DIR"
+  # grep exits 1 when no match — that's what we want.
+  [ "$status" -ne 0 ]
+}
+
 @test "agent inventory is exactly 17 files" {
   # 6 baseline + 11 conditional. Three combos (ci-release-security,
   # ui-styling-accessibility, code-simplifier-performance) split per
