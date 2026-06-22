@@ -1,6 +1,6 @@
 ---
 name: implement-feedback
-version: 1.1.0
+version: 1.1.1
 description: Pick up a logged facets improvement and implement it in the facets plugin — the counterpart to /facets:feedback. Reads a feedback GitHub issue (or a local backlog entry), branches, implements the change to the repo's conventions (version bumps, cross-file invariants, tests), validates, and opens a draft PR that closes the issue. Use when user says /facets:implement-feedback, "implement this feedback", "build the feedback issue", "action a facets improvement", or "do the implement counterpart". Takes a feedback issue number; --local reads the backlog; --goal runs the full review/fix/re-review loop before the PR.
 ---
 
@@ -252,7 +252,7 @@ After committing the implementation (same deliberate staging and commit guard as
 
 1. **Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-local/SKILL.md` and execute its "Goal mode" section** against the branch's commits — `DIFF_SOURCE=local`, base = `<DEFAULT_BRANCH>`, honoring its pre-flight gates and the `--max-iters` / `--no-runtime` flags passed here. Do not re-implement the loop — delegate to it so the sentinels and per-iteration `fix(review)` commits stay identical.
 2. **On `GOAL_CLEAN`** → the branch is clean and committed (the implementation commit plus any `fix(review)` iteration commits the loop made). Push and open the draft PR using **only Step 7a's push + `gh pr create`** — the commit already happened in this step, so do NOT re-run 7a's commit (there is nothing staged). The PR body still carries `Closes #<ISSUE>`. Then go to Step 8.
-3. **On any non-success sentinel** (`GOAL_ABORTED`, `GOAL_STUCK`, `GOAL_MAXED`, `GOAL_RUNTIME_RED`) → **do NOT open the PR.** Surface the sentinel and the residual findings, and stop for the user. The branch is left at its last green commit (the loop's own clean-up guarantees this). The user can re-run with a higher `--max-iters`, fix the sticking point, or open the PR by hand.
+3. **On any non-success sentinel** (`GOAL_INCOMPLETE`, `GOAL_ABORTED`, `GOAL_STUCK`, `GOAL_MAXED`, `GOAL_RUNTIME_RED`) → **do NOT open the PR.** Surface the sentinel and the residual findings, and stop for the user. The branch is left at its last green commit (the loop's own clean-up guarantees this). The user can re-run with a higher `--max-iters`, fix the sticking point, or open the PR by hand.
 
 `--goal` supersedes the default: the PR is opened only through the converged path in step 2 above.
 
