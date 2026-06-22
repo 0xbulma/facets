@@ -311,11 +311,17 @@ setup() {
   # FAILED_AGENTS == 0 and otherwise stops with GOAL_INCOMPLETE. (2) Step 6b
   # stamps the cache identity (--run-hash) ONLY when FAILED_AGENTS == 0, so a
   # REVIEW_INCOMPLETE run never cache-hits and replays as clean.
+  # Anchor on the gate PHRASING, not the bare tokens: both 'GOAL_INCOMPLETE'
+  # and 'FAILED_AGENTS' already appear unconditionally elsewhere (sentinel
+  # tables, REVIEW_INCOMPLETE prose), so a bare-token grep would still pass a
+  # regression that drops the success-check condition or the Step 6b guard.
   skill="$SKILLS_DIR/pr-review-local/SKILL.md"
   grep -q 'GOAL_INCOMPLETE' "$skill" \
     || { echo "pr-review-local --goal success check missing the GOAL_INCOMPLETE failed-agent guard" >&2; return 1; }
-  grep -q 'FAILED_AGENTS' "$skill" \
-    || { echo "pr-review-local missing the FAILED_AGENTS gate on --goal success / cache stamp" >&2; return 1; }
+  grep -q 'FAILED_AGENTS == 0' "$skill" \
+    || { echo "pr-review-local --goal success check missing the FAILED_AGENTS == 0 gate" >&2; return 1; }
+  grep -q 'FAILED_AGENTS:-0' "$skill" \
+    || { echo "pr-review-local Step 6b missing the cache-stamp guard (FAILED_AGENTS:-0 -eq 0)" >&2; return 1; }
 }
 
 @test "engine documents the merge-base recompute + merge-in-range warning (feedback #20)" {
