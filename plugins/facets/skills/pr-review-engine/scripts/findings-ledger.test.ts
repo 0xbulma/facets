@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -354,5 +355,33 @@ describe("idempotency cache (issue #23)", () => {
 		expect(miss.head_sha).toBeNull();
 		expect(miss.findings).toEqual([]);
 		expect(miss.counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
+	});
+});
+
+describe("CLI from a path containing a space (the #42 isMain regression)", () => {
+	it("runs main() when the checkout path is URL-special (was a silent no-op)", () => {
+		// realpathSync so process.argv[1] is canonical (macOS tmpdir lives under the
+		// /var → /private/var symlink, which import.meta.url resolves but argv[1] does
+		// not — that mismatch is unrelated to the bug under test, the space is).
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-space-")));
+		const spacedDir = join(base, "has space");
+		try {
+			mkdirSync(spacedDir);
+			// findings-ledger.ts imports only node builtins, so a single-file copy runs
+			// standalone. Under a dir with a space the old guard's unencoded file:// URL
+			// never matched the percent-encoded import.meta.url, so main() never ran and
+			// the CLI exited 0 with empty stdout instead of merging the ledger.
+			const spacedScript = join(spacedDir, "findings-ledger.ts");
+			copyFileSync(join(import.meta.dirname, "findings-ledger.ts"), spacedScript);
+			const out = execFileSync(
+				"node",
+				[spacedScript, "--ledger", join(spacedDir, "ledger.json"), "--head-sha", "deadbeef"],
+				{ input: "[]", encoding: "utf8" },
+			).trim();
+			expect(out.length).toBeGreaterThan(0);
+			expect(() => JSON.parse(out)).not.toThrow();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
 	});
 });

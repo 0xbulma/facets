@@ -18,6 +18,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 /**
  * Rewrite a GitHub SSH remote to its HTTPS form so a fetch can retry over HTTPS
@@ -98,5 +99,8 @@ function main(): number {
 	return 0;
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) process.exit(main());
+// Run only when executed directly (`node review-scope.ts …`), not when this
+// module is imported by a test for its exported helpers.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	process.exit(main());
+}

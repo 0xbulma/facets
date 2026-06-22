@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -96,6 +96,31 @@ describe("CLI --run-hash (real git fixture)", () => {
 			expect(h1).not.toBe(h2);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("CLI from a path containing a space (the #42 isMain regression)", () => {
+	it("runs main() when the checkout path is URL-special (was a silent no-op)", () => {
+		// realpathSync so process.argv[1] is canonical (macOS tmpdir lives under the
+		// /var → /private/var symlink, which import.meta.url resolves but argv[1] does
+		// not — that mismatch is unrelated to the bug under test, the space is).
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "rs-space-")));
+		const spacedDir = join(base, "has space");
+		try {
+			mkdirSync(spacedDir);
+			// review-scope.ts imports only node builtins, so a single-file copy runs
+			// standalone. Placing it under a dir with a space is the whole point: the
+			// old guard hand-built an unencoded file:// URL that never matched the
+			// percent-encoded import.meta.url here, so main() never ran → empty stdout.
+			const spacedScript = join(spacedDir, "review-scope.ts");
+			copyFileSync(join(import.meta.dirname, "review-scope.ts"), spacedScript);
+			const out = execFileSync("node", [spacedScript, "--to-https", "git@github.com:o/r.git"], {
+				encoding: "utf8",
+			}).trim();
+			expect(out).toBe("https://github.com/o/r.git");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
 		}
 	});
 });
