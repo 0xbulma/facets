@@ -45,6 +45,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const VALID_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
 const VALID_STATUSES = new Set(["open", "resolved", "wontfix"]);
@@ -441,5 +442,8 @@ function main(): number {
 	return 0;
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) process.exit(main());
+// Run only when executed directly (`node findings-ledger.ts …`), not when this
+// module is imported by a test for its exported helpers.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	process.exit(main());
+}
