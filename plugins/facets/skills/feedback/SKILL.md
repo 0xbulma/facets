@@ -1,6 +1,6 @@
 ---
 name: feedback
-version: 1.0.0
+version: 1.0.1
 description: Capture an improvement idea for the facets plugin itself — as a GitHub issue on the facets repo, or appended to a local backlog — from whatever repo you're working in. Grounds the note in concrete evidence (the current repo, branch, or PR), de-dupes against existing issues, applies a consistent label so /facets:implement-feedback can action it, and previews before posting. Use when the user says /facets:feedback, "log a facets idea", "file this as a facets improvement", "facets should…", or wants to capture friction with a facets skill without leaving their current task.
 ---
 
@@ -89,16 +89,18 @@ On confirm, ensure the discovery label exists, then create the issue with it —
 # issue is discoverable by implement-feedback. Label-create needs the same write access issue-create does.
 # If it can't be ensured (read-only token), drop the flag and post unlabeled rather than erroring —
 # the chain self-resolves so the snippet matches the fallback below.
-LABEL_FLAG="--label enhancement"
+# Use an array (not an unquoted string) so the flag expands to two tokens in both bash and zsh —
+# zsh does NOT word-split unquoted `$VAR`, so a "--label enhancement" string would arrive as one bad arg.
+LABEL_ARGS=(--label enhancement)
 gh label list --repo <FACETS_REPO> --json name --jq '.[].name' | grep -qx enhancement \
   || gh label create enhancement --repo <FACETS_REPO> --description "facets improvement idea" --color a2eeef 2>/dev/null \
-  || LABEL_FLAG=""   # couldn't ensure the label — post unlabeled; implement-feedback's unlabeled fallback still finds it
+  || LABEL_ARGS=()   # couldn't ensure the label — post unlabeled; implement-feedback's unlabeled fallback still finds it
 
-gh issue create --repo <FACETS_REPO> --title "<title>" $LABEL_FLAG --body-file <tmpfile>
+gh issue create --repo <FACETS_REPO> --title "<title>" "${LABEL_ARGS[@]}" --body-file <tmpfile>
 ```
 
 - Write the body to a temp file and pass `--body-file` (avoids shell-quoting issues with backticks/code).
-- The `LABEL_FLAG` fallback above means a read-only token posts the issue **unlabeled** rather than failing — warn the user when this happens, since `implement-feedback`'s default listing filters on `enhancement` and only reaches an unlabeled issue via its unlabeled fallback.
+- The `LABEL_ARGS` fallback above means a read-only token posts the issue **unlabeled** rather than failing — warn the user when this happens, since `implement-feedback`'s default listing filters on `enhancement` and only reaches an unlabeled issue via its unlabeled fallback.
 - If `gh` is unavailable or the create fails outright, fall back to **Step 5**.
 
 Print the returned issue URL.
