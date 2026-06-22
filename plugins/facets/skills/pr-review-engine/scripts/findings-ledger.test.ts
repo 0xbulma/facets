@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -380,6 +389,189 @@ describe("CLI from a path containing a space (the #42 isMain regression)", () =>
 			).trim();
 			expect(out.length).toBeGreaterThan(0);
 			expect(() => JSON.parse(out)).not.toThrow();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("CLI --findings on an unreadable file (feedback #43)", () => {
+	const SCRIPT = join(import.meta.dirname, "findings-ledger.ts");
+
+	type ExecError = { status: number | null; stderr: string };
+	const isExecError = (e: unknown): e is ExecError => {
+		if (typeof e !== "object" || e === null) return false;
+		return "status" in e && "stderr" in e && typeof e.stderr === "string";
+	};
+
+	it("exits 2 with a clear stderr message instead of degrading to an empty review", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-missing-")));
+		try {
+			const missing = join(base, "does-not-exist.json");
+			let caught: unknown;
+			try {
+				execFileSync(
+					"node",
+					[
+						SCRIPT,
+						"--ledger",
+						join(base, "ledger.json"),
+						"--head-sha",
+						"deadbeef",
+						"--findings",
+						missing,
+					],
+					{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+				);
+			} catch (error) {
+				caught = error;
+			}
+			expect(isExecError(caught)).toBe(true);
+			if (!isExecError(caught)) return;
+			expect(caught.status).toBe(2);
+			expect(caught.stderr).toContain("cannot read --findings file");
+			expect(caught.stderr).toContain(missing);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("does NOT overwrite the ledger (preserving wontfix marks) when --findings is unreadable under --write", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-preserve-")));
+		try {
+			const ledgerPath = join(base, "ledger.json");
+			// Seed an open + a wontfix finding; a degraded empty review would mark both
+			// resolved on --write, the exact data loss feedback #43 prevents.
+			const seeded = mergeLedger({
+				ledger: EMPTY,
+				findings: [finding({ file: "open.ts" }), finding({ file: "keep.ts" })],
+				headSha: "seedsha",
+			}).ledger;
+			const withWontfix = {
+				...seeded,
+				findings: seeded.findings.map((f, i) =>
+					i === 0 ? { ...f, status: "wontfix" as const } : f,
+				),
+			};
+			saveLedger({ path: ledgerPath, ledger: withWontfix });
+			const before = readFileSync(ledgerPath, "utf8");
+
+			let caught: unknown;
+			try {
+				execFileSync(
+					"node",
+					[
+						SCRIPT,
+						"--ledger",
+						ledgerPath,
+						"--head-sha",
+						"newsha",
+						"--findings",
+						join(base, "nope.json"),
+						"--write",
+					],
+					{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+				);
+			} catch (error) {
+				caught = error;
+			}
+			expect(isExecError(caught)).toBe(true);
+			if (isExecError(caught)) expect(caught.status).toBe(2);
+			// Ledger file untouched: no resolve sweep, wontfix mark intact.
+			expect(readFileSync(ledgerPath, "utf8")).toBe(before);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("CLI --findings file read branch (feedback #43)", () => {
+	const SCRIPT = join(import.meta.dirname, "findings-ledger.ts");
+
+	type ExecError = { status: number | null; stderr: string };
+	const isExecError = (e: unknown): e is ExecError => {
+		if (typeof e !== "object" || e === null) return false;
+		return "status" in e && "stderr" in e && typeof e.stderr === "string";
+	};
+
+	it("reads a valid --findings file, exits 0, and merges its findings", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-read-")));
+		try {
+			const findingsPath = join(base, "findings.json");
+			writeFileSync(findingsPath, JSON.stringify([finding({ file: "new.ts" })]));
+			const out = execFileSync(
+				"node",
+				[
+					SCRIPT,
+					"--ledger",
+					join(base, "ledger.json"),
+					"--head-sha",
+					"abc123",
+					"--findings",
+					findingsPath,
+				],
+				{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+			);
+			const result = JSON.parse(out);
+			expect(result.net_new).toHaveLength(1);
+			expect(result.net_new[0].file).toBe("new.ts");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("exits 2 on a readable but invalid-JSON --findings file instead of degrading to an empty review", () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-badjson-")));
+		try {
+			const findingsPath = join(base, "corrupt.json");
+			writeFileSync(findingsPath, "{ truncated");
+			let caught: unknown;
+			try {
+				execFileSync(
+					"node",
+					[
+						SCRIPT,
+						"--ledger",
+						join(base, "ledger.json"),
+						"--head-sha",
+						"deadbeef",
+						"--findings",
+						findingsPath,
+					],
+					{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+				);
+			} catch (error) {
+				caught = error;
+			}
+			expect(isExecError(caught)).toBe(true);
+			if (!isExecError(caught)) return;
+			expect(caught.status).toBe(2);
+			expect(caught.stderr).toContain("not valid JSON");
+			expect(caught.stderr).toContain(findingsPath);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("CLI stdin path (feedback #43 — preserved degrade-to-empty)", () => {
+	const SCRIPT = join(import.meta.dirname, "findings-ledger.ts");
+
+	it("degrades malformed stdin JSON to a clean empty merge and exits 0 (no --findings)", () => {
+		// The exit-2 hardening is scoped to an explicit --findings file; the stdin
+		// path must still treat unparseable input as "no findings" so a caller can
+		// pass `echo '[]'` (or nothing). This guards that branch from regressing to
+		// exit 2, which would break that contract.
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-stdin-")));
+		try {
+			const out = execFileSync(
+				"node",
+				[SCRIPT, "--ledger", join(base, "ledger.json"), "--head-sha", "abc123"],
+				{ input: "{ truncated", encoding: "utf8" },
+			);
+			const result = JSON.parse(out);
+			expect(result.net_new).toHaveLength(0);
+			expect(result.resolved).toHaveLength(0);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}
