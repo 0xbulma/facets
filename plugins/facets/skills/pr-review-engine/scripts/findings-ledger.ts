@@ -425,8 +425,22 @@ function main(): number {
 		return 2;
 	}
 
-	const findingsText =
-		cli.findings !== undefined ? (readFileSafe(cli.findings) ?? "") : readStdin();
+	// An explicit --findings path that can't be read must NOT degrade to an empty
+	// review: that would feed [] to mergeLedger, marking every open ledger entry
+	// resolved and (under --write) silently wiping the operator's wontfix marks
+	// (feedback #43). A caller that meant "no findings" passes them on stdin
+	// (`echo '[]' | …`), which stays a clean empty merge below.
+	let findingsText: string;
+	if (cli.findings !== undefined) {
+		const fromFile = readFileSafe(cli.findings);
+		if (fromFile === null) {
+			process.stderr.write(`findings-ledger: cannot read --findings file: ${cli.findings}\n`);
+			return 2;
+		}
+		findingsText = fromFile;
+	} else {
+		findingsText = readStdin();
+	}
 	let parsedFindings: unknown;
 	try {
 		parsedFindings = JSON.parse(findingsText);
