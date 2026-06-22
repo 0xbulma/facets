@@ -388,6 +388,21 @@ setup() {
   fi
 }
 
+@test "pr-review-gh applies the PR-keyed findings ledger inside --watch cycles (feedback #46)" {
+  # feedback #46: only the initial run applied the Step 6b ledger merge, so
+  # --watch cycles reposted wontfix/seen findings every commit. Each watcher
+  # cycle must now run the same pr<N>-keyed findings-ledger merge before posting
+  # — drop suppressed (wontfix), tag net_new [NEW], best-effort fallback.
+  gh="$SKILLS_DIR/pr-review-gh/SKILL.md"
+  # The watcher Step 5b must invoke findings-ledger.ts against the cycle SHA.
+  grep -q 'MERGE THE FINDINGS LEDGER' "$gh" \
+    || { echo "pr-review-gh --watch cycle missing the Step 5b ledger merge (#46)" >&2; return 1; }
+  grep -q -- '--head-sha ${CYCLE_HEAD_SHA}' "$gh" \
+    || { echo "pr-review-gh watcher ledger merge must key on the cycle head SHA (#46)" >&2; return 1; }
+  grep -q '\[NEW\]' "$gh" \
+    || { echo "pr-review-gh watcher cycle must tag net_new findings as [NEW] (#46)" >&2; return 1; }
+}
+
 @test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
   # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
   # must NOT gain a --post flag and must keep advertising zero GitHub
