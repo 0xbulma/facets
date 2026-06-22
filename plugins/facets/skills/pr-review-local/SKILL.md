@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.8.0
+version: 2.8.1
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -45,6 +45,7 @@ A maintainer changing this skill should verify each outcome shape:
 | `--fix` aborted on dirty tree | `Sentinel: FIX_ABORTED — working tree is not clean. Commit or stash before --fix.` |
 | `--goal` converges | `Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` plus one `fix(review): iteration N` commit per fixing pass. |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
+| `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
 | `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
 | `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
@@ -53,7 +54,7 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` runtime fix pass failed | `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
 | Re-run, input unchanged (cache hit) | cached findings reprinted under a `(cached — input unchanged since <head_sha>)` header + a reuse/re-review prompt; on *reuse*, the matching `REVIEW_*` sentinel from the cached counts (Step 2c — single-shot only) |
 
-Idempotency: re-running with an unchanged input (same merge-base + head SHA + worktree) short-circuits via the Step 2c cache and reprints the cached findings + sentinel without re-running agents; finding *text* never drifts on a cache hit because nothing is recomputed. A genuine change (any of the three) misses the cache and runs a fresh review.
+Idempotency: re-running with an unchanged input (same merge-base + head SHA + worktree) short-circuits via the Step 2c cache and reprints the cached findings + sentinel without re-running agents; finding *text* never drifts on a cache hit because nothing is recomputed. A genuine change (any of the three) misses the cache and runs a fresh review. **A run with a failed agent (`REVIEW_INCOMPLETE`) is never stamped as a cache identity** (Step 6b), so an incomplete review never cache-hits — it always re-runs the panel until it completes cleanly.
 
 ## Step 1: Validate environment + arguments
 
@@ -159,7 +160,7 @@ CACHE_JSON=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/finding
 - **`cache_hit` false** → proceed to Steps 3–6 normally.
 - **`CACHE_JSON` empty or missing a `cache_hit` field** (the check errored — old Node, bad path, etc.) → treat as a miss and proceed to Steps 3–6. The cache is an optimization; an unreadable result must never skip the review.
 
-Carry `RUN_HASH` forward to Step 6b so the fresh run is recorded (`--run-hash`).
+Carry `RUN_HASH` forward to Step 6b so the fresh run is recorded (`--run-hash`) — but only when the panel completed cleanly. Step 6b stamps the cache identity **only if `FAILED_AGENTS == 0`**; a failed-agent (`REVIEW_INCOMPLETE`) run must NOT become a cache identity, or the next identical run would cache-hit and replay the incomplete review as clean.
 
 ## Steps 3–6: Shared review base
 
@@ -190,12 +191,22 @@ LEDGER_DIR=${FACETS_LEDGER_DIR:-$HOME/.claude/facets/reviews}
 # with pr-review-gh's `pr5` PR ledger.
 LEDGER="$LEDGER_DIR/${slug%%/*}-${slug##*/}-branch-$(printf '%s' "$HEAD_BRANCH" | tr '/ ' '-').json"
 
-# --write persists the updated ledger; --run-hash (from Step 2c) records this
-# run's input identity so the next unchanged re-run can short-circuit. If the
-# merge fails (bad dir, disk), fall back to the plain stateless Step 7 output —
-# never assume unpersisted state.
+# Stamp the cache identity (--run-hash, from Step 2c) so the next unchanged re-run
+# can short-circuit (Step 2c cache hit) — but ONLY when the panel completed: a run
+# with FAILED_AGENTS > 0 is REVIEW_INCOMPLETE, and stamping it would let the next
+# identical run cache-hit and replay an incomplete review as clean. So omit
+# --run-hash on a failed-agent run; the findings still persist, but the run never
+# becomes a cache identity, forcing a fresh panel until it completes cleanly.
+if [ "${FAILED_AGENTS:-0}" -eq 0 ]; then
+  RUN_HASH_ARG=(--run-hash "$RUN_HASH")
+else
+  RUN_HASH_ARG=()   # incomplete run: persist findings but do NOT stamp the cache identity
+fi
+
+# --write persists the updated ledger. If the merge fails (bad dir, disk), fall
+# back to the plain stateless Step 7 output — never assume unpersisted state.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
-  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$HEAD_SHA" --run-hash "$RUN_HASH" --write \
+  --ledger "$LEDGER" --findings /tmp/facets-findings.json --head-sha "$HEAD_SHA" "${RUN_HASH_ARG[@]}" --write \
   || echo "findings-ledger failed; continuing with the plain (stateless) Step 7 output." >&2
 ```
 
@@ -371,7 +382,7 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
 2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
-3. **Success check.** If `actionable` is empty → **break, success** (carry the lows forward to the summary).
+3. **Success check.** If `actionable` is empty **AND** `FAILED_AGENTS == 0` → **break, success** (carry the lows forward to the summary). If `actionable` is empty but `FAILED_AGENTS > 0`, an agent crashed and the empty actionable set is unproven — do NOT declare clean (the same single-shot contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`): restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.`, print the failed-agent names and any findings, and stop and ask the user (do not commit or stamp the result as clean).
 4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
 5. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
 6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 7). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
@@ -385,7 +396,7 @@ If `i == MAX_ITERS` and `actionable` is still non-empty → restore the tree (se
 
 ### Leaving the branch clean on a non-success exit
 
-Whenever goal mode stops **without** converging — `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
+Whenever goal mode stops **without** converging — `GOAL_INCOMPLETE` (a failed agent left the actionable set unproven), `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
 
 ```bash
 git checkout -- .   # discard the current iteration's uncommitted edits to tracked files
@@ -476,6 +487,7 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `FIX_DONE_LOCAL` | Step 7b | `— <X> applied, <Y> skipped (Local-only, unstaged).` |
 | `FIX_ABORTED` | Step 7b pre-flight | `— working tree is not clean. Commit or stash before --fix.` |
 | `GOAL_CLEAN` | Goal mode final summary | `— review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` |
+| `GOAL_INCOMPLETE` | Goal mode loop (success check) | `— <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |

@@ -297,12 +297,25 @@ setup() {
   # Mirrors the scope-filter test, which locks every DROPPED_* counter, not
   # one representative.
   skill="$SKILLS_DIR/pr-review-local/SKILL.md"
-  for token in GOAL_CLEAN GOAL_ABORTED GOAL_STUCK GOAL_MAXED GOAL_RUNTIME_RED; do
+  for token in GOAL_CLEAN GOAL_INCOMPLETE GOAL_ABORTED GOAL_STUCK GOAL_MAXED GOAL_RUNTIME_RED; do
     grep -q "$token" "$skill" || { echo "pr-review-local missing $token sentinel" >&2; return 1; }
   done
   for flag in --goal --max-iters --no-runtime; do
     grep -q -- "$flag" "$skill" || { echo "pr-review-local missing $flag flag" >&2; return 1; }
   done
+}
+
+@test "pr-review-local never treats a failed-agent review as clean (feedback #45)" {
+  # feedback #45: a crashed agent must not be laundered into a clean pass via
+  # two paths. (1) The --goal success check gates break-success on
+  # FAILED_AGENTS == 0 and otherwise stops with GOAL_INCOMPLETE. (2) Step 6b
+  # stamps the cache identity (--run-hash) ONLY when FAILED_AGENTS == 0, so a
+  # REVIEW_INCOMPLETE run never cache-hits and replays as clean.
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q 'GOAL_INCOMPLETE' "$skill" \
+    || { echo "pr-review-local --goal success check missing the GOAL_INCOMPLETE failed-agent guard" >&2; return 1; }
+  grep -q 'FAILED_AGENTS' "$skill" \
+    || { echo "pr-review-local missing the FAILED_AGENTS gate on --goal success / cache stamp" >&2; return 1; }
 }
 
 @test "engine documents the merge-base recompute + merge-in-range warning (feedback #20)" {
