@@ -399,7 +399,10 @@ setup() {
     || { echo "pr-review-gh --watch cycle missing the Step 5b ledger merge (#46)" >&2; return 1; }
   grep -q -- '--head-sha ${CYCLE_HEAD_SHA}' "$gh" \
     || { echo "pr-review-gh watcher ledger merge must key on the cycle head SHA (#46)" >&2; return 1; }
-  grep -q '\[NEW\]' "$gh" \
+  # Anchor on the Step 5b net_new instruction itself — a bare '\[NEW\]' also
+  # matches Step 6 and the Notes bullet, so it would pass even if Step 5b's
+  # tagging were deleted.
+  grep -q 'Tag every net_new finding as \[NEW\]' "$gh" \
     || { echo "pr-review-gh watcher cycle must tag net_new findings as [NEW] (#46)" >&2; return 1; }
 }
 
