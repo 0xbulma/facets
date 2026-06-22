@@ -553,3 +553,27 @@ describe("CLI --findings file read branch (feedback #43)", () => {
 		}
 	});
 });
+
+describe("CLI stdin path (feedback #43 — preserved degrade-to-empty)", () => {
+	const SCRIPT = join(import.meta.dirname, "findings-ledger.ts");
+
+	it("degrades malformed stdin JSON to a clean empty merge and exits 0 (no --findings)", () => {
+		// The exit-2 hardening is scoped to an explicit --findings file; the stdin
+		// path must still treat unparseable input as "no findings" so a caller can
+		// pass `echo '[]'` (or nothing). This guards that branch from regressing to
+		// exit 2, which would break that contract.
+		const base = realpathSync(mkdtempSync(join(tmpdir(), "fl-stdin-")));
+		try {
+			const out = execFileSync(
+				"node",
+				[SCRIPT, "--ledger", join(base, "ledger.json"), "--head-sha", "abc123"],
+				{ input: "{ truncated", encoding: "utf8" },
+			);
+			const result = JSON.parse(out);
+			expect(result.net_new).toHaveLength(0);
+			expect(result.resolved).toHaveLength(0);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
