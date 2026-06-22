@@ -718,3 +718,114 @@ describe("snapped_line (issue #22)", () => {
 		expect(nearestChangedLine(5, [])).toBeNull();
 	});
 });
+
+describe("normalized file on kept findings (issue #44)", () => {
+	it("rewrites file to the normalized path on a diff-line keep (b/ prefix)", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "medium", file: "b/src/X.ts", line: 10, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("src/X.ts");
+	});
+
+	it("rewrites file to the normalized path on a snapped diff-line keep (./ prefix)", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "low", file: "./src/X.ts", line: 20, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("src/X.ts");
+		expect(out.kept[0]?.snapped_line).toBe(10);
+	});
+
+	it("rewrites an absolute file path to repo-relative on keep", () => {
+		const root = tmp();
+		mkdirSync(join(root, "src"));
+		const abs = join(root, "src", "X.ts");
+		const out = ok(
+			run({
+				findings: [{ severity: "medium", file: abs, line: 10, description: "WHAT: x. FIX: y." }],
+				changedLines: { "src/X.ts": [10] },
+				repoRoot: root,
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("src/X.ts");
+	});
+
+	it("rewrites file to the normalized path on a pure-rename keep", () => {
+		const out = ok(
+			run({
+				findings: [
+					{ severity: "medium", file: "b/src/X.ts", line: 99, description: "WHAT: x. FIX: y." },
+				],
+				changedLines: { "src/X.ts": [] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.file).toBe("src/X.ts");
+	});
+});
+
+describe("repoRoot-containment guard on the fence-read (issue #44)", () => {
+	it("keeps the finding without reading when norm escapes repoRoot", () => {
+		let readCount = 0;
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "critical",
+						file: "../evil.md",
+						line: 1,
+						description: "WHAT: hardcoded secret. FIX: rotate.",
+					},
+				],
+				// keyed by the escaping norm so it survives the scope filter and
+				// reaches the .md fence-read branch.
+				changedLines: { "../evil.md": [1] },
+				readFileText: (_path: string) => {
+					readCount += 1;
+					return 'secret = "abc123"';
+				},
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.dropped).toEqual([]);
+		// The guard short-circuits before the path-inclusion sink.
+		expect(readCount).toBe(0);
+	});
+
+	it("still reads and drops a doc-example whose norm stays inside repoRoot", () => {
+		let readCount = 0;
+		const md = "# Example\n\n```bash\nsecret = abc123\n```\n";
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "docs.md",
+						line: 4,
+						description: "WHAT: hardcoded secret. FIX: rotate.",
+					},
+				],
+				changedLines: { "docs.md": [4] },
+				readFileText: (_path: string) => {
+					readCount += 1;
+					return md;
+				},
+			}),
+		);
+		expect(out.kept).toEqual([]);
+		expect(out.dropped[0]?.drop_reason).toBe("doc-example-fp");
+		expect(readCount).toBe(1);
+	});
+});
