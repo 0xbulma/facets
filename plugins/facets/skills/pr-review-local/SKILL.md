@@ -46,6 +46,7 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` converges | `Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` plus one `fix(review): iteration N` commit per fixing pass. |
 | `--goal` converges, open PR exists | `Sentinel: GOAL_CLEAN — ...` plus a `Pushed: yes — PR #<N>` line in the summary (the converged commits are pushed to the open PR). |
 | `--goal` converges, no open PR | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: skipped (no open PR)` (nothing pushed; converged commits left local for the user). |
+| `--goal` converges, PR status unknown (gh down) | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: skipped (gh unavailable)` (couldn't query the PR; converged commits left local; never asserts "no PR"). |
 | `--goal` converges, push rejected | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: FAILED — push manually` (review still converged; tree untouched; never force-pushed). |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
 | `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
@@ -455,18 +456,28 @@ The merge persists the remaining lows and records the run-hash so an immediately
 Reached only on a clean converge (the loop broke success **and** any runtime re-pass ended green — so this runs *after* the runtime check and ledger stamp, never before a step that could still roll the tree back to `GOAL_RUNTIME_RED`). Push the converged commits **only when an open PR already exists for this branch**; with no open PR, do nothing — leave the converged commits local for the user and never open a PR here. Detecting the PR is a read-only `gh` query; the push is `git`, never a review post — so the **never posts a review** contract holds:
 
 ```bash
-# Is there an open PR for this branch? Read-only. Degrades to "none" when gh is
-# absent/unauthed (|| true), in which case the converged commits simply stay local.
-PR_NUMBER=$(gh pr list --head "$HEAD_BRANCH" --state open --json number \
-              --jq '.[0].number // empty' 2>/dev/null || true)
+# Is there an open PR for this branch? Read-only. Distinguish a clean query that
+# finds no PR from a *failed* query (gh absent/unauthed/rate-limited/offline): only
+# a zero `gh` exit means we actually know whether a PR exists, so only then may we
+# say "no PR". In every non-push case the converged commits stay local — never open
+# a PR here.
+if PR_NUMBER=$(gh pr list --head "$HEAD_BRANCH" --state open --json number \
+                 --jq '.[0].number // empty' 2>/dev/null); then
+  PR_QUERY_OK=1
+else
+  PR_QUERY_OK=0   # gh failed: we can't tell whether a PR exists — do NOT claim "no PR"
+fi
 
-if [ -n "$PR_NUMBER" ]; then
+if [ "$PR_QUERY_OK" -eq 1 ] && [ -n "$PR_NUMBER" ]; then
   if git push origin "$HEAD_BRANCH"; then
     PUSHED="yes — pushed to PR #$PR_NUMBER (origin/$HEAD_BRANCH)"
   else
     PUSHED="FAILED — push to PR #$PR_NUMBER rejected (non-fast-forward / auth); push manually"
     echo "WARNING: review converged but the push to PR #$PR_NUMBER failed; the converged commits are intact locally. Push manually with: git push origin $HEAD_BRANCH — NEVER force-push." >&2
   fi
+elif [ "$PR_QUERY_OK" -eq 0 ]; then
+  PUSHED="skipped — could not query PR status (gh unavailable); converged commits left local; push manually if a PR exists"
+  echo "WARNING: review converged but \`gh pr list\` failed (gh absent/unauthed/offline); cannot tell whether an open PR exists — NOT asserting 'no PR'. Converged commits are intact locally. If a PR exists, push with: git push origin $HEAD_BRANCH." >&2
 else
   PUSHED="skipped — no open PR for this branch; converged commits left local"
 fi
@@ -485,7 +496,7 @@ Branch:        <HEAD_BRANCH> -> <BASE_BRANCH>
 Iterations:    <i> (clean on iteration <i>)
 Commits:       <M> (fix(review): iteration N; plus one fix(review): runtime — N when Runtime check is failed-then-fixed)
 Runtime check: passed | skipped (<reason>) | failed-then-fixed
-Pushed:        yes — PR #<N> | skipped (no open PR) | FAILED — push manually
+Pushed:        yes — PR #<N> | skipped (no open PR) | skipped (gh unavailable) | FAILED — push manually
 Low findings:  <K> (not auto-fixed — listed below for manual triage)
 
 Low findings (manual triage — omit when K=0):
