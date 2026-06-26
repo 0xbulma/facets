@@ -5,7 +5,7 @@ Fourteen user-invokable slash-command skills + one engine skill (`pr-review-engi
 **PR navigation / review / fix** (review side delegates to the shared `pr-review-engine` skill + its 17-agent library)
 
 - **`/facets:pr-switch <pr-url-or-num>`** — switch the local checkout to a PR's head branch. Accepts a full GitHub PR URL, `owner/repo#num` shorthand, or a bare number. Refuses cross-repo URLs; resolves a dirty tree interactively (stash/commit/discard/abort).
-- **`/facets:pr-review-local`** — pre-PR review on the local branch (committed + uncommitted). Terminal-only output. `--fix` applies mechanical fixes; `--fast` skips the `docs` agent.
+- **`/facets:pr-review-local`** — pre-PR review on the local branch (committed + uncommitted). Terminal-only output. `--fix` applies mechanical fixes; `--goal` loops fix→re-review and, on converge, pushes the committed fixes to the branch's existing open PR (does nothing if there is none); `--fast` skips the `docs` agent.
 - **`/facets:pr-review-gh <PR>`** — review an open GitHub PR; posts findings as a `COMMENT` review (never auto-approves). `--watch` re-reviews on every new commit; `--fast` skips the `docs` agent (immediate review only).
 - **`/facets:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a cron-driven fix loop.
 

@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.8.2
+version: 2.8.3
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -94,7 +94,7 @@ Assemble these — plus the PR `title`/`body` already in `PR_JSON` (Step 2) — 
 
 ## Step 2c: Reuse a prior local review (skip the panel)
 
-The common workflow is `pr-review-local` → post the same findings to GitHub. When the PR head is byte-identical to what `pr-review-local` already reviewed, posting shouldn't re-run the 10-agent panel — reuse the findings it left in the ledger (feedback #21; this is the bridge the rejected `--post`-on-local idea was reaching for, done without breaking local's zero-GitHub contract). **Immediate review only — a `--watch` cycle always runs fresh** (unattended re-reviews favor coverage over cost).
+The common workflow is `pr-review-local` → post the same findings to GitHub. When the PR head is byte-identical to what `pr-review-local` already reviewed, posting shouldn't re-run the 10-agent panel — reuse the findings it left in the ledger (feedback #21; this is the bridge the rejected `--post`-on-local idea was reaching for, done without local ever posting findings to GitHub — posting stays here in `pr-review-gh`). **Immediate review only — a `--watch` cycle always runs fresh** (unattended re-reviews favor coverage over cost).
 
 Attempt reuse **only when the local checkout *is* the PR head with a clean tree** (the review-local→post case); otherwise fall straight through to Steps 3–6:
 

@@ -1,12 +1,12 @@
 ---
 name: pr-review-local
-version: 2.9.1
-description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
+version: 2.10.0
+description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration, then pushes the converged commits to the branch's existing open PR) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
 # review-local — Pre-PR Local Review
 
-Reviews local branch changes using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md` and outputs findings directly in the terminal. Zero GitHub interaction. Optionally applies fixes with `--fix`, or loops review→fix→re-review with `--goal` until the review passes cleanly.
+Reviews local branch changes using parallel specialized agents from `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/SKILL.md` and outputs findings directly in the terminal. It **never posts a review** and never opens a PR — posting stays in `pr-review-gh`. Optionally applies fixes with `--fix`, or loops review→fix→re-review with `--goal` until the review passes cleanly; on convergence `--goal` pushes the committed fixes to the branch's existing open PR (if one exists — see **Goal mode**).
 
 ## Usage
 
@@ -14,7 +14,7 @@ Reviews local branch changes using parallel specialized agents from `${CLAUDE_PL
 /facets:pr-review-local                        # review current branch vs default base
 /facets:pr-review-local <BASE_BRANCH>          # review against an explicit base branch
 /facets:pr-review-local --fix                  # review and apply fixes once (unstaged; refuses on dirty tree)
-/facets:pr-review-local --goal                 # loop review->fix->re-review, commit each iteration, until clean
+/facets:pr-review-local --goal                 # loop review->fix->re-review, commit each iteration, push to existing PR on converge, until clean
 /facets:pr-review-local --goal --max-iters 8   # raise the loop ceiling (default 5)
 /facets:pr-review-local --goal --no-runtime    # skip the post-convergence runtime-validation shot
 /facets:pr-review-local --fast                 # skip the docs agent (cheapest meaningful cut)
@@ -25,7 +25,7 @@ Reviews local branch changes using parallel specialized agents from `${CLAUDE_PL
 
 `--fast` excludes the `docs` agent via the engine's `EXCLUDE_AGENTS` input. Dogfood data across four full review passes: `docs` is the most expensive agent per launch (deep cross-reference verification) and the most likely to return clean on code-focused diffs — it's the one cut that saves real cost without touching the bug-finding lenses. Use the default (full panel) when the diff touches Markdown, inventories, or public API docs.
 
-`--goal` is the autonomous loop mode: it reviews, fixes `critical`/`high`/`medium` findings, re-gates (format → lint → typecheck → test), commits, and re-reviews until no actionable findings remain — see the **Goal mode** section. It commits each iteration and therefore refuses on a dirty tree. `--goal` supersedes `--fix` (loop-and-commit beats single-shot-unstaged); if both are passed, `--goal` wins.
+`--goal` is the autonomous loop mode: it reviews, fixes `critical`/`high`/`medium` findings, re-gates (format → lint → typecheck → test), commits, and re-reviews until no actionable findings remain — see the **Goal mode** section. It commits each iteration and therefore refuses on a dirty tree. On a clean converge it pushes the committed fixes to the branch's **existing open PR** with `git push origin <HEAD_BRANCH>` (never force-push); if no open PR exists it does nothing (the converged commits stay local). It never opens a PR or posts a review — that stays `pr-review-gh`'s job. `--goal` supersedes `--fix` (loop-and-commit beats single-shot-unstaged); if both are passed, `--goal` wins.
 
 ## Pre-conditions
 
@@ -44,6 +44,9 @@ A maintainer changing this skill should verify each outcome shape:
 | `--fix` happy path | `Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).` plus `git diff` shows the unstaged edits. |
 | `--fix` aborted on dirty tree | `Sentinel: FIX_ABORTED — working tree is not clean. Commit or stash before --fix.` |
 | `--goal` converges | `Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` plus one `fix(review): iteration N` commit per fixing pass. |
+| `--goal` converges, open PR exists | `Sentinel: GOAL_CLEAN — ...` plus a `Pushed: yes — PR #<N>` line in the summary (the converged commits are pushed to the open PR). |
+| `--goal` converges, no open PR | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: skipped (no open PR)` (nothing pushed; converged commits left local for the user). |
+| `--goal` converges, push rejected | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: FAILED — push manually` (review still converged; tree untouched; never force-pushed). |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
 | `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
@@ -80,7 +83,7 @@ Parse positional and flag args:
 # retry the SAME fetch over HTTPS. Use `git -c remote.origin.url=…` (NOT a bare
 # `git fetch <url>`, which only moves FETCH_HEAD) so origin's refspec runs and
 # refs/remotes/origin/* actually update — every step below reads origin/<BASE>.
-# Still git-only (no `gh`), so the zero-GitHub contract holds. Don't silence the
+# Still git-only (no `gh`) — the review never reads GitHub. Don't silence the
 # SSH error; surface it, and stop loudly if HTTPS also fails (never review on
 # stale refs).
 if ! git fetch origin; then
@@ -174,7 +177,7 @@ Carry `RUN_HASH` forward to Step 6b so the fresh run is recorded (`--run-hash`) 
   MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
   git log --format='%h %s%n%b' "$MERGE_BASE..HEAD"
   ```
-  This lets agents tell a deliberate, commit-documented change from a regression. **Built from `git` only — never `gh`** (the PR title/body lives behind GitHub and would break this skill's zero-GitHub contract; that richer `INTENT_CONTEXT` is `pr-review-gh`'s job). Empty when the branch has no commits beyond the merge-base (pure uncommitted-only review).
+  This lets agents tell a deliberate, commit-documented change from a regression. **Built from `git` only — never `gh`** (the PR title/body lives behind GitHub, so reading it would make the *review* read GitHub; that richer `INTENT_CONTEXT` is `pr-review-gh`'s job). Empty when the branch has no commits beyond the merge-base (pure uncommitted-only review).
 
 The base produces: `FINDINGS`, `DROPPED_FINDINGS`, `FAILED_AGENTS`, `COUNTS`, `DROPPED_COUNTS`, `TOTAL_AGENTS_LAUNCHED`.
 
@@ -341,7 +344,7 @@ Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).
 
 ## Goal mode (`--goal`): review → fix → re-review loop
 
-Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs.
+Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs — the loop body is identical; only the terminal differs (this skill pushes the converged branch to its existing open PR, whereas `tib-ship` stops short of pushing).
 
 **"Passes cleanly" = no `critical`/`high`/`medium` findings remain.** `low` findings are never auto-fixed — they are carried to the final summary for the user to triage.
 
@@ -447,6 +450,30 @@ FINDINGS_JSON
 
 The merge persists the remaining lows and records the run-hash so an immediately-following unchanged single-shot run cache-hits (Step 2c). If a **prior** single-shot run on this branch had recorded findings as `open`, the ones goal has since fixed (now absent from the converged set) flip to `resolved`; on a branch reviewed only via `--goal` the ledger had no prior entry, so goal-fixed findings simply never appear (nothing to resolve) — either way a later run won't re-surface them as net-new. Best-effort: a failed stamp is non-fatal — the `--goal` result already stands in the commits. Skip the stamp when no commits were made (already-clean branch) — there's nothing new to record.
 
+### Post-convergence push (single shot)
+
+Reached only on a clean converge (the loop broke success **and** any runtime re-pass ended green — so this runs *after* the runtime check and ledger stamp, never before a step that could still roll the tree back to `GOAL_RUNTIME_RED`). Push the converged commits **only when an open PR already exists for this branch**; with no open PR, do nothing — leave the converged commits local for the user and never open a PR here. Detecting the PR is a read-only `gh` query; the push is `git`, never a review post — so the **never posts a review** contract holds:
+
+```bash
+# Is there an open PR for this branch? Read-only. Degrades to "none" when gh is
+# absent/unauthed (|| true), in which case the converged commits simply stay local.
+PR_NUMBER=$(gh pr list --head "$HEAD_BRANCH" --state open --json number \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+
+if [ -n "$PR_NUMBER" ]; then
+  if git push origin "$HEAD_BRANCH"; then
+    PUSHED="yes — pushed to PR #$PR_NUMBER (origin/$HEAD_BRANCH)"
+  else
+    PUSHED="FAILED — push to PR #$PR_NUMBER rejected (non-fast-forward / auth); push manually"
+    echo "WARNING: review converged but the push to PR #$PR_NUMBER failed; the converged commits are intact locally. Push manually with: git push origin $HEAD_BRANCH — NEVER force-push." >&2
+  fi
+else
+  PUSHED="skipped — no open PR for this branch; converged commits left local"
+fi
+```
+
+Never force-push. The push outcome **never** changes the `GOAL_CLEAN` sentinel — the review converged regardless; only the `Pushed:` line in the summary reflects what happened.
+
 ### Final summary
 
 On a clean converge, print a summary and the terminal sentinel:
@@ -458,6 +485,7 @@ Branch:        <HEAD_BRANCH> -> <BASE_BRANCH>
 Iterations:    <i> (clean on iteration <i>)
 Commits:       <M> (fix(review): iteration N; plus one fix(review): runtime — N when Runtime check is failed-then-fixed)
 Runtime check: passed | skipped (<reason>) | failed-then-fixed
+Pushed:        yes — PR #<N> | skipped (no open PR) | FAILED — push manually
 Low findings:  <K> (not auto-fixed — listed below for manual triage)
 
 Low findings (manual triage — omit when K=0):
@@ -470,13 +498,13 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 ### Hard constraints (goal mode)
 
 - Commit each fixing iteration; never `git add`/commit a partial or gate-red state.
-- Do NOT push and do NOT open a PR — the branch is left ready for the user.
+- On a clean converge, push the committed fixes to the branch's **existing open PR** with `git push origin <HEAD_BRANCH>` (never force-push); if no open PR exists, leave the converged commits local for the user. Never open a PR and never post a review — those stay `pr-review-gh`'s / the user's job. A failed push keeps `GOAL_CLEAN` and is reported on the `Pushed:` line.
 - Never auto-fix `low` findings; only triage-list them.
 - Commits are conventional (`fix(review): ...`) and signed if the repo configures signing.
 
 ## Notes
 
-- **No GitHub interaction**. The skill never calls `gh api`. All output stays in the terminal.
+- **Never posts a review**. The skill never posts review comments and never opens a PR, and has no flag to post findings to GitHub — posting stays in `pr-review-gh`. Under `--goal` it makes a read-only `gh` query for the branch's PR and, if an open one exists, pushes the converged commits to it (`git push`, never `--force`); with no PR, everything stays local / in the terminal.
 - **Refuse on dirty tree** for both `--fix` and `--goal`. Clean precondition replaces ~80 lines of stash plumbing and a class of stash-pop-conflict bugs.
 - **Pairs with `/facets:pr-review-gh`**: workflow is `/facets:pr-review-local` (pre-PR feedback) → fix issues → create PR → `/facets:pr-review-gh` (GitHub-posted review).
 - **Pairing with native `/goal`**: `--goal` self-converges within `--max-iters` and is idempotent (an already-clean branch returns `GOAL_CLEAN` on iteration 1), so it does not require Claude Code's native `/goal` command. To go *unbounded* across the `GOAL_MAXED` bail (long-running, cross-session autonomy), wrap it: `/goal "run /facets:pr-review-local --goal until it prints GOAL_CLEAN"`. `GOAL_CLEAN` is the crisp completion token the native goal audit keys off.

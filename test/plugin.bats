@@ -441,15 +441,23 @@ setup() {
     || { echo "pr-review-gh watcher cycle must tag net_new findings as [NEW] (#46)" >&2; return 1; }
 }
 
-@test "pr-review-local keeps its zero-GitHub contract (no --post handoff)" {
-  # feedback #21 was reshaped: posting stays in pr-review-gh; pr-review-local
-  # must NOT gain a --post flag and must keep advertising zero GitHub
-  # interaction. Its INTENT_CONTEXT is commit-messages-only (git, never gh).
+@test "pr-review-local never posts a review or opens a PR (push-to-existing-PR only)" {
+  # feedback #21, reshaped again: posting stays in pr-review-gh. pr-review-local
+  # must NOT gain a --post flag and must NEVER post a review or open a PR. The
+  # original "Zero GitHub interaction" line was widened once --goal gained a
+  # push: the loop now makes a read-only `gh` PR query and `git push`es the
+  # converged commits to the branch's EXISTING open PR — but it still never
+  # posts a review (no `gh pr review`/comments) and never opens one (no
+  # `gh pr create`). Lock the surviving invariant, not the stale wording.
   skill="$SKILLS_DIR/pr-review-local/SKILL.md"
-  grep -q 'Zero GitHub interaction' "$skill" \
-    || { echo "pr-review-local lost its 'Zero GitHub interaction' contract line" >&2; return 1; }
+  grep -q 'never posts a review' "$skill" \
+    || { echo "pr-review-local lost its 'never posts a review' contract line" >&2; return 1; }
   if grep -q -- '--post' "$skill"; then
     echo "pr-review-local must not gain a --post flag (feedback #21: posting stays in pr-review-gh)" >&2
+    return 1
+  fi
+  if grep -q 'gh pr create' "$skill"; then
+    echo "pr-review-local must never open a PR (gh pr create) — push-to-existing-PR only" >&2
     return 1
   fi
 }
