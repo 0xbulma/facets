@@ -1,0 +1,47 @@
+{
+  "name": "facets-site",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "gen": "node scripts/build-manifest.ts",
+    "predev": "pnpm gen",
+    "dev": "vite",
+    "prebuild": "pnpm gen",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "pretypecheck": "pnpm gen",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "pretest": "pnpm gen",
+    "test": "vitest run",
+    "preverify": "pnpm gen",
+    "verify": "biome check . && tsc --noEmit -p tsconfig.json && vitest run"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "lucide-react": "0.469.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "tailwind-merge": "2.6.0",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.14",
+    "@tailwindcss/vite": "4.3.1",
+    "@testing-library/dom": "10.4.0",
+    "@testing-library/react": "16.1.0",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react": "4.3.4",
+    "jsdom": "25.0.1",
+    "tailwindcss": "4.3.1",
+    "typescript": "5.7.2",
+    "vite": "5.4.21",
+    "vitest": "2.1.8"
+  }
+}
