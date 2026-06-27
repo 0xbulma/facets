@@ -1,0 +1,31 @@
+{
+  "name": "aero",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A fast, opinionated full-stack React framework: Vite dev + Hono server + streaming SSR.",
+  "bin": {
+    "aero": "./framework/cli.ts"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types framework/cli.ts dev",
+    "build": "node --experimental-strip-types framework/cli.ts build",
+    "start": "node --experimental-strip-types framework/cli.ts start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.6",
+    "hono": "^4.12.27",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "playwright-core": "^1.61.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}
