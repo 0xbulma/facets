@@ -916,6 +916,43 @@ describe("confidence normalization on kept findings", () => {
 		);
 		expect(out.kept[0]?.confidence).toBe(70);
 	});
+
+	it("normalizes confidence on a pure-rename keep (empty changed-line set)", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "medium",
+						file: "src/X.ts",
+						line: 99,
+						description: "WHAT: x. FIX: y.",
+						confidence: 64.5,
+					},
+				],
+				changedLines: { "src/X.ts": [] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.confidence).toBe(65);
+	});
+
+	it("clobbers a raw non-numeric confidence to undefined on a pure-rename keep", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "medium",
+						file: "src/X.ts",
+						line: 99,
+						description: "WHAT: x. FIX: y.",
+						confidence: "sure",
+					},
+				],
+				changedLines: { "src/X.ts": [] },
+			}),
+		);
+		expect(out.kept[0]?.confidence).toBeUndefined();
+	});
 });
 
 describe("repoRoot-containment guard on the fence-read (issue #44)", () => {

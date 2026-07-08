@@ -22,6 +22,7 @@ import {
 	mergeLedger,
 	normalize,
 	normalizeAgents,
+	normalizeConfidence,
 	openFindings,
 	parseArgs,
 	parseLedger,
@@ -95,6 +96,29 @@ describe("normalizeAgents", () => {
 	it("returns [] for any non-array (incl. a legacy entry with no agents)", () => {
 		expect(normalizeAgents(undefined)).toEqual([]);
 		expect(normalizeAgents("web3")).toEqual([]);
+	});
+});
+
+// This copy of normalizeConfidence is a deliberate mirror of the one in
+// validate-findings.ts (the scripts are self-contained single files). Test it
+// DIRECTLY here — not just indirectly through parseLedger/mergeLedger — so the
+// two copies can't silently drift (e.g. a bound edited to [0,99] on one side).
+describe("normalizeConfidence", () => {
+	it("rounds and passes an in-range number", () => {
+		expect(normalizeConfidence(87)).toBe(87);
+		expect(normalizeConfidence(87.4)).toBe(87);
+		expect(normalizeConfidence(0)).toBe(0);
+		expect(normalizeConfidence(100)).toBe(100);
+	});
+	it("clamps out-of-range numbers rather than rejecting them", () => {
+		expect(normalizeConfidence(150)).toBe(100);
+		expect(normalizeConfidence(-5)).toBe(0);
+	});
+	it("returns undefined for absent / non-numeric / non-finite input", () => {
+		expect(normalizeConfidence(undefined)).toBeUndefined();
+		expect(normalizeConfidence("high")).toBeUndefined();
+		expect(normalizeConfidence(Number.NaN)).toBeUndefined();
+		expect(normalizeConfidence(Number.POSITIVE_INFINITY)).toBeUndefined();
 	});
 });
 
