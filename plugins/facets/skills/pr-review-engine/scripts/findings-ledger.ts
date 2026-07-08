@@ -22,6 +22,13 @@
  * the engine already de-dupes its FINDINGS); full rephrasing of the WHAT clause
  * is the known limit.
  *
+ * Attribution: each entry carries `agents` — the reviewer personas that reported
+ * the finding (stamped by the engine dispatcher, unioned across agents in Step 6).
+ * It is persisted so the cache-hit / ledger-reuse reprint paths keep the same
+ * `[persona, …]` attribution a fresh review renders. A recurring finding refreshes
+ * `agents` from the current run (only when that run supplied a non-empty list, so a
+ * caller that omits attribution never wipes it).
+ *
  * Output (stdout): JSON object
  *   {
  *     "net_new":    [<entry>, ...],   // ids not previously in the ledger (or re-opened)
@@ -59,6 +66,8 @@ type InputFinding = {
 	file: string;
 	line: number;
 	description: string;
+	/** Reviewer personas that reported this finding (engine-stamped). */
+	agents?: string[];
 };
 
 type LedgerEntry = {
@@ -71,6 +80,9 @@ type LedgerEntry = {
 	first_seen_sha: string;
 	last_seen_sha: string;
 	posted_comment_id: number | null;
+	/** Reviewer personas that reported this finding — persisted so cache-hit
+	 *  reprints keep the same attribution a fresh review renders. */
+	agents: string[];
 };
 
 /** The last review's input identity — `hash` over (merge-base, head SHA, worktree porcelain), computed by the caller. Lets a re-run short-circuit when nothing changed (feedback #23). */
@@ -104,6 +116,19 @@ export function normalize(text: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, " ")
 		.trim();
+}
+
+/** Normalize an attribution list: unique non-empty trimmed strings, first-seen order. Any non-array (incl. a legacy entry with no `agents`) yields `[]`. */
+export function normalizeAgents(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const out: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") continue;
+		const name = item.trim();
+		if (name === "" || out.includes(name)) continue;
+		out.push(name);
+	}
+	return out;
 }
 
 /** Stable id for a finding: hash(file | normalized WHAT). Line and FIX are excluded (they drift). */
@@ -140,6 +165,7 @@ export function parseLedger(text: string): Ledger {
 	const findings = parsed.findings.filter(isValidEntry).map((entry) => ({
 		...entry,
 		posted_comment_id: typeof entry.posted_comment_id === "number" ? entry.posted_comment_id : null,
+		agents: normalizeAgents(entry.agents),
 	}));
 	const ledger: Ledger = { findings };
 	const lastRun = parsed.last_run;
@@ -244,6 +270,7 @@ export function mergeLedger(opts: {
 				first_seen_sha: headSha,
 				last_seen_sha: headSha,
 				posted_comment_id: null,
+				agents: normalizeAgents(finding.agents),
 			};
 			byId.set(id, entry);
 			netNew.push(entry);
@@ -254,6 +281,10 @@ export function mergeLedger(opts: {
 		existing.severity = finding.severity;
 		existing.description = finding.description;
 		existing.last_seen_sha = headSha;
+		// Refresh attribution from this run, but only when it supplied one — a
+		// caller that omits `agents` must never wipe the persisted attribution.
+		const agents = normalizeAgents(finding.agents);
+		if (agents.length > 0) existing.agents = agents;
 		if (existing.status === "wontfix") {
 			suppressed.push(existing);
 		} else {

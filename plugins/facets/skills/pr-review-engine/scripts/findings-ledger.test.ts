@@ -21,6 +21,7 @@ import {
 	loadLedger,
 	mergeLedger,
 	normalize,
+	normalizeAgents,
 	openFindings,
 	parseArgs,
 	parseLedger,
@@ -35,6 +36,7 @@ type Finding = {
 	file: string;
 	line: number;
 	description: string;
+	agents?: string[];
 };
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -82,6 +84,19 @@ describe("findingId", () => {
 	});
 });
 
+describe("normalizeAgents", () => {
+	it("keeps unique non-empty trimmed strings in first-seen order", () => {
+		expect(normalizeAgents([" web3 ", "styling", "web3", "  ", 7, "styling"])).toEqual([
+			"web3",
+			"styling",
+		]);
+	});
+	it("returns [] for any non-array (incl. a legacy entry with no agents)", () => {
+		expect(normalizeAgents(undefined)).toEqual([]);
+		expect(normalizeAgents("web3")).toEqual([]);
+	});
+});
+
 describe("parseLedger", () => {
 	it("returns an empty ledger on unparseable JSON", () => {
 		expect(parseLedger("not json")).toEqual(EMPTY);
@@ -114,6 +129,28 @@ describe("parseLedger", () => {
 		expect(ledger.findings[0]?.posted_comment_id).toBe(4242);
 		expect(ledger.findings[1]?.posted_comment_id).toBeNull();
 		expect(ledger.findings[2]?.posted_comment_id).toBeNull();
+	});
+	it("defaults agents to [] for a legacy entry and normalizes a present one", () => {
+		const valid = (over: Record<string, unknown>) => ({
+			id: "abc",
+			file: "src/X.ts",
+			line: 1,
+			severity: "high",
+			description: "WHAT: a. FIX: b.",
+			status: "open",
+			first_seen_sha: "s1",
+			last_seen_sha: "s1",
+			...over,
+		});
+		const text = JSON.stringify({
+			findings: [
+				valid({ id: "legacy" }), // no agents field -> []
+				valid({ id: "attributed", agents: ["web3", "web3", "styling"] }), // deduped
+			],
+		});
+		const ledger = parseLedger(text);
+		expect(ledger.findings[0]?.agents).toEqual([]);
+		expect(ledger.findings[1]?.agents).toEqual(["web3", "styling"]);
 	});
 });
 
@@ -194,6 +231,44 @@ describe("mergeLedger", () => {
 		const out = mergeLedger({ ledger: EMPTY, findings: [finding(), finding()], headSha: "sha1" });
 		expect(out.net_new).toHaveLength(1);
 		expect(out.ledger.findings).toHaveLength(1);
+	});
+
+	it("stamps a net_new entry with the run's normalized agents", () => {
+		const out = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ agents: ["web3", "web3", "styling"] })],
+			headSha: "sha1",
+		});
+		expect(out.net_new[0]?.agents).toEqual(["web3", "styling"]);
+		expect(out.ledger.findings[0]?.agents).toEqual(["web3", "styling"]);
+	});
+
+	it("refreshes a recurring finding's agents from the current run", () => {
+		const first = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ agents: ["web3"] })],
+			headSha: "sha1",
+		});
+		const second = mergeLedger({
+			ledger: first.ledger,
+			findings: [finding({ agents: ["correctness", "web3"] })],
+			headSha: "sha2",
+		});
+		expect(second.recurring[0]?.agents).toEqual(["correctness", "web3"]);
+	});
+
+	it("never wipes persisted agents when the current run supplies none", () => {
+		const first = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ agents: ["web3"] })],
+			headSha: "sha1",
+		});
+		const second = mergeLedger({
+			ledger: first.ledger,
+			findings: [finding()], // no agents this run
+			headSha: "sha2",
+		});
+		expect(second.recurring[0]?.agents).toEqual(["web3"]);
 	});
 
 	it("does not mutate the input ledger", () => {
@@ -333,6 +408,7 @@ describe("idempotency cache (issue #23)", () => {
 				first_seen_sha: "s",
 				last_seen_sha: "s",
 				posted_comment_id: null,
+				agents: [],
 			})),
 		};
 		expect(openFindings(ledger).map((f) => f.id)).toEqual(["a"]);

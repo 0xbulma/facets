@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.10.0
+version: 2.11.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration, then pushes the converged commits to the branch's existing open PR) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -246,12 +246,12 @@ Format directly in the conversation:
 
 ### Critical (X)
 
-- **[CRITICAL]** **[NEW]** <file_path>:L<line> — <description>
+- **[CRITICAL]** **[NEW]** [<agents>] <file_path>:L<line> — <description>
   _Suggestion: <how to fix>_
 
 ### High (X)
 
-- **[HIGH]** <file_path>:L<line> — <description>
+- **[HIGH]** [<agents>] <file_path>:L<line> — <description>
   _Suggestion: <how to fix>_
 
 ### Medium (X)
@@ -259,6 +259,8 @@ Format directly in the conversation:
 ```
 
 **Order findings by severity (Critical → High → Medium → Low), not by file.** Re-sort the `FINDINGS` list from Step 6 by severity DESC, then file path ASC, then line ASC, and group under one heading per severity bucket. Each finding shows its `<file_path>:L<line>` inline so the reader can jump to the source. Omit any severity heading whose bucket is empty.
+
+**Attribution token `[<agents>]`.** Render each finding's `agents` array (from Step 6) as a comma-separated bracket token — e.g. `[web3]`, or `[web3, correctness]` when several personas raised it — placed after the severity/`[NEW]` tags and before `<file_path>`. If `agents` is empty or absent (e.g. a cache-hit reprint of a legacy ledger with no attribution), omit the token entirely rather than printing `[]`.
 
 **Ledger annotations (from Step 6b).** Drop every `suppressed` (wontfix) finding from these sections entirely. Prefix each finding that is in `net_new` with a `**[NEW]**` tag (findings in `recurring` carry no tag — they were seen in an earlier run). The `**Ledger:**` header line summarizes the four counts. When Step 6b did not run (no commits, or the ledger is unreadable), omit the `**Ledger:**` line and the `[NEW]` tags rather than guessing.
 
