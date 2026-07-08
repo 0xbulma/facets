@@ -803,6 +803,45 @@ describe("normalized file on kept findings (issue #44)", () => {
 	});
 });
 
+describe("agents attribution passthrough", () => {
+	it("preserves the engine-stamped agents array on a kept finding", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "src/X.ts",
+						line: 10,
+						description: "WHAT: x. FIX: y.",
+						agents: ["web3", "styling"],
+					},
+				],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept).toHaveLength(1);
+		expect(out.kept[0]?.agents).toEqual(["web3", "styling"]);
+	});
+
+	it("preserves agents on a runtime-sentinel keep", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "runtime",
+						line: 0,
+						description: "WHAT: x. FIX: y.",
+						agents: ["runtime-validation"],
+					},
+				],
+				changedLines: {},
+			}),
+		);
+		expect(out.kept[0]?.agents).toEqual(["runtime-validation"]);
+	});
+});
+
 describe("repoRoot-containment guard on the fence-read (issue #44)", () => {
 	it("keeps the finding without reading when norm escapes repoRoot", () => {
 		let readCount = 0;

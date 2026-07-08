@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.14.3
+version: 0.15.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -313,6 +313,8 @@ Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-revi
 
 Merge all agent results into a single list:
 
+0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`.
+
 1. **Scope filter (drop out-of-scope findings).** Build `CHANGED_FILES` = the deduplicated file list from Step 3:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
    - plus uncommitted: `git diff --name-only HEAD` (only when `DIFF_SOURCE=local`)
@@ -359,7 +361,7 @@ Merge all agent results into a single list:
 3. **Deduplicate** with this rule (do NOT collapse genuinely distinct findings):
    - Findings on the SAME file at the EXACT same line are duplicates ONLY when their descriptions overlap meaningfully (≥50% token overlap, or one is a clear paraphrase of the other). Keep the higher-severity one; if descriptions don't overlap, keep BOTH.
    - Findings within ±3 lines on the same file are merged ONLY when severities AND descriptions overlap.
-   - When merging, keep the higher-severity finding's text.
+   - When merging, keep the higher-severity finding's text, but **union the `agents` arrays** of every merged finding (deduped, order-preserving) onto the survivor — so one finding several personas raised lists all of them, e.g. `agents: ["web3", "correctness"]`. This is the whole point of stamping in sub-step 0: attribution survives the collapse.
 
 4. Sort by: file path (alphabetical, ASC), then line number (ASC), then severity (DESC).
 
@@ -374,7 +376,7 @@ Severity labels:
 
 The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/facets:pr-fix` / `/facets:tib-ship`) consumes:
 
-- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, snapped_line?}`. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
+- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
 - `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.
