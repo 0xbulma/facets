@@ -1,6 +1,6 @@
 ---
 name: pr-review-gh
-version: 2.9.0
+version: 2.10.0
 description: Local PR review bot. Reviews an open pull request with parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and posts findings as inline GitHub review comments using event=COMMENT (never auto-approves). Optionally watches for new commits and re-reviews. Use when user says /facets:pr-review-gh, "review PR", "watch PR", or "babysit PR". Takes a PR number as argument.
 ---
 
@@ -172,7 +172,7 @@ Mint a **per-run** path for the review payload — `REVIEW_FILE=$(mktemp "${TMPD
       "path": "<file>",
       "line": <snapped_line>,
       "side": "RIGHT",
-      "body": "**[SEVERITY]** [<agents>] <description>\n\nSuggestion: <how to fix>"
+      "body": "**[SEVERITY]** (<NN>%) [<agents>] <description>\n\nSuggestion: <how to fix>"
     }
   ]
 }
@@ -180,11 +180,13 @@ Mint a **per-run** path for the review payload — `REVIEW_FILE=$(mktemp "${TMPD
 
 Always use `"event": "COMMENT"` — never auto-approve or request changes.
 
-**Attribution token `[<agents>]`.** Render each finding's `agents` array (from the engine's Step 6) as a comma-separated bracket token immediately after `**[SEVERITY]**` — e.g. `**[HIGH]** [web3]`, or `**[HIGH]** [web3, correctness]` when several personas raised it. If `agents` is empty or absent (e.g. a cached-ledger reuse of a legacy entry with no attribution), omit the token rather than emitting `[]`. This is orthogonal to the `[NEW]` net_new tag (Step 5b), which stays where it already renders.
+**Confidence token `(<NN>%)`.** Render each finding's `confidence` (from the engine's Step 6) as a percent in parentheses immediately after `**[SEVERITY]**` and before the `[<agents>]` token — e.g. `**[HIGH]** (72%) [web3]`. If `confidence` is absent (the agent stated none, or a legacy cached-ledger reuse), omit the token rather than emitting `(unstated)`. Confidence is triage metadata for the reader — it is **never** used to suppress a comment; every kept finding is posted regardless of its confidence.
+
+**Attribution token `[<agents>]`.** Render each finding's `agents` array (from the engine's Step 6) as a comma-separated bracket token after the confidence token — e.g. `**[HIGH]** (72%) [web3]`, or `**[HIGH]** (72%) [web3, correctness]` when several personas raised it. If `agents` is empty or absent (e.g. a cached-ledger reuse of a legacy entry with no attribution), omit the token rather than emitting `[]`. This is orthogonal to the `[NEW]` net_new tag (Step 5b), which stays where it already renders.
 
 **Anchor every inline comment on `snapped_line`, not the raw `line`.** The reviews API requires each comment's `line` to be an exact diff line; the engine already computes `snapped_line` (the nearest changed line) for each kept finding for exactly this. Use `snapped_line` as the comment `line`. A kept finding with **no** `snapped_line` (the `runtime` sentinel handled below, or a pure-rename finding with no diff line) cannot be anchored — keep it out of `comments[]` and surface it in the `### Runtime findings` / audit section of the body instead, with a one-line note that it was not postable inline. This is the deterministic version of the old hand re-anchoring; never post a raw `line` that isn't a diff line, or the batch 422s.
 
-**Runtime-sentinel findings never go in `comments[]`.** A finding with `file: "runtime"` (the `runtime-validation` sentinel for issues with no source location) has no valid `path`/`line` for the GitHub reviews API — including one would 422 the entire POST and collapse every inline comment into the fallback. Route those findings into the review `body` instead, as a `### Runtime findings` section (one `**[SEVERITY]** [<agents>] <description>` line each); only real-path findings go inline.
+**Runtime-sentinel findings never go in `comments[]`.** A finding with `file: "runtime"` (the `runtime-validation` sentinel for issues with no source location) has no valid `path`/`line` for the GitHub reviews API — including one would 422 the entire POST and collapse every inline comment into the fallback. Route those findings into the review `body` instead, as a `### Runtime findings` section (one `**[SEVERITY]** (<NN>%) [<agents>] <description>` line each); only real-path findings go inline.
 
 ### Body format
 

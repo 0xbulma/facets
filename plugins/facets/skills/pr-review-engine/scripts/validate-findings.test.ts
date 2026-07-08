@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	nearestChangedLine,
+	normalizeConfidence,
 	parseFindingsText,
 	validateFindingsFromText,
 } from "./validate-findings.ts";
@@ -839,6 +840,81 @@ describe("agents attribution passthrough", () => {
 			}),
 		);
 		expect(out.kept[0]?.agents).toEqual(["runtime-validation"]);
+	});
+});
+
+describe("normalizeConfidence", () => {
+	it("rounds and passes an in-range number", () => {
+		expect(normalizeConfidence(87)).toBe(87);
+		expect(normalizeConfidence(87.4)).toBe(87);
+		expect(normalizeConfidence(0)).toBe(0);
+		expect(normalizeConfidence(100)).toBe(100);
+	});
+	it("clamps out-of-range numbers rather than rejecting them", () => {
+		expect(normalizeConfidence(150)).toBe(100);
+		expect(normalizeConfidence(-5)).toBe(0);
+	});
+	it("returns undefined for absent / non-numeric / non-finite input", () => {
+		expect(normalizeConfidence(undefined)).toBeUndefined();
+		expect(normalizeConfidence("high")).toBeUndefined();
+		expect(normalizeConfidence(Number.NaN)).toBeUndefined();
+		expect(normalizeConfidence(Number.POSITIVE_INFINITY)).toBeUndefined();
+	});
+});
+
+describe("confidence normalization on kept findings", () => {
+	it("normalizes a valid confidence on a diff-line keep", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "src/X.ts",
+						line: 10,
+						description: "WHAT: x. FIX: y.",
+						confidence: 92.6,
+					},
+				],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept[0]?.confidence).toBe(93);
+	});
+
+	it("clobbers a raw non-numeric confidence to undefined (never passes it through)", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "src/X.ts",
+						line: 10,
+						description: "WHAT: x. FIX: y.",
+						confidence: "very sure",
+					},
+				],
+				changedLines: { "src/X.ts": [10] },
+			}),
+		);
+		expect(out.kept[0]?.confidence).toBeUndefined();
+	});
+
+	it("normalizes confidence on a runtime-sentinel keep", () => {
+		const out = ok(
+			run({
+				findings: [
+					{
+						severity: "high",
+						file: "runtime",
+						line: 0,
+						description: "WHAT: x. FIX: y.",
+						confidence: 70,
+					},
+				],
+				changedLines: {},
+			}),
+		);
+		expect(out.kept[0]?.confidence).toBe(70);
 	});
 });
 

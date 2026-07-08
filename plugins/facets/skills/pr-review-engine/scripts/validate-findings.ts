@@ -72,6 +72,9 @@ type ValidatedFinding = Record<string, unknown> & {
 	/** Nearest actual diff line — the anchor a GitHub inline comment must use.
 	 *  Set on diff-line keeps; absent for runtime/pure-rename/schema-only keeps. */
 	snapped_line?: number;
+	/** Agent-self-reported certainty the finding is real (0–100), or absent when
+	 *  the agent stated none. Advisory triage metadata — see normalizeConfidence. */
+	confidence?: number;
 };
 
 type DropReason = "file-out-of-scope" | "line-pre-existing" | "doc-example-fp";
@@ -120,6 +123,23 @@ function readFileSafe(path: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Normalize an agent's self-reported confidence to an integer percent in [0,100],
+ * or `undefined` when absent / non-numeric. Confidence is advisory triage metadata,
+ * NOT a schema requirement and NEVER a drop filter: the engine's governing bias is
+ * that a false failure is recoverable but a false clean is not, so an invalid or
+ * missing value degrades to "unstated" (undefined → the caller omits the token),
+ * never to a dropped finding or an agent failure. An out-of-range number is clamped
+ * (an agent that says 150 clearly means "certain"), not rejected.
+ */
+export function normalizeConfidence(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+	const rounded = Math.round(value);
+	if (rounded < 0) return 0;
+	if (rounded > 100) return 100;
+	return rounded;
 }
 
 export function schemaOk(finding: unknown): finding is ValidatedFinding {
@@ -322,9 +342,9 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 		}
 
 		// Runtime-validation sentinel: not a source file, so the scope filters
-		// don't apply. Keep as-is.
+		// don't apply. Keep as-is (with confidence normalized).
 		if (finding.file === "runtime") {
-			kept.push(finding);
+			kept.push({ ...finding, confidence: normalizeConfidence(finding.confidence) });
 			continue;
 		}
 
@@ -343,7 +363,7 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 		const changed = asLineList(changedLinesMap[norm]);
 		// Short-circuit: empty set (pure rename) → keep regardless of line.
 		if (changed.length === 0) {
-			kept.push({ ...finding, file: norm });
+			kept.push({ ...finding, file: norm, confidence: normalizeConfidence(finding.confidence) });
 			continue;
 		}
 
@@ -392,7 +412,12 @@ export function validateFindingsFromText(opts: ValidateOptions): ValidationResul
 			}
 		}
 
-		kept.push({ ...finding, file: norm, snapped_line: snappedLine });
+		kept.push({
+			...finding,
+			file: norm,
+			snapped_line: snappedLine,
+			confidence: normalizeConfidence(finding.confidence),
+		});
 	}
 
 	return { kept, dropped, counts, failed };

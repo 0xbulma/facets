@@ -29,6 +29,11 @@
  * `agents` from the current run (only when that run supplied a non-empty list, so a
  * caller that omits attribution never wipes it).
  *
+ * Confidence: each entry may carry `confidence` — the agent's self-reported certainty
+ * (0–100) that the finding is real. Persisted (same reason as `agents`) and refreshed
+ * from the current run only when that run stated a value; an absent value never wipes
+ * a persisted one. It is advisory triage metadata, never a drop filter.
+ *
  * Output (stdout): JSON object
  *   {
  *     "net_new":    [<entry>, ...],   // ids not previously in the ledger (or re-opened)
@@ -68,6 +73,8 @@ type InputFinding = {
 	description: string;
 	/** Reviewer personas that reported this finding (engine-stamped). */
 	agents?: string[];
+	/** Agent-self-reported certainty (0–100), or absent when none was stated. */
+	confidence?: number;
 };
 
 type LedgerEntry = {
@@ -83,6 +90,10 @@ type LedgerEntry = {
 	/** Reviewer personas that reported this finding — persisted so cache-hit
 	 *  reprints keep the same attribution a fresh review renders. */
 	agents: string[];
+	/** Agent-self-reported certainty (0–100), persisted so cache-hit reprints keep
+	 *  it; absent when no run has ever supplied one. Refreshed from the current run
+	 *  only when that run stated a value (an absent value never wipes it). */
+	confidence?: number;
 };
 
 /** The last review's input identity — `hash` over (merge-base, head SHA, worktree porcelain), computed by the caller. Lets a re-run short-circuit when nothing changed (feedback #23). */
@@ -116,6 +127,21 @@ export function normalize(text: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, " ")
 		.trim();
+}
+
+/**
+ * Normalize a self-reported confidence to an integer percent in [0,100], or
+ * `undefined` when absent / non-numeric (clamps out-of-range, never rejects).
+ * Deliberately mirrors validate-findings' `normalizeConfidence` — these scripts are
+ * self-contained single files (a test runs each in isolation), so the clamp rule is
+ * duplicated rather than imported. Keep the two in sync.
+ */
+export function normalizeConfidence(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+	const rounded = Math.round(value);
+	if (rounded < 0) return 0;
+	if (rounded > 100) return 100;
+	return rounded;
 }
 
 /** Normalize an attribution list: unique non-empty trimmed strings, first-seen order. Any non-array (incl. a legacy entry with no `agents`) yields `[]`. */
@@ -166,6 +192,7 @@ export function parseLedger(text: string): Ledger {
 		...entry,
 		posted_comment_id: typeof entry.posted_comment_id === "number" ? entry.posted_comment_id : null,
 		agents: normalizeAgents(entry.agents),
+		confidence: normalizeConfidence(entry.confidence),
 	}));
 	const ledger: Ledger = { findings };
 	const lastRun = parsed.last_run;
@@ -271,6 +298,7 @@ export function mergeLedger(opts: {
 				last_seen_sha: headSha,
 				posted_comment_id: null,
 				agents: normalizeAgents(finding.agents),
+				confidence: normalizeConfidence(finding.confidence),
 			};
 			byId.set(id, entry);
 			netNew.push(entry);
@@ -285,6 +313,9 @@ export function mergeLedger(opts: {
 		// caller that omits `agents` must never wipe the persisted attribution.
 		const agents = normalizeAgents(finding.agents);
 		if (agents.length > 0) existing.agents = agents;
+		// Same rule for confidence: refresh only when this run stated a value.
+		const confidence = normalizeConfidence(finding.confidence);
+		if (confidence !== undefined) existing.confidence = confidence;
 		if (existing.status === "wontfix") {
 			suppressed.push(existing);
 		} else {
