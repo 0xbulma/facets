@@ -9,3 +9,7 @@ __pycache__/
 # Node toolchain (Biome / TypeScript / Vitest for the inject-wallet skill scripts)
 node_modules/
 coverage/
+
+# Vite marketing site (site/)
+site/dist/
+site/src/data/manifest.generated.json

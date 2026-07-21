@@ -1,0 +1,16 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# facets is a pnpm workspace: the root toolchain (Biome / tsc / Vitest, scoped
+# to the plugin's skill scripts) plus the `facets-site` Vite app under site/.
+# `pnpm install` from the workspace root installs both members.
+#
+# The only long-running dev server is the marketing site. It reads
+# CONDUCTOR_PORT from vite.config.ts, so each parallel workspace binds its own
+# port and never collides — hence run_mode = "concurrent". There is no shared
+# database, fixed port, or Docker stack, and no external state to tear down, so
+# no archive script is needed (Conductor removes the worktree itself).
+
+[scripts]
+setup = "pnpm install"
+run = "pnpm --filter facets-site dev"
+run_mode = "concurrent"
