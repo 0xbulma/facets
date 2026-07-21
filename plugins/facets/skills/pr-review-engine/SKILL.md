@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.15.0
+version: 0.16.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -244,9 +244,10 @@ The dispatcher should NOT paraphrase or summarize these parts — copy them. Dri
 - Each agent receives: full diff, full content of changed files, `PROJECT_CONTEXT` from Step 4, the conditional flag values, `CHANGED_LINES`, the agent file body, the repo path / branches.
 - Per-package `AGENTS.md` rules refine the root for the specific package; the root wins on contradictions.
 - Agents must analyze the **full diff**, not just the latest commit.
-- Each agent **must return** a JSON array `[{severity: "critical"|"high"|"medium"|"low", file: "path", line: number, description: "WHAT: ... FIX: ..."}]` OR an explicit error sentinel `{"agent_error": "<reason>"}` if it could not complete.
+- Each agent **must return** a JSON array `[{severity: "critical"|"high"|"medium"|"low", file: "path", line: number, description: "WHAT: ... FIX: ...", confidence: number}]` OR an explicit error sentinel `{"agent_error": "<reason>"}` if it could not complete.
 - **`description` schema.** Every finding's `description` MUST contain both a `WHAT:` clause naming the specific problem AND a `FIX:` clause stating the specific change. Recommended format: `WHAT: <one sentence>. FIX: <one sentence>.` Free-form prose otherwise. Findings without both clauses are rejected as malformed in Step 6 sub-step 2.
 - **`line` schema.** `line` must be a positive integer pointing at a line inside `CHANGED_LINES` for the cited `file`, OR within ±15 lines of one (the "adjacent code" tolerance window). Findings outside the window are dropped in Step 6 sub-step 1 as pre-existing. See `references/calibration.md` for the rationale behind ±15. **Exception:** the `runtime-validation` agent may emit the sentinel shape `file: "runtime", line: 0` for findings that can't be pinned to a source line; these pass the schema check and bypass the scope filters.
+- **`confidence` schema (advisory).** Report `confidence` as an integer 0–100: your certainty that the finding is **real**, assessed as *verified-in-context vs. assumed* — NOT a gut feeling. Anchor it to what you actually saw: **90–100** the defect mechanism is fully visible in the diff / files you read, nothing about unseen code is assumed; **65–85** the mechanism is proven but its impact or reachability depends on code you did not see (callers, config, runtime); **45–65** you are inferring the problem's existence from a pattern without the confirming code in view. Below ~45, omit the finding (the scope guard's "when in doubt, omit" already covers it). Confidence is **advisory triage metadata only** — it is never a schema requirement (a missing/invalid value degrades to "unstated", it does not fail your review) and is **never used to drop a finding**. Cross-agent agreement is a second, stronger confidence signal the engine derives structurally from `agents`; you only report your own.
 - **Stay in scope (avoid scope creep).** Focus on the diff: flag issues introduced by these changes, and issues in adjacent code only when the diff makes that adjacent code materially worse. Do NOT flag pre-existing issues, propose unrelated refactors, suggest new features, or recommend cleanups outside the PR's intent. When in doubt, omit.
 - **Don't nitpick.** Polish, wording, naming preferences, stylistic alternatives, and "you could also" suggestions are not findings — omit them regardless of severity label.
 - **Intentional changes aren't defects.** When `INTENT_CONTEXT` shows a change is deliberate — a commit message documents the removal/refactor, or the PR body states it — do not flag it as a finding unless the change itself is wrong. Verify intent against the provided commit messages before rating a removal as lost coverage or a behaviour change as a regression.
@@ -261,11 +262,12 @@ A finding that would be **kept** (good shape):
   "severity": "high",
   "file": "src/components/SearchBox.tsx",
   "line": 42,
-  "description": "WHAT: useEffect adds a `window.addEventListener('resize', ...)` but the cleanup function does not call `removeEventListener` with the same handler reference — the listener accumulates on every re-render and leaks. FIX: capture the handler in a variable inside the effect, return `() => window.removeEventListener('resize', handler)` from the effect."
+  "description": "WHAT: useEffect adds a `window.addEventListener('resize', ...)` but the cleanup function does not call `removeEventListener` with the same handler reference — the listener accumulates on every re-render and leaks. FIX: capture the handler in a variable inside the effect, return `() => window.removeEventListener('resize', handler)` from the effect.",
+  "confidence": 95
 }
 ```
 
-This is kept because the `WHAT` clause names a specific problem at a specific line, the `FIX` clause is a concrete code change, the severity matches the agent's `severity-guidance:` (memory leak in a long-lived component → high), and the cited line is inside `CHANGED_LINES`.
+This is kept because the `WHAT` clause names a specific problem at a specific line, the `FIX` clause is a concrete code change, the severity matches the agent's `severity-guidance:` (memory leak in a long-lived component → high), and the cited line is inside `CHANGED_LINES`. `confidence` is 95 because the leak is fully visible in the diff — the missing `removeEventListener` is right there, nothing about unseen code is assumed.
 
 A finding that would be **dropped** in Step 6 (bad shape):
 
@@ -313,7 +315,7 @@ Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-revi
 
 Merge all agent results into a single list:
 
-0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`.
+0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
 
 1. **Scope filter (drop out-of-scope findings).** Build `CHANGED_FILES` = the deduplicated file list from Step 3:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
@@ -359,9 +361,12 @@ Merge all agent results into a single list:
    Track `FAILED_AGENTS` as a count plus the names. This count flows into the caller's Step 7 reporting so a "no findings" verdict is never reported when some agents crashed.
 
 3. **Deduplicate** with this rule (do NOT collapse genuinely distinct findings):
-   - Findings on the SAME file at the EXACT same line are duplicates ONLY when their descriptions overlap meaningfully (≥50% token overlap, or one is a clear paraphrase of the other). Keep the higher-severity one; if descriptions don't overlap, keep BOTH.
+   - Findings on the SAME file at the EXACT same line are duplicates ONLY when their descriptions overlap meaningfully (≥50% token overlap, or one is a clear paraphrase of the other). Keep the merged survivor per the rule below; if descriptions don't overlap, keep BOTH.
    - Findings within ±3 lines on the same file are merged ONLY when severities AND descriptions overlap.
-   - When merging, keep the higher-severity finding's text, but **union the `agents` arrays** of every merged finding (deduped, order-preserving) onto the survivor — so one finding several personas raised lists all of them, e.g. `agents: ["web3", "correctness"]`. This is the whole point of stamping in sub-step 0: attribution survives the collapse.
+   - **When merging, reconcile the two orthogonal axes separately** — severity ("how bad if real") and confidence ("how likely real") do not trade off against each other:
+     - **Severity → max.** Keep the *highest* severity of the merged group. Never let a more-confident lower-severity finding silently downgrade a critical — the engine's bias is that a false clean is unrecoverable.
+     - **Description + confidence → the higher-confidence finding wins.** Take the survivor's `description` from whichever merged finding had the higher `confidence` (the better-verified statement of the problem), and set `confidence` to the max of the group. A finding with no confidence loses to any finding that has one; if none has a confidence, the survivor has none.
+     - **`agents` → union** every merged finding's array (deduped, order-preserving), e.g. `agents: ["web3", "correctness"]`. This is the whole point of stamping in sub-step 0: attribution survives the collapse, and the resulting `agents.length` is the structural corroboration signal callers sort on.
 
 4. Sort by: file path (alphabetical, ASC), then line number (ASC), then severity (DESC).
 
@@ -376,7 +381,7 @@ Severity labels:
 
 The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/facets:pr-fix` / `/facets:tib-ship`) consumes:
 
-- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
+- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, confidence?, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `confidence` is the agent-self-reported certainty the finding is real (integer 0–100, normalized by `validate-findings.ts`, max-of-group on merge); absent when the agent stated none. It is **advisory triage metadata** — callers render it and may sort by it, but the engine never drops a finding on it. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
 - `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.

@@ -22,6 +22,7 @@ import {
 	mergeLedger,
 	normalize,
 	normalizeAgents,
+	normalizeConfidence,
 	openFindings,
 	parseArgs,
 	parseLedger,
@@ -37,6 +38,7 @@ type Finding = {
 	line: number;
 	description: string;
 	agents?: string[];
+	confidence?: number;
 };
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -97,6 +99,29 @@ describe("normalizeAgents", () => {
 	});
 });
 
+// This copy of normalizeConfidence is a deliberate mirror of the one in
+// validate-findings.ts (the scripts are self-contained single files). Test it
+// DIRECTLY here — not just indirectly through parseLedger/mergeLedger — so the
+// two copies can't silently drift (e.g. a bound edited to [0,99] on one side).
+describe("normalizeConfidence", () => {
+	it("rounds and passes an in-range number", () => {
+		expect(normalizeConfidence(87)).toBe(87);
+		expect(normalizeConfidence(87.4)).toBe(87);
+		expect(normalizeConfidence(0)).toBe(0);
+		expect(normalizeConfidence(100)).toBe(100);
+	});
+	it("clamps out-of-range numbers rather than rejecting them", () => {
+		expect(normalizeConfidence(150)).toBe(100);
+		expect(normalizeConfidence(-5)).toBe(0);
+	});
+	it("returns undefined for absent / non-numeric / non-finite input", () => {
+		expect(normalizeConfidence(undefined)).toBeUndefined();
+		expect(normalizeConfidence("high")).toBeUndefined();
+		expect(normalizeConfidence(Number.NaN)).toBeUndefined();
+		expect(normalizeConfidence(Number.POSITIVE_INFINITY)).toBeUndefined();
+	});
+});
+
 describe("parseLedger", () => {
 	it("returns an empty ledger on unparseable JSON", () => {
 		expect(parseLedger("not json")).toEqual(EMPTY);
@@ -151,6 +176,30 @@ describe("parseLedger", () => {
 		const ledger = parseLedger(text);
 		expect(ledger.findings[0]?.agents).toEqual([]);
 		expect(ledger.findings[1]?.agents).toEqual(["web3", "styling"]);
+	});
+	it("leaves confidence undefined for a legacy entry and normalizes a present one", () => {
+		const valid = (over: Record<string, unknown>) => ({
+			id: "abc",
+			file: "src/X.ts",
+			line: 1,
+			severity: "high",
+			description: "WHAT: a. FIX: b.",
+			status: "open",
+			first_seen_sha: "s1",
+			last_seen_sha: "s1",
+			...over,
+		});
+		const text = JSON.stringify({
+			findings: [
+				valid({ id: "legacy" }), // no confidence field -> undefined
+				valid({ id: "scored", confidence: 91.7 }), // rounded
+				valid({ id: "bad", confidence: "high" }), // non-numeric -> undefined
+			],
+		});
+		const ledger = parseLedger(text);
+		expect(ledger.findings[0]?.confidence).toBeUndefined();
+		expect(ledger.findings[1]?.confidence).toBe(92);
+		expect(ledger.findings[2]?.confidence).toBeUndefined();
 	});
 });
 
@@ -269,6 +318,49 @@ describe("mergeLedger", () => {
 			headSha: "sha2",
 		});
 		expect(second.recurring[0]?.agents).toEqual(["web3"]);
+	});
+
+	it("stamps a net_new entry with the run's normalized confidence", () => {
+		const out = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ confidence: 87.6 })],
+			headSha: "sha1",
+		});
+		expect(out.net_new[0]?.confidence).toBe(88);
+		expect(out.ledger.findings[0]?.confidence).toBe(88);
+	});
+
+	it("leaves confidence undefined on a net_new entry when the run states none", () => {
+		const out = mergeLedger({ ledger: EMPTY, findings: [finding()], headSha: "sha1" });
+		expect(out.net_new[0]?.confidence).toBeUndefined();
+	});
+
+	it("refreshes a recurring finding's confidence from the current run", () => {
+		const first = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ confidence: 55 })],
+			headSha: "sha1",
+		});
+		const second = mergeLedger({
+			ledger: first.ledger,
+			findings: [finding({ confidence: 90 })],
+			headSha: "sha2",
+		});
+		expect(second.recurring[0]?.confidence).toBe(90);
+	});
+
+	it("never wipes persisted confidence when the current run supplies none", () => {
+		const first = mergeLedger({
+			ledger: EMPTY,
+			findings: [finding({ confidence: 80 })],
+			headSha: "sha1",
+		});
+		const second = mergeLedger({
+			ledger: first.ledger,
+			findings: [finding()], // no confidence this run
+			headSha: "sha2",
+		});
+		expect(second.recurring[0]?.confidence).toBe(80);
 	});
 
 	it("does not mutate the input ledger", () => {
