@@ -1,0 +1,4 @@
+interface:
+  display_name: "Facets"
+  short_description: "Review, plan, ship, and test with Facets"
+  default_prompt: "Use $facets to choose and run the matching review, PR, planning, shipping, conventions, wallet, setup, or feedback workflow."

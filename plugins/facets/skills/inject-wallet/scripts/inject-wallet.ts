@@ -13,7 +13,7 @@
  * mock-connector fallback.
  */
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +34,7 @@ const log = (s: string) => process.stderr.write(`[inject-wallet] ${s}\n`);
 
 export async function queryChainId(rpcUrl: string): Promise<number> {
 	const result = await jsonRpc(rpcUrl, { method: "eth_chainId" });
-	if (typeof result !== "string") throw new Error(`could not read chainId from ${rpcUrl}`);
+	if (typeof result !== "string") throw new Error("could not read chainId from RPC endpoint");
 	return Number.parseInt(result, 16);
 }
 
@@ -129,6 +129,13 @@ async function main(): Promise<number> {
 	if (!options.dryRun) mkdirSync(outDir, { recursive: true });
 	const workDir = mkdtempSync(join(tmpdir(), "inject-wallet-"));
 	const scriptDir = import.meta.dirname;
+	const removeWorkDir = () => {
+		try {
+			rmSync(workDir, { recursive: true, force: true });
+		} catch {
+			/* best-effort cleanup; process teardown must continue */
+		}
+	};
 
 	const cleanups: Array<() => void> = [];
 	let toredown = false;
@@ -150,6 +157,7 @@ async function main(): Promise<number> {
 	for (const sig of ["SIGINT", "SIGTERM"] as const) {
 		process.on(sig, () => {
 			teardown();
+			removeWorkDir();
 			process.exit(130);
 		});
 	}
@@ -193,6 +201,7 @@ async function main(): Promise<number> {
 			address,
 			chainId,
 			rpcUrl,
+			readOnly: options.backend.kind === "rpc" || Boolean(options.impersonate),
 			impersonated: Boolean(options.impersonate),
 		};
 
@@ -237,6 +246,7 @@ async function main(): Promise<number> {
 		return computeExitCode(results, options.mode);
 	} finally {
 		teardown();
+		removeWorkDir();
 	}
 }
 

@@ -12,7 +12,13 @@ const { createEip1193Provider, normalizeChainId, isMethodNotFound, toHex } = loa
 const RPC = "http://127.0.0.1:8545";
 
 function build(
-	cfg: { address?: string; chainId: number | string; rpcUrl: string; impersonated?: boolean },
+	cfg: {
+		address?: string;
+		chainId: number | string;
+		rpcUrl: string;
+		readOnly?: boolean;
+		impersonated?: boolean;
+	},
 	handler: RpcHandler,
 ) {
 	const calls: Array<{ method: string; params: unknown[] }> = [];
@@ -110,9 +116,9 @@ describe("inject-wallet provider", () => {
 		expect(await provider.request({ method: "eth_chainId" })).toBe("0xa");
 	});
 
-	it("rejects write methods under read-only impersonation, but still proxies reads", async () => {
+	it("rejects write methods in read-only RPC mode, but still proxies reads", async () => {
 		const { provider, calls } = build(
-			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true },
 			(method) => {
 				if (method === "eth_getBalance") return { result: "0xde0b6b3a7640000" };
 				if (method === "eth_call") return { result: "0x" };
@@ -136,7 +142,7 @@ describe("inject-wallet provider", () => {
 		]) {
 			await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
 				code: 4100,
-				message: expect.stringContaining("read-only impersonation"),
+				message: expect.stringContaining("read-only provider"),
 			});
 		}
 		// No write method reached the backend.
@@ -150,7 +156,7 @@ describe("inject-wallet provider", () => {
 		expect(calls.map((c) => c.method)).toEqual(["eth_getBalance", "eth_call"]);
 	});
 
-	it("proxies write methods normally when NOT impersonating (guard is gated on the flag)", async () => {
+	it("proxies write methods for a writable Anvil backend", async () => {
 		const { provider, calls } = build({ address: "0xabc", chainId: 1, rpcUrl: RPC }, (method) => {
 			if (method === "eth_sendTransaction") return { result: "0xtxhash" };
 			if (method === "eth_signTypedData_v4") return { result: "0xsig" };
@@ -171,6 +177,11 @@ describe("inject-wallet provider", () => {
 			mustNotCall,
 		);
 		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);
+		await expect(
+			provider.request({ method: "eth_sendTransaction", params: [] }),
+		).rejects.toMatchObject({
+			code: 4100,
+		});
 	});
 
 	it("surfaces RPC errors with their JSON-RPC code", async () => {

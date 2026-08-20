@@ -1,6 +1,6 @@
 ---
 name: inject-wallet
-version: 0.3.0
+version: 0.3.1
 description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil or an RPC. Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
 ---
 

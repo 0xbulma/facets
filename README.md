@@ -11,17 +11,26 @@
 
 # facets
 
-> **F**ullstack&nbsp;·&nbsp;**A**gentic&nbsp;·&nbsp;**C**laude&nbsp;·&nbsp;**E**ngine&nbsp;·&nbsp;**T**ypeScript&nbsp;·&nbsp;**S**hipping
+> **F**ullstack&nbsp;·&nbsp;**A**gentic&nbsp;·&nbsp;**C**ode&nbsp;·&nbsp;**E**ngine&nbsp;·&nbsp;**T**ypeScript&nbsp;·&nbsp;**S**hipping
 >
-> **Self-review every _facet_ of your PR — then ship it.** A 17-agent Claude review engine that runs locally, with no cloud review bill.
+> **Self-review every _facet_ of your PR — then ship it.** Full workflow suite on Codex and Claude Code.
 
-A Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) for **TypeScript + React + Vercel**-optimized PR review, PR fix, and decision-record / Linear workflows. Ships one plugin (`facets`) with fourteen user-invokable slash-command skills plus one engine skill (`pr-review-engine`), which dispatches a 17-agent review library (6 baseline + 11 conditional, including `runtime-validation` which auto-fires on route-level UI changes), and a SessionStart hook that auto-installs 17 rubric skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills) + 1 community) from the [skills.sh](https://skills.sh) registry.
+Facets ships a compact Codex plugin and a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). Both cover review/fix, GitHub PRs, TIB/TIP planning and shipping, conventions, wallet testing, setup, and feedback. Codex uses one small router plus on-demand references; Claude exposes fourteen skills plus a 17-agent engine.
 
-Works on any project — but the conditional personas are tuned for TS/JS/JSX/TSX codebases, with Vercel's `vercel-react-best-practices` / `web-design-guidelines` / `vercel-composition-patterns`, Tailwind, and Web3 (viem/wagmi/ethers) as runtime rubric.
+Both work on any project. Their conditional review rubrics are tuned for TS/JS/JSX/TSX, React/Vercel, Tailwind, AI SDK, and Web3 code.
 
 ## Quick install
 
-Four commands inside Claude Code, in order:
+**Codex:**
+
+```bash
+codex plugin marketplace add 0xbulma/facets
+codex plugin add facets@facets
+```
+
+Start a new thread, then ask: `$facets review my changes`, `$facets pr-create`, `$facets tib-create`, `$facets inject-wallet`, or any route below.
+
+**Claude Code:**
 
 ```
 /plugin marketplace add 0xbulma/facets   # 1 · add the marketplace (one-time)
@@ -36,6 +45,13 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 
 ```
 .
+├── AGENTS.md                                # Codex pointer to shared repo guidance
+├── .codex-plugin/plugin.json              # Codex plugin manifest
+├── .agents/plugins/marketplace.json       # Codex marketplace entry
+├── skills/facets/                          # compact full-suite Codex router
+│   ├── SKILL.md
+│   ├── references/                         # seven on-demand workflow contracts
+│   └── agents/openai.yaml                  # Codex UI metadata
 ├── .claude-plugin/
 │   └── marketplace.json
 ├── plugins/facets/
@@ -86,10 +102,12 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 
 ## Skills
 
+Every route below is available as `$facets <route>` in Codex and `/facets:<route>` in Claude Code. Codex loads the same bundled persona rubrics on demand and launches one independent reviewer per selected persona, in waves of up to three to fit its agent slots.
+
 **PR navigation / review / fix**
 
 - **`/facets:pr-switch <pr-url-or-num>`** — switch the local checkout to a PR's head branch. Accepts a full GitHub PR URL, `owner/repo#num` shorthand, or a bare number. Refuses cross-repo URLs; resolves a dirty tree interactively (stash/commit/discard/abort).
-- **`/facets:pr-review-local`** — pre-PR review on the working tree (committed + uncommitted). Terminal output. `--fix` applies mechanical fixes once (unstaged); `--goal` loops review→fix→re-review, committing each iteration, until no critical/high/medium findings remain, then pushes the converged commits to the branch's existing open PR (does nothing if there is none) (`--max-iters`, default 5; `--no-runtime` to skip the post-convergence runtime check); `--fast` skips the `docs` agent (cheapest meaningful cut on code-focused diffs).
+- **`/facets:pr-review-local [base] [--fast] [--fix|--goal] [--max-iters N] [--no-runtime]`** — pre-PR review on the working tree (committed + uncommitted). Terminal output. `--fix` applies mechanical fixes once (unstaged); `--goal` loops review→fix→re-review, committing each iteration, until no critical/high/medium findings remain, then pushes the converged commits to the branch's existing open PR (does nothing if there is none).
 - **`/facets:pr-review-gh <PR>`** — review an open GitHub PR (diff computed locally, never via the GitHub API). Posts findings as a `COMMENT` review (never auto-approves). `--watch` re-runs on every new commit; `--fast` skips the `docs` agent (immediate review only — watchers always run the full panel).
 - **`/facets:pr-fix <PR>`** — read unresolved review comments, classify, apply confidence-gated fixes, push, reply, resolve. `--watch` runs a 5-minute cron fix loop (don't pair it with a `pr-review-gh --watch` on the same PR — the two watchers re-trigger each other).
 
@@ -100,26 +118,26 @@ A **TIB** (Technical Implementation Brief — a lightweight ADR/RFC) captures th
 - **`/facets:pr-create`** — open a draft PR from the current diff. Derives branch name, title, body, and label without asking.
 - **`/facets:convert-tib-to-linear <doc> [project]`** — convert a TIB / ADR / RFC into a Linear project plan (milestones + issues with dependencies).
 - **`/facets:tib-create <title>`** — scaffold a new TIB markdown file from the template; pre-fills date, author, and CalVer ID.
-- **`/facets:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
-- **`/facets:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; does not push or open a PR.
+- **`/facets:tip-create <title> [--tib <path>]… [--dir <path>]`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
+- **`/facets:tib-ship <tib-path> [--phase <name>]… [--max-iters N] [--no-runtime]`** — execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean. Runs `runtime-validation` if UI surfaces changed. Stops with a ready-to-push branch; does not push or open a PR.
 
 **Conventions**
 
-- **`/facets:ts-conventions [--preview]`** — write/refresh structured coding conventions in the global `~/.claude/CLAUDE.md`, inside idempotent managed markers. Two sections: a **language-agnostic `## Engineering principles`** part in three altitude tiers — system/solution architecture (public-API contract, layering, package boundaries, security & trust boundaries, supply chain, observability, change management), application architecture, and module/code design — plus anti-patterns, written for any repo; and a **`## TypeScript conventions`** part (preferred stack, frontend stack, type system & strictness incl. no-`any`/no-cast/no-`enum` with per-rule lint enforcement, modules & exports, tests, React/Next, web3) written when a TS stack is detected and tailored to the repo's linter/test runner. Writes only to the global config — never a project file; a repo's own conventions always win. `--preview` prints the block without writing. The local review/ship flows nudge you to run it when a TS repo has no conventions doc.
+- **`/facets:ts-conventions [--preview]`** — write/refresh managed global engineering + TypeScript conventions (`~/.codex/AGENTS.md` for Codex; `~/.claude/CLAUDE.md` for Claude), tailored to the detected stack. Project rules always win; `--preview` writes nothing.
 
 **dApp testing** (TypeScript; Reown AppKit / wagmi)
 
-- **`/facets:inject-wallet`** — boot a dev server + browser and inject a test wallet (an EIP-1193 provider announced over EIP-6963) so the agent gets past the Reown AppKit connect modal, then screenshot the connected UI. Backed by a local Anvil fork or a read-only RPC; reads/signing/sends proxy to the backend, so there is no in-browser crypto. Best-effort modal auto-connect with an `agent-browser` snapshot fallback, plus an env-gated wagmi `mock`-connector path for SIWE-heavy apps. Needs Node ≥ 22.18 and `agent-browser`.
+- **`/facets:inject-wallet [--anvil [--fork-url <rpc>] | --rpc <url> | --mode mock]`** — boot a dev server + browser and inject a test wallet so the agent gets past the Reown AppKit connect modal and screenshots the connected UI. Anvil supports test signing/sends; existing-RPC mode is read-only. Needs Node ≥ 22.18 and `agent-browser`.
 
 **Utility**
 
-- **`/facets:feedback <note>`** — log a facets improvement idea from whatever repo you're working in, as a GitHub issue on the facets repo (or appended to a local backlog with `--local`). Grounds the note in the current repo/branch/PR, scrubs sensitive detail when the working repo is private, and previews before posting. Target repo defaults to `0xbulma/facets` (override with `--repo` or `FACETS_REPO`).
-- **`/facets:implement-feedback <issue>`** — the counterpart to `feedback`: pick up a logged improvement (a feedback issue, or `--local` backlog entry), implement it in the facets plugin to the repo's conventions (version bumps, cross-file invariants, tests), validate, and open a draft PR that closes the issue. `--goal` runs the full review→fix→re-review loop before the PR. Runs only inside a facets clone (mirrors `pr-switch`'s cross-repo guard); shares the `skill-authoring` rubric so what it writes is what passes review.
-- **`/facets:setup`** — manually install the rubric prereqs (also runs in the background on every session start).
+- **`/facets:feedback [note] [--repo owner/repo] [--local|--list]`** — log a facets improvement idea from any repo as a GitHub issue or local backlog entry. Grounds the note in context, scrubs private details, and previews before posting.
+- **`/facets:implement-feedback [issue] [--repo owner/repo|--local] [--goal] [--max-iters N] [--no-runtime]`** — implement a feedback issue/backlog entry inside a Facets clone, validate it, and open a draft PR. `--goal` runs the full review/fix loop first; the shared `skill-authoring` rubric governs both hosts.
+- **`/facets:setup`** — install optional rubric prereqs. Claude also checks them in the background; Codex keeps setup explicit to avoid loading 17 extra skill descriptions by default.
 
-## Rubric prereqs (auto-installed)
+## Rubric prereqs
 
-17 external skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 1 community) are installed automatically on first session after plugin install via a `SessionStart` hook. Idempotent — re-runs skip already-installed skills.
+17 external skills (16 [Vercel-published](https://vercel.com/docs/agent-resources/skills), 1 community) deepen conditional reviews. Claude has a best-effort `SessionStart` hook; Codex installs them only through explicit `$facets setup` to keep default context lean. Setup is idempotent and optional because both plugins bundle fallback rubrics.
 
 | Skill | Source | Domain | Persona it backs |
 |---|---|---|---|
@@ -141,7 +159,7 @@ A **TIB** (Technical Implementation Brief — a lightweight ADR/RFC) captures th
 | `find-skills` | `vercel-labs/skills` | Skill discovery | utility |
 | `before-and-after` | `vercel-labs/before-and-after` | Visual before/after diff | utility |
 
-If any are missing at review time, the consuming persona logs a degradation warning and falls back to its inline rubric — no hard failure. Manual install: run `/facets:setup` from Claude Code, or invoke `bin/install-prereqs.sh` directly.
+If any are missing, review falls back to its bundled rubric—no hard failure.
 
 ### Why not plugin `dependencies`?
 
@@ -167,7 +185,7 @@ From inside Claude Code:
 # 3. Reload so the plugin and its commands (incl. /facets:setup) load
 /reload-plugins
 
-# 4. Install the 17 rubric dependencies and verify — one ✓ per skill (required)
+# 4. Optionally install the 17 rubric dependencies and verify — one ✓ per skill
 /facets:setup
 #    Runs bin/install-prereqs.sh: fetches each missing skill via `npx skills add`.
 #    First run ~30-90s; re-runs skip already-installed skills (idempotent).
@@ -189,17 +207,26 @@ The SessionStart hook fires the same way; the 17 rubric skills auto-install on s
 
 ## Update
 
+**Codex:**
+
+```bash
+codex plugin marketplace upgrade facets
+# Start a new thread so refreshed skills are loaded.
+```
+
+**Claude Code:**
+
 ```
 /plugin marketplace update facets
 ```
 
-The plugin's `version` field in `plugins/facets/.claude-plugin/plugin.json` controls when users see a new release. Each `SKILL.md` and persona also has its own `version:` field for per-file change tracking.
+Codex updates key off `.codex-plugin/plugin.json`; Claude updates key off `plugins/facets/.claude-plugin/plugin.json`. See [CLAUDE.md](./CLAUDE.md#versioning) for version rules.
 
 ## Local development
 
-After editing any file under `plugins/facets/`, run `/reload-plugins` inside Claude Code to pick up changes — no restart needed. Run `bats test/` (manifest, frontmatter, version fields, hook wiring, agent inventory, trigger-flag wiring, references/ backlinks) and `pnpm verify` (Biome + tsc + Vitest — covers the changed-lines builder, finding validator, findings-ledger merge, and git-scope helpers) to validate.
+After Claude edits, run `/reload-plugins`. For Codex worktree testing, use a separate local marketplace snapshot—the checked-in marketplace intentionally targets remote `main`—reinstall the cache-busted local plugin, then start a new thread. Run `bats test/` and `pnpm verify` for both hosts.
 
-See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versioning rules, and forking notes.
+See [AGENTS.md](./AGENTS.md) and [CLAUDE.md](./CLAUDE.md) for the shared mental model, persona contract, versioning rules, and forking notes.
 
 ## Agents
 
@@ -224,7 +251,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full mental model, persona contract, versio
 - `release-integrity` — `<HAS_RELEASE>` — publish flow, provenance, release-commit signing, Changesets wiring. Loads `deploy-to-vercel`, `vercel-cli-with-tokens`.
 - `dependencies` — `<HAS_DEPS>` — lockfile drift, `.npmrc` hygiene, typosquats, postinstall scripts.
 - `runtime-validation` — `<HAS_ROUTE_UI>` — boots the dev server, navigates the changed route(s), captures console errors / network 4xx-5xx / screenshots. Loads `agent-browser`; `tib-ship` excludes it from its iteration loop and runs it once after static convergence.
-- `skill-authoring` — `<HAS_PLUGIN_SKILLS>` — Claude Code skill/plugin authoring conformance: required version bumps, the frontmatter contract, name-matches-directory, no XML brackets in frontmatter, `disable-model-invocation`, and the cross-file inventory invariants. Grades against the in-repo `references/skill-authoring.md` rubric layered with the repo's own conventions; shared with the `implement-feedback` skill.
+- `skill-authoring` — `<HAS_PLUGIN_SKILLS>` — dual-host Claude Code/Codex skill and plugin conformance: platform-specific manifests, version/frontmatter and invocation rules, package paths, conditional-trigger parity, and derived inventories. Grades against the shared in-repo `references/skill-authoring.md` rubric.
 
 ## License
 

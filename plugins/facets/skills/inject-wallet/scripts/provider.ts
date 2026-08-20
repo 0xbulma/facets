@@ -37,6 +37,8 @@ type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number | string;
 	readonly rpcUrl: string;
+	/** Reject every signing/sending method before it reaches the backend. */
+	readonly readOnly?: boolean;
 	/** Read-only "view as": report `address` but reject sends/signs (no key held). */
 	readonly impersonated?: boolean;
 };
@@ -189,12 +191,11 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
-		if (cfg.impersonated && WRITE_METHODS.has(method)) {
+		if ((cfg.readOnly || cfg.impersonated) && WRITE_METHODS.has(method)) {
 			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
 			const error: Error & { code?: number } = new Error(
-				`[e2e-wallet] read-only impersonation: cannot ${method} for ${target} — no private key ` +
-					"is held for this address. Impersonation is view-only; reads proxy to the backend. For " +
-					"sends/signatures, use a key-holding Anvil account (drop --impersonate) or --mode mock.",
+				`[e2e-wallet] read-only provider: cannot ${method} for ${target}. Reads proxy to the ` +
+					"backend; for sends/signatures use a key-holding Anvil account or --mode mock.",
 			);
 			error.code = 4100; // EIP-1193 "Unauthorized"
 			throw error;

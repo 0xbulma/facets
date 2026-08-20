@@ -1,6 +1,6 @@
 ---
 name: convert-tib-to-linear
-version: 2.0.0
+version: 2.1.0
 description: Convert a technical document (TIB / ADR / RFC / design doc) into a Linear project plan with milestones and issues. Use when user says /facets:convert-tib-to-linear, "turn this TIB into Linear issues", "create Linear issues from this design doc", or "make a project plan from this RFC". Takes a doc path and optional Linear project name/ID.
 ---
 
@@ -142,6 +142,13 @@ Before creating anything in Linear, present the full plan to the user:
 **Total milestones**: N
 **Total issues**: N
 
+### Project Description (new projects only)
+- **Vision / context**: <document context>
+- **Motivation / goals**: <decision drivers and goals>
+- **Scope**: <document scope>
+- **Source**: <doc-file-path>
+- **Decision status**: Underlying decision may still change. (include only for Proposed or Draft documents)
+
 ---
 
 ### Milestone 1: <name>
@@ -180,10 +187,8 @@ Once the user approves, create items in this order:
 If the user said "new" or no existing project was specified, create the project using `mcp__linear__create_project`:
 
 - `name`: Project name
-- `description`: Include Vision (from document context), Motivation (from decision drivers/goals), Scope, and a link to the source document path
+- `description`: Use the project description approved in Step 4 unchanged
 - `addTeams`: `[<team-id>]`
-
-If the document status is "Proposed" or "Draft", note in the description that the underlying decision may still change.
 
 #### 5b: Milestones
 

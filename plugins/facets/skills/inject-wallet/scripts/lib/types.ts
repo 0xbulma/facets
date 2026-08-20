@@ -5,6 +5,8 @@ export type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number;
 	readonly rpcUrl: string;
+	/** Reject every signing/sending method before it reaches the backend. */
+	readonly readOnly?: boolean;
 	/**
 	 * Read-only impersonation: the provider reports `address` but holds no key for
 	 * it, so reads proxy normally while write methods (sends / signs) are rejected

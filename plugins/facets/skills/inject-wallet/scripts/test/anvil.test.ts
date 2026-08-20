@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAnvilArgs, startAnvil } from "../lib/anvil.ts";
+import { buildAnvilArgs, formatAnvilCommand, startAnvil } from "../lib/anvil.ts";
 import { fakeChild } from "./fake-child.ts";
 
 describe("buildAnvilArgs", () => {
@@ -16,6 +16,12 @@ describe("buildAnvilArgs", () => {
 			"--fork-url",
 			"https://rpc.example",
 		]);
+	});
+
+	it("redacts fork credentials from logs", () => {
+		expect(
+			formatAnvilCommand(["--port", "8545", "--fork-url", "https://user:key@rpc.example"]),
+		).toBe("anvil --port 8545 --fork-url <redacted>");
 	});
 });
 

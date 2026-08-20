@@ -27,6 +27,11 @@ export function buildAnvilArgs(opts: {
 	return args;
 }
 
+/** Render argv without leaking credential-bearing fork URLs. */
+export function formatAnvilCommand(args: readonly string[]): string {
+	return `anvil ${args.map((arg, i) => (args[i - 1] === "--fork-url" ? "<redacted>" : arg)).join(" ")}`;
+}
+
 export type StartAnvilOptions = {
 	port: number;
 	forkUrl?: string;
@@ -41,7 +46,7 @@ export type StartAnvilOptions = {
 export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> {
 	const rpcUrl = `http://127.0.0.1:${opts.port}`;
 	const args = buildAnvilArgs(opts);
-	opts.log(`anvil ${args.join(" ")}`);
+	opts.log(formatAnvilCommand(args));
 
 	const spawnAnvil =
 		opts.spawnAnvil ??
