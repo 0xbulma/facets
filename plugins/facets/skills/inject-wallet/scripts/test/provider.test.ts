@@ -12,7 +12,12 @@ const { createEip1193Provider, normalizeChainId, isMethodNotFound, toHex } = loa
 const RPC = "http://127.0.0.1:8545";
 
 function build(
-	cfg: { address?: string; chainId: number | string; rpcUrl: string; impersonated?: boolean },
+	cfg: {
+		address?: string;
+		chainId: number | string;
+		rpcUrl: string;
+		readOnly?: boolean;
+	},
 	handler: RpcHandler,
 ) {
 	const calls: Array<{ method: string; params: unknown[] }> = [];
@@ -110,9 +115,9 @@ describe("inject-wallet provider", () => {
 		expect(await provider.request({ method: "eth_chainId" })).toBe("0xa");
 	});
 
-	it("rejects write methods under read-only impersonation, but still proxies reads", async () => {
+	it("rejects write methods in read-only RPC mode, but still proxies reads", async () => {
 		const { provider, calls } = build(
-			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true },
 			(method) => {
 				if (method === "eth_getBalance") return { result: "0xde0b6b3a7640000" };
 				if (method === "eth_call") return { result: "0x" };
@@ -120,10 +125,15 @@ describe("inject-wallet provider", () => {
 			},
 		);
 
-		// Every key-requiring method in the provider's deny-list must reject — keep
-		// this list in sync with WRITE_METHODS so dropping an entry fails CI.
+		// Pins the rejection OUTCOME, not membership of any one mechanism: each name
+		// below must be denied by the WRITE_METHODS list or the WRITE_METHOD_PATTERN
+		// shape check, whichever fires. The last two are deliberately absent from
+		// WRITE_METHODS so the shape check itself is under test.
 		for (const method of [
 			"eth_sendTransaction",
+			"eth_sendRawTransaction",
+			"eth_sendRawTransactionConditional",
+			"eth_sendUserOperation",
 			"eth_signTransaction",
 			"personal_sign",
 			"eth_sign",
@@ -133,10 +143,14 @@ describe("inject-wallet provider", () => {
 			"eth_signTypedData_v3",
 			"eth_signTypedData_v4",
 			"wallet_sendCalls",
+			// Not in WRITE_METHODS by name — caught by the fail-closed shape check,
+			// which is what stops the NEXT send/sign variant reaching the backend.
+			"eth_signTypedData_v5",
+			"wallet_sendPreparedCalls",
 		]) {
 			await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
 				code: 4100,
-				message: expect.stringContaining("read-only impersonation"),
+				message: expect.stringContaining("read-only provider"),
 			});
 		}
 		// No write method reached the backend.
@@ -150,7 +164,7 @@ describe("inject-wallet provider", () => {
 		expect(calls.map((c) => c.method)).toEqual(["eth_getBalance", "eth_call"]);
 	});
 
-	it("proxies write methods normally when NOT impersonating (guard is gated on the flag)", async () => {
+	it("proxies write methods for a writable Anvil backend", async () => {
 		const { provider, calls } = build({ address: "0xabc", chainId: 1, rpcUrl: RPC }, (method) => {
 			if (method === "eth_sendTransaction") return { result: "0xtxhash" };
 			if (method === "eth_signTypedData_v4") return { result: "0xsig" };
@@ -167,10 +181,40 @@ describe("inject-wallet provider", () => {
 
 	it("still reports the impersonated address for eth_requestAccounts", async () => {
 		const { provider } = build(
-			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true },
 			mustNotCall,
 		);
 		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);
+	});
+
+	it("answers unimplemented capability probes with 4200, not 4100, in both modes", async () => {
+		// 4100 ("Unauthorized") reads to wagmi/AppKit as a user denial and aborts the
+		// connect flow; 4200 ("Unsupported Method") is what makes it fall back to
+		// eth_requestAccounts — which is exactly what the screenshot path needs.
+		for (const readOnly of [true, false]) {
+			const { provider, calls } = build(
+				{ address: "0xabc", chainId: 1, rpcUrl: RPC, readOnly },
+				mustNotCall,
+			);
+			for (const method of ["wallet_connect", "wallet_grantPermissions", "wallet_addSubAccount"]) {
+				await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
+					code: 4200,
+				});
+			}
+			expect(calls).toHaveLength(0);
+		}
+	});
+
+	it("ignores a page-side attempt to clear readOnly after construction", async () => {
+		// window.e2eWalletConfig is reachable from any script on the origin, so the
+		// guard must be snapshotted at construction rather than read per call.
+		const cfg = { address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true };
+		const { provider, calls } = build(cfg, mustNotCall);
+		cfg.readOnly = false;
+		await expect(
+			provider.request({ method: "eth_sendTransaction", params: [{}] }),
+		).rejects.toMatchObject({ code: 4100 });
+		expect(calls).toHaveLength(0);
 	});
 
 	it("surfaces RPC errors with their JSON-RPC code", async () => {

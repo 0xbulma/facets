@@ -1,0 +1,28 @@
+{
+  "name": "facets",
+  "version": "1.3.0",
+  "description": "Compact Codex-native router for the full Facets review, PR, planning, conventions, wallet, and feedback suite.",
+  "author": {
+    "name": "0xbulma",
+    "url": "https://github.com/0xbulma"
+  },
+  "homepage": "https://github.com/0xbulma/facets",
+  "repository": "https://github.com/0xbulma/facets",
+  "license": "MIT",
+  "keywords": ["code-review", "pull-request", "multi-agent", "planning", "github", "linear", "adr", "rfc", "tib", "typescript", "react", "vercel", "web3", "wallet"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Facets",
+    "shortDescription": "Local multi-persona review, PRs, and planning",
+    "longDescription": "Run Facets in Codex: independent persona reviews and fix loops, GitHub PR workflows, TIB/TIP and Linear planning, conventions, wallet testing, and feedback.",
+    "developerName": "0xbulma",
+    "category": "Developer Tools",
+    "capabilities": ["Code review", "GitHub workflows", "Planning and shipping", "Wallet testing", "Conventions and feedback"],
+    "websiteURL": "https://github.com/0xbulma/facets",
+    "defaultPrompt": [
+      "$facets review my current changes.",
+      "$facets address the review comments on this pull request.",
+      "$facets create and ship a TIB for this decision."
+    ]
+  }
+}

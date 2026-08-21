@@ -17,6 +17,10 @@ Fourteen user-invokable slash-command skills + one engine skill (`pr-review-engi
 - **`/facets:tip-create <title> [--tib <path>]…`** — scaffold a TIP (Technical Implementation Plan): the mutable, concrete companion to a TIB. Optionally seeded from one or more TIBs; auto-maintains `Sibling TIP(s)` back-links across TIPs that share a parent TIB.
 - **`/facets:tib-ship <tib-path>`** — yolo execute a TIB end-to-end: scaffold TIPs, branch, implement, then `review → fix → re-review` until clean (max 5 iterations). Runs the `runtime-validation` persona if UI surfaces changed. Stops with a ready-to-push branch; the user pushes and opens the PR manually.
 
+**Conventions**
+
+- **`/facets:ts-conventions [--preview]`** — write or refresh managed global engineering and TypeScript conventions tailored to the detected stack. Project rules win; `--preview` writes nothing.
+
 **dApp testing** (TypeScript; Reown AppKit / wagmi)
 
 - **`/facets:inject-wallet`** — boot a dev server + browser, inject a test wallet (EIP-1193 + EIP-6963) so the agent gets past the Reown AppKit connect modal, then screenshot the connected UI. Anvil-fork or read-only-RPC backend; env-gated wagmi `mock`-connector fallback. Needs Node ≥ 22.18 and `agent-browser`.

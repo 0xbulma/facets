@@ -4,8 +4,8 @@
 # the local conditional personas. The PREREQS list below is the source of
 # truth for what gets installed; skills/setup/SKILL.md documents the same set.
 #
-# Safe to run repeatedly. Each skill is only fetched if not already present
-# at ~/.claude/skills/<name>/SKILL.md.
+# Safe to run repeatedly. FACETS_AGENT defaults to Claude Code; the root Codex
+# plugin passes `codex` and reuses this same locked installer.
 #
 # Invoked by:
 #   - SessionStart hook (silent, background)
@@ -17,6 +17,7 @@
 
 set -u  # do NOT set -e — we want to keep trying other skills if one fails
 VERBOSE="${VERBOSE:-0}"
+FACETS_AGENT="${FACETS_AGENT:-claude-code}"
 
 log() { [ "$VERBOSE" = "1" ] && echo "[local setup] $*" >&2; return 0; }
 
@@ -68,7 +69,7 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 0
 fi
 
-# Each line: <installed-skill-name-under-~/.claude/skills/> <owner/repo@skill-name>
+# Each line: <installed-skill-name> <owner/repo@skill-name>
 # Most install names match the @skill-name; a few differ where upstream renamed.
 PREREQS='vercel-react-best-practices       vercel-labs/agent-skills@vercel-react-best-practices
 vercel-composition-patterns       vercel-labs/agent-skills@vercel-composition-patterns
@@ -94,14 +95,14 @@ failed=0
 
 while IFS=' ' read -r name pkg; do
   [ -z "$name" ] && continue
-  target="$HOME/.claude/skills/$name/SKILL.md"
-  if [ -e "$target" ]; then
+  if { [ "$FACETS_AGENT" = "codex" ] && { [ -e "${CODEX_HOME:-$HOME/.codex}/skills/$name/SKILL.md" ] || [ -e "$HOME/.agents/skills/$name/SKILL.md" ]; }; } \
+    || { [ "$FACETS_AGENT" != "codex" ] && [ -e "$HOME/.claude/skills/$name/SKILL.md" ]; }; then
     log "✓ $name (already installed)"
     skipped=$((skipped + 1))
     continue
   fi
   log "→ installing $name from $pkg"
-  if npx --yes skills add "$pkg" -g -y </dev/null >/dev/null 2>&1; then
+  if npx --yes skills add "$pkg" -g -a "$FACETS_AGENT" -y </dev/null >/dev/null 2>&1; then
     log "✓ $name installed"
     installed=$((installed + 1))
   else

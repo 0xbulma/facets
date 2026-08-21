@@ -8,12 +8,14 @@
  *   node inject-wallet.ts --anvil --fork-url <rpc> --url /dashboard
  *   node inject-wallet.ts --rpc https://mainnet.example --url / --url /app
  *
- * The injected provider is dependency-free and signs nothing in-browser; reads
- * and sends are proxied to the backend. See SKILL.md for the full flow and the
- * mock-connector fallback.
+ * The injected provider is dependency-free and signs nothing in-browser. Reads
+ * are proxied to the backend; sends and signatures are proxied only to a
+ * writable Anvil backend — under `--rpc` or `--impersonate` the provider is
+ * read-only and rejects them up front (EIP-1193 4100). See SKILL.md for the
+ * full flow and the mock-connector fallback.
  */
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +36,7 @@ const log = (s: string) => process.stderr.write(`[inject-wallet] ${s}\n`);
 
 export async function queryChainId(rpcUrl: string): Promise<number> {
 	const result = await jsonRpc(rpcUrl, { method: "eth_chainId" });
-	if (typeof result !== "string") throw new Error(`could not read chainId from ${rpcUrl}`);
+	if (typeof result !== "string") throw new Error("could not read chainId from RPC endpoint");
 	return Number.parseInt(result, 16);
 }
 
@@ -88,6 +90,16 @@ export function resolveConnectedAddress(opts: {
 }
 
 /**
+ * Whether the injected provider must reject every send/sign. True for an `--rpc`
+ * backend (we hold no key for it, and a write would reach the user's real
+ * endpoint) and for read-only `--impersonate` (we report the address but hold no
+ * key). Anvil without `--impersonate` signs for us, so it stays writable. Pure.
+ */
+export function isReadOnlyBackend(opts: { backend: Backend; impersonate?: string }): boolean {
+	return opts.backend.kind === "rpc" || Boolean(opts.impersonate);
+}
+
+/**
  * Exit code policy: 0 = ok, 2 = something to look at. A route is "ok" when it
  * has no error AND (mock mode, where connection is app-handled) OR it connected
  * OR a screenshot was produced.
@@ -129,14 +141,26 @@ async function main(): Promise<number> {
 	if (!options.dryRun) mkdirSync(outDir, { recursive: true });
 	const workDir = mkdtempSync(join(tmpdir(), "inject-wallet-"));
 	const scriptDir = import.meta.dirname;
-
-	const cleanups: Array<() => void> = [];
+	// Registered first so the reverse-order run below fires it LAST, after the
+	// dev server and Anvil have stopped. teardown()'s own --no-teardown early
+	// return covers the skip: workDir holds wallet-config.js + the stripped
+	// provider.js, the only way to replay the injected session against the
+	// processes we deliberately left running.
+	const cleanups: Array<() => void> = [
+		() => {
+			try {
+				rmSync(workDir, { recursive: true, force: true });
+			} catch (err) {
+				log(`could not remove ${workDir}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		},
+	];
 	let toredown = false;
 	const teardown = () => {
 		if (toredown) return; // idempotent: a signal handler + the finally block both call this
 		toredown = true;
 		if (!options.teardown) {
-			log("--no-teardown: leaving Anvil + dev server running");
+			log(`--no-teardown: leaving Anvil + dev server running; injected scripts in ${workDir}`);
 			return;
 		}
 		for (const fn of [...cleanups].reverse()) {
@@ -193,7 +217,10 @@ async function main(): Promise<number> {
 			address,
 			chainId,
 			rpcUrl,
-			impersonated: Boolean(options.impersonate),
+			readOnly: isReadOnlyBackend({
+				backend: options.backend,
+				impersonate: options.impersonate,
+			}),
 		};
 
 		// 2. Boot the dev server.

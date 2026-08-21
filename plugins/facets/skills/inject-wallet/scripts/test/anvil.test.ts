@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAnvilArgs, startAnvil } from "../lib/anvil.ts";
+import { buildAnvilArgs, makeRedactor, startAnvil } from "../lib/anvil.ts";
+import type { ChildLike } from "../lib/child.ts";
 import { fakeChild } from "./fake-child.ts";
 
 describe("buildAnvilArgs", () => {
@@ -16,6 +17,25 @@ describe("buildAnvilArgs", () => {
 			"--fork-url",
 			"https://rpc.example",
 		]);
+	});
+});
+
+describe("makeRedactor", () => {
+	it("is the identity when there is no fork url", () => {
+		expect(makeRedactor(undefined)("anvil --port 8545")).toBe("anvil --port 8545");
+	});
+
+	it("scrubs every occurrence, case-insensitively", () => {
+		const redact = makeRedactor("https://Eth-Mainnet.example/v2/KEY");
+		expect(
+			redact("--fork-url https://eth-mainnet.example/v2/KEY (https://Eth-Mainnet.example/v2/KEY)"),
+		).toBe("--fork-url <redacted> (<redacted>)");
+	});
+
+	it("treats regex metacharacters in the url as literals", () => {
+		const redact = makeRedactor("https://rpc.example/v2/a+b?c=1");
+		expect(redact("url https://rpc.example/v2/a+b?c=1 end")).toBe("url <redacted> end");
+		expect(redact("url https://rpcXexample/v2/aab?c=1 end")).toContain("rpcXexample");
 	});
 });
 
@@ -41,6 +61,116 @@ describe("startAnvil", () => {
 		expect(handle.rpcUrl).toBe("http://127.0.0.1:8545");
 		expect(handle.chainId).toBe(31337);
 		expect(handle.address).toBe("0xAbC");
+	});
+
+	it("redacts the fork url from anvil's own output in failure messages", async () => {
+		// anvil echoes the fork endpoint in its startup banner and in reqwest
+		// errors; that output is buffered into `tail` and interpolated into the
+		// thrown message, which main() prints to stderr. Redacting only the logged
+		// argv (formatAnvilCommand) would leave the credential in this path.
+		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		// Deliberately split the URL across two `data` chunks: a stream handler sees
+		// arbitrary boundaries, and neither half contains the whole URL.
+		const banner = `Fork\n  Endpoint:       ${forkUrl}\n`;
+		const cut = banner.indexOf("SUPERSECRET") + 5;
+		const chunks = [banner.slice(0, cut), banner.slice(cut)];
+		const logs: string[] = [];
+		const child: ChildLike = {
+			stdout: {
+				on: (_event, cb) => {
+					for (const c of chunks) cb(Buffer.from(c));
+				},
+			},
+			stderr: { on: () => undefined },
+			on: () => undefined,
+			exitCode: 1,
+			killed: false,
+			kill: () => undefined,
+		};
+		const err = await startAnvil({
+			port: 8545,
+			forkUrl,
+			log: (line) => logs.push(line),
+			spawnAnvil: () => child,
+			timeoutMs: 1000,
+			pollMs: 5,
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).toContain("exited early");
+		expect(message).toContain("<redacted>");
+		expect(message).not.toContain("SUPERSECRETKEY");
+		// The logged argv goes through the same single redactor.
+		expect(logs.join("\n")).toContain("--fork-url <redacted>");
+		expect(logs.join("\n")).not.toContain("SUPERSECRETKEY");
+	});
+
+	it("keeps stdout and stderr partial lines apart (no cross-stream splicing)", async () => {
+		// One shared reassembly buffer would prepend stdout's held-back partial line
+		// to the next stderr chunk, splitting the fork URL across two tail entries so
+		// the redactor matches neither half — and garbling the fatal error line.
+		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		let outCb: ((c: Buffer) => void) | undefined;
+		// startAnvil registers stdout first, then stderr; drive the interleaved
+		// writes from the stderr registration so both handlers are attached.
+		const child: ChildLike = {
+			stdout: {
+				on: (_e, cb) => {
+					outCb = cb;
+				},
+			},
+			stderr: {
+				on: (_e, errCb) => {
+					// stdout opens a partial line, stderr writes a whole one, then
+					// stdout completes its line.
+					outCb?.(Buffer.from("Fork\n  Endpoint: https://eth-mainnet.exam"));
+					errCb(Buffer.from("error: connection refused\n"));
+					outCb?.(Buffer.from("ple/v2/SUPERSECRETKEY\n"));
+				},
+			},
+			on: () => undefined,
+			exitCode: 1,
+			killed: false,
+			kill: () => undefined,
+		};
+		const err = await startAnvil({
+			port: 8545,
+			forkUrl,
+			log: () => undefined,
+			spawnAnvil: () => child,
+			timeoutMs: 1000,
+			pollMs: 5,
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).not.toContain("SUPERSECRETKEY");
+		expect(message).toContain("Endpoint: <redacted>");
+		expect(message).toContain("error: connection refused");
+	});
+
+	it("folds an unterminated final line into the failure message, redacted", async () => {
+		// A process dying mid-line leaves its last (usually fatal) line in the
+		// stream's carry; dropping it would lose the most useful diagnostic.
+		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		const child: ChildLike = {
+			stdout: {
+				on: (_e, cb) => cb(Buffer.from(`Error: reqwest error connecting to ${forkUrl}`)),
+			},
+			stderr: { on: () => undefined },
+			on: () => undefined,
+			exitCode: 1,
+			killed: false,
+			kill: () => undefined,
+		};
+		const err = await startAnvil({
+			port: 8545,
+			forkUrl,
+			log: () => undefined,
+			spawnAnvil: () => child,
+			timeoutMs: 1000,
+			pollMs: 5,
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).toContain("Error: reqwest error connecting to <redacted>");
+		expect(message).not.toContain("SUPERSECRETKEY");
 	});
 
 	it("throws when anvil exits early", async () => {

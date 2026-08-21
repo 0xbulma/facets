@@ -1,67 +1,74 @@
 # Skill & plugin authoring rubric
 
-The canonical authoring contract for Claude Code **skills** and **plugins**, distilled from Anthropic's Agent Skills guidance (the `skill-creator` pattern) and layered with the repo-specific conventions the review reads from `PROJECT_CONTEXT` (the root `AGENTS.md` / `CLAUDE.md`). This is the in-repo source of truth so the `skill-authoring` agent does not depend on an external skill being installed.
+The canonical authoring contract for both Facets hosts: Claude Code under `plugins/facets/` and Codex at the repository root. Repo guidance wins over generic platform defaults.
 
-**Repo rules win.** Where `PROJECT_CONTEXT` documents its own versioning, frontmatter, or inventory rules (facets' `CLAUDE.md` does, in detail), those are binding and override the generic defaults below. Use this rubric to fill the gaps and to catch the failure modes a repo's own docs assume but don't restate on every change.
+## 1. Skill frontmatter
 
-## 1. SKILL.md frontmatter contract
+Shared:
 
-- **`name`** — required; kebab-case; **MUST equal the skill's directory name** (`skills/foo/SKILL.md` → `name: foo`). A rename that updates the directory but not `name:` (or vice-versa) is a contract break.
-- **`description`** — required, non-empty. Third person. State **what it does AND when to use it** (the trigger phrases that tell the model to invoke it). A vague description is why a skill never fires.
-- **`version`** — required; semver (`MAJOR.MINOR.PATCH`).
-- **No XML angle brackets (`<` / `>`) anywhere in the frontmatter block.** This is a hard security restriction in the Anthropic Skills guide. Use bare identifiers (`HAS_WEB3`, not `<HAS_WEB3>`); reserve angle-bracket placeholders for the body. FIX: drop the brackets or move the placeholder out of frontmatter.
-- **`disable-model-invocation: true`** — set this on any skill that is invoked by *another* skill, or reached through a separate path, so it stays out of the user's slash-command menu. A dispatcher/engine skill that appears in the menu is a contract break.
+- `name` is required, kebab-case, and matches the skill directory.
+- `description` is required, nonempty, and says what the skill does plus concrete when-to-use triggers.
 
-## 2. Plugin manifest (`.claude-plugin/plugin.json`)
+Claude Code skills under `plugins/facets/skills/`:
 
-- Required fields: `name`, `description`, `version`.
-- **Bump `version` on ANY change to the plugin surface** — SKILL.md, agents, references, hooks, bin, description. The marketplace updater keys cache invalidation off this field: leave it unchanged and `/plugin marketplace update` short-circuits, so every existing install keeps serving the stale cache (old description, old agent roster, old install script) indefinitely. **This is the single highest-signal authoring miss** — a plugin-surface diff with no `version` change is a high-severity finding on its own. FIX: bump per the repo's semver rules (new skill/agent/flag/prereq → minor; prompt-only edit → patch; breaking rename/shape change → major).
+- Require a semver `version` and bump it when that skill changes.
+- This repo forbids XML angle brackets in frontmatter.
+- `disable-model-invocation: true` makes a workflow user-only; it does not hide it from the `/` menu.
+- `user-invocable: false` hides an internal skill from the `/` menu. An engine consumed by direct file delegation may set both flags; a user route such as `setup` must remain user-invocable.
 
-## 3. Marketplace manifest (`.claude-plugin/marketplace.json`)
+The root Codex `skills/facets/SKILL.md` intentionally permits exactly `name` and `description`. Do not require a per-skill version, Claude invocation flags, or Claude-only frontmatter rules. Validate its route table and referenced files. When `agents/openai.yaml` exists, keep its display name, short description, and default prompt aligned; the default prompt names `$facets`.
 
-- Valid JSON; `name`, `owner.name`, and a non-empty `plugins` array.
-- Any human-readable **enumeration** (skill counts, the skill list, the agent-panel list) must match reality. A description claiming "thirteen skills" when fourteen ship is drift users see first.
+## 2. Manifests and cache invalidation
 
-## 4. Progressive disclosure & structure
+Claude:
 
-- **SKILL.md stays concise** — the high-level procedure. Push heavy, on-demand detail into `references/*.md` and load it only when needed. Put **deterministic logic in `scripts/`**, not in English prose the model re-derives each run ("code is deterministic; language interpretation isn't").
-- **Don't put `commands/` or `skills/` inside `.claude-plugin/`** — only `plugin.json` lives there.
-- **Don't reference files outside the plugin root** (`../shared-utils`) — plugins are copied to a cache; siblings won't follow.
-- A reference cited by an agent (`Cross-check references/X.md`) must exist; a reference's `## Consumers` list and the citing agents must stay bidirectional.
+- `plugins/facets/.claude-plugin/plugin.json` requires `name`, `description`, and semver `version`.
+- Any change under `plugins/facets/**` requires a Claude plugin-version bump. Existing installs otherwise keep the stale cached plugin.
+- `.claude-plugin/marketplace.json` requires `name`, `owner.name`, and a nonempty plugin array.
 
-## 5. Agent frontmatter contract (review-engine personas)
+Codex:
 
-Every `agents/*.md`:
+- `.codex-plugin/plugin.json` requires valid `name`, semver `version`, description, author, `skills`, and interface metadata. Its paths and referenced files must exist.
+- `.agents/plugins/marketplace.json` must be valid, select the matching plugin, and provide a valid source, install/auth policy, and category.
+- Any change under `.codex-plugin/**`, `.agents/plugins/**`, `skills/facets/**`, or `plugins/facets/**` requires a Codex plugin-version bump. The Codex package consumes shared Claude assets, so a shared change requires both platform bumps.
 
-- `name` matches the filename (`web3.md` → `name: web3`).
-- `version` is semver.
-- `kind: baseline | conditional`. **`baseline` must NOT declare a `trigger:`; `conditional` MUST.**
-- A conditional agent's `trigger:` flag **must be defined in the engine's Step-4 flag-detection block** — an undeclared or typo'd flag means the agent silently never launches. FIX: add the `HAS_*` definition bullet to the engine Step 4 in the same change.
-- `applies:` / `out-of-scope:` / `focus:` present; severity calibration present (a `## Severity guidance` body section or `severity-guidance:` frontmatter — either, but one is required).
-- No XML angle brackets in the frontmatter block (same rule as §1).
+## 3. Progressive disclosure and packaging
 
-## 6. Cross-file inventory invariants
+- Keep routers concise. Put route-specific detail in `references/*.md` and deterministic parsing/state logic in `scripts/`.
+- Every cited reference, script, template, persona, and UI metadata file must exist in the installed package. Resolve relative paths from the consuming `SKILL.md`.
+- Claude plugins are cached from `plugins/facets/`; do not point outside that plugin root. Codex installs from the repository root, so its router may reuse `plugins/facets/` assets inside that package.
+- Only `plugin.json` belongs in `.claude-plugin/`; do not nest `skills/` or `commands/` there.
+- A persona reference and its `## Consumers` list must agree in both directions.
 
-Adding / renaming / removing a skill or agent is **never** a one-file change. Every enumeration must move atomically, or it's drift:
+## 4. Review-persona contract
 
-- `plugin.json` `version` (always) and the touched file's own `version:`.
-- `marketplace.json` description count + list.
-- Both `README.md` files — counts, the directory tree, and the per-skill / per-agent bullets.
-- The repo guide (`CLAUDE.md`) — skill list, invoke list, and the mental-model agent counts (`N baseline + M conditional`).
-- The test suite's inventory locks (for facets: `SKILLS_ALL`, the "N skills exist" name, the exact agent-file count, and the smoke-install greps).
+Every `plugins/facets/skills/pr-review-engine/agents/*.md`:
 
-A one-sided update reads as "covered" but ships an inconsistency the bats suite will fail on. Flag the specific files left behind.
+- Has `name` matching its filename and a bumped semver `version` when edited.
+- Has `kind: baseline | conditional`; baseline has no `trigger`, conditional has one.
+- Has `applies`, `out-of-scope`, `focus`, and severity guidance.
+- Uses only trigger flags defined by both the Claude engine and the Codex conditional-flag contract. An unknown flag makes that host silently omit the persona.
+- Contains no XML angle brackets in frontmatter.
 
-## 7. Severity calibration
+## 5. Cross-host inventory invariants
 
-- **High** — missing `plugin.json` version bump on a plugin-surface change; frontmatter contract violation (name mismatch, XML brackets in frontmatter, missing `version`, baseline-with-trigger / conditional-without-trigger); a new conditional agent whose trigger flag isn't declared in the engine; cross-file inventory drift (manifest / README / repo-guide / test out of sync with the actual skills or agents).
-- **Medium** — `disable-model-invocation` missing on an engine/dispatcher-style skill; a reference cited by an agent that doesn't exist (or a broken `## Consumers` backlink); deterministic logic expressed only in prose where a script is the established pattern.
-- **Low** — a description that omits when-to-use triggers; structure nits that still parse.
-- **Omit** — wording/style preferences, reordering, and "you could also" suggestions. Authoring review flags contract breaks, not taste.
+Adding, renaming, or removing a route/persona is never a one-file change:
+
+- Every user-invocable Claude route must be present in the Codex router; every router reference must resolve.
+- Both hosts must discover every persona from `agents/*.md`, select the same baseline/conditional set, and preserve exact persona attribution. Codex may bound reviewer concurrency (at most three in flight, starting the next as soon as any reviewer returns), but may not batch behind a wave barrier, combine personas, or omit applicable ones.
+- Conditional trigger tokens in persona frontmatter must be defined on both hosts.
+- Human-readable route/persona enumerations in manifests, both READMEs, and repo guidance must match disk.
+- Tests derive route, reference, persona, and fix-rubric inventories from the filesystem/frontmatter. Do not add a second hardcoded list that can drift.
+
+## 6. Severity
+
+- **High:** required platform version not bumped; name/frontmatter contract broken; conditional trigger missing on either host; a route/persona exists on only one host; manifest or public inventory contradicts disk.
+- **Medium:** internal/user invocation flags expose or hide the wrong Claude route; a cited packaged asset is absent; a Consumers backlink is one-sided; established deterministic logic was replaced with prompt-only parsing.
+- **Low:** trigger description is materially incomplete but the skill remains reachable.
+- **Omit:** wording, ordering, and stylistic preferences without a behavior or packaging impact.
 
 ## Consumers
 
-This reference is the **shared authoring contract**, cited from both the review side and the implement side so the same rules govern writing a change and grading it:
-
-- `skill-authoring` (review-engine agent) — this reference IS its rubric; it grades a diff's authoring conformance against it.
-- `implement-feedback` (skill) — reads it in Step 5 as the checklist to satisfy *while writing* a change, so what it produces passes `skill-authoring` review.
+- `skill-authoring` grades both Claude and Codex authoring surfaces against this reference.
+- `implement-feedback` reads it while writing changes, so implementation and review use the same contract.
+- Codex `facets` review and feedback routes load it through the persona or directly.

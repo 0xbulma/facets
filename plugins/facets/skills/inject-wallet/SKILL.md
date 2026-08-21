@@ -1,7 +1,7 @@
 ---
 name: inject-wallet
-version: 0.3.0
-description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil or an RPC. Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
+version: 0.4.0
+description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil (an `--rpc` backend is read-only). Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
 ---
 
 # /facets:inject-wallet — connect a wallet, then screenshot the dApp
@@ -9,9 +9,16 @@ description: Connect a test wallet so an agent can spin up a dev server and brow
 A wallet-less agent browser stalls at Reown AppKit's connect modal and never
 reaches the authenticated UI. This skill injects a dependency-free **EIP-1193
 provider** before the page loads and announces it over **EIP-6963** (AppKit's
-wallet-discovery standard), so AppKit lists and connects an "E2E Wallet". Reads,
-`personal_sign`, and `eth_sendTransaction` are proxied to the chain backend
-(local Anvil fork or an existing RPC) — there is no in-browser cryptography.
+wallet-discovery standard), so AppKit lists and connects an "E2E Wallet". Reads
+are proxied to either chain backend; `personal_sign` and `eth_sendTransaction`
+are proxied only to a **local Anvil** node, which holds the key and signs for us
+— there is no in-browser cryptography. An `--rpc` backend is **read-only**: we
+hold no key for it, so the provider rejects every send/sign up front with an
+EIP-1193 `4100` rather than relaying it to your endpoint. That guard prevents
+accidents; it is **not** an isolation boundary — the backend URL is injected
+into the page as `window.e2eWalletConfig.rpcUrl`, so any script on the origin
+can read and call it directly. Pass a keyless/public endpoint or a same-origin
+proxy, never a URL whose path or query carries an API key.
 
 The heavy lifting lives in `scripts/` (a typed Node CLI). This skill is the thin
 wrapper: pick the routes, mode, and backend, then run the CLI and interpret the
@@ -123,12 +130,14 @@ skips injection. Wire it per `references/mock-connector.md`, then re-run with
   known, zero value). Never pass a real private key. The mock connector is
   env-gated so it cannot reach production. The injected provider exists only in
   the agent's ephemeral browser session.
-- **`--impersonate` is read-only.** It reports an address you don't hold the key
-  for, so reads return that address's real on-chain state but **sends and
-  signatures are rejected** (the provider throws an EIP-1193 `4100` with a clear
-  message). SIWE login, Permit2, and any typed-data/`personal_sign` step cannot
-  complete — that's inherent, not a bug. For those, connect as a key-holding
-  Anvil account (drop `--impersonate`) or use the mock connector (`--mode mock`,
+- **`--rpc` and `--impersonate` are read-only.** Both leave the provider without
+  a key — `--rpc` because the remote endpoint holds none for us, `--impersonate`
+  because it reports an address you don't hold the key for — so reads return real
+  on-chain state but **sends and signatures are rejected** (the provider throws an
+  EIP-1193 `4100` with a clear message, and never relays the call upstream). SIWE
+  login, Permit2, and any typed-data/`personal_sign` step cannot complete — that's
+  inherent, not a bug. For those, connect as a key-holding **Anvil** account
+  (`--anvil`, without `--impersonate`) or use the mock connector (`--mode mock`,
   Step 5). The connect helper flips `e2eConnected` on `eth_requestAccounts`
   *before* any signature, so the connected screenshot still lands even when a
   later SIWE step is rejected.

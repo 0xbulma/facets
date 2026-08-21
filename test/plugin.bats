@@ -1,20 +1,257 @@
 #!/usr/bin/env bats
 #
-# Validates the shape of this repo as a Claude Code plugin marketplace.
+# Validates the Codex skill and Claude Code plugin marketplace.
 # Run: bats test/plugin.bats
 #
 # Install bats with: brew install bats-core
 #
 
+frontmatter_value() {
+  key="$1"
+  file="$2"
+  awk -v key="$key" 'NR == 1 && /^---$/{f=1; next} f && /^---$/{exit} f && $0 ~ "^" key ":" {sub("^" key ":[[:space:]]*", ""); print; exit}' "$file"
+}
+
+# Fail loudly on a version that could not be read. `git show` of a missing blob
+# piped into `jq` yields an empty string with exit 0, and semver_gt coerces ""
+# (and a literal "null") to 0 — which would silently pass the version guard over
+# this repo's most-emphasized footgun (an unbumped plugin.json).
+require_semver() {
+  case "$1" in
+    [0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    *) echo "could not read a semver for $2 (got: '$1')" >&2; return 1 ;;
+  esac
+}
+
+semver_gt() {
+  awk -v new="$1" -v old="$2" 'BEGIN {
+    split(new, n, "."); split(old, o, ".")
+    for (i = 1; i <= 3; i++) {
+      sub(/[^0-9].*$/, "", n[i]); sub(/[^0-9].*$/, "", o[i])
+      if ((n[i] + 0) > (o[i] + 0)) exit 0
+      if ((n[i] + 0) < (o[i] + 0)) exit 1
+    }
+    exit 1
+  }'
+}
+
 setup() {
   # Resolve repo root from this test file's location.
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  CODEX_MARKETPLACE="$REPO_ROOT/.agents/plugins/marketplace.json"
+  CODEX_PLUGIN_MANIFEST="$REPO_ROOT/.codex-plugin/plugin.json"
+  CODEX_SKILL="$REPO_ROOT/skills/facets/SKILL.md"
+  CODEX_REFS="$REPO_ROOT/skills/facets/references"
+  CODEX_SETUP="$REPO_ROOT/plugins/facets/bin/install-prereqs.sh"
   MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
   PLUGIN_DIR="$REPO_ROOT/plugins/facets"
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL="pr-fix pr-review-gh pr-review-local setup pr-create convert-tib-to-linear tib-create pr-switch tip-create tib-ship ts-conventions inject-wallet feedback implement-feedback pr-review-engine"
+  # Every directory whose contents ship to a user. The leaked-content guards
+  # below must cover the Codex surface as well as the Claude plugin.
+  # A bash array, not a string: an unquoted string expansion word-splits on a
+  # space in REPO_ROOT, and grep then exits 2 (path error) — which `-ne 0`
+  # would accept as "no match", silently scanning nothing.
+  SHIPPED_DIRS=("$PLUGIN_DIR" "$REPO_ROOT/skills/facets" "$REPO_ROOT/.codex-plugin" "$REPO_ROOT/.agents")
+  # Derive from skill DIRECTORIES, not from */SKILL.md: globbing the SKILL.md
+  # files would make the "every skill dir has a SKILL.md" test below tautological
+  # (and silently drop a skill that lost its SKILL.md from every downstream test).
+  SKILLS_ALL=$(for skill_dir in "$SKILLS_DIR"/*/; do basename "$skill_dir"; done | sort)
+}
+
+@test "Codex manifests are valid JSON" {
+  run jq empty "$CODEX_PLUGIN_MANIFEST" "$CODEX_MARKETPLACE"
+  [ "$status" -eq 0 ]
+}
+
+@test "Codex marketplace installs the root facets plugin" {
+  run jq -e '
+    .name == "facets" and any(.plugins[];
+      .name == "facets" and
+      .source.source == "url" and
+      .source.url == "https://github.com/0xbulma/facets.git" and
+      .source.ref == "main" and
+      .policy.installation == "AVAILABLE" and
+      .policy.authentication == "ON_INSTALL" and
+      .category == "Developer Tools"
+    )
+  ' "$CODEX_MARKETPLACE"
+  [ "$status" -eq 0 ]
+}
+
+@test "Codex plugin exposes one concise full-suite facets router" {
+  run jq -e '
+    .name == "facets" and
+    (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")) and
+    (.description | length > 0) and
+    (.author.name | length > 0) and
+    .skills == "./skills/" and
+    .interface.displayName == "Facets" and
+    (.interface.shortDescription | length > 0) and
+    (.interface.longDescription | length > 0) and
+    (.interface.developerName | length > 0) and
+    (.interface.category | length > 0) and
+    (.interface.capabilities | type == "array") and
+    (.interface.defaultPrompt | length > 0)
+  ' "$CODEX_PLUGIN_MANIFEST"
+  [ "$status" -eq 0 ]
+
+  [ -f "$CODEX_SKILL" ]
+  [ -f "$REPO_ROOT/AGENTS.md" ]
+  grep -Fq 'CLAUDE.md' "$REPO_ROOT/AGENTS.md"
+  [ "$(find "$REPO_ROOT/skills" -name SKILL.md -type f | wc -l | tr -d ' ')" = "1" ]
+  [ "$(awk '/^---$/{f=!f; next} f && /^name:/{print $2; exit}' "$CODEX_SKILL")" = "facets" ]
+  [ "$(awk 'NR == 1 && /^---$/{f=1; next} f && /^---$/{exit} f && /^[a-z-]+:/{print $1}' "$CODEX_SKILL" | tr -d ':' | sort | tr '\n' ' ' | sed 's/ $//')" = "description name" ]
+  [ "$(wc -w < "$CODEX_SKILL" | tr -d ' ')" -le 500 ]
+
+  linked_refs=$(grep -oE 'references/[a-z0-9-]+\.md' "$CODEX_SKILL" | sort -u)
+  disk_refs=$(find "$CODEX_REFS" -maxdepth 1 -name '*.md' -type f -exec basename {} \; | sed 's#^#references/#' | sort)
+  diff <(printf '%s\n' "$linked_refs") <(printf '%s\n' "$disk_refs") \
+    || { echo "Codex router references and files disagree" >&2; return 1; }
+  [ -f "$CODEX_SETUP" ]
+  run bash -n "$CODEX_SETUP"
+  [ "$status" -eq 0 ]
+  run grep -q 'npx --yes skills add.*-a "$FACETS_AGENT"' "$CODEX_SETUP"
+  [ "$status" -eq 0 ]
+  run grep -Fq '${CODEX_HOME:-$HOME/.codex}/skills/$name/SKILL.md' "$CODEX_SETUP"
+  [ "$status" -eq 0 ]
+
+  for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+    route=$(basename "$(dirname "$skill_file")")
+    [ "$(frontmatter_value user-invocable "$skill_file")" = "false" ] && continue
+    run grep -Fq "\`$route\`" "$CODEX_SKILL"
+    [ "$status" -eq 0 ] || { echo "missing Codex route: $route" >&2; return 1; }
+  done
+  run grep -q '\$facets' "$REPO_ROOT/skills/facets/agents/openai.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "Codex preserves critical port-specific review contracts" {
+  review="$CODEX_REFS/review.md"
+  review_engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  grep -Fq 'Enumerate every `*.md`' "$CODEX_REFS/review.md"
+  grep -Fq 'one read-only reviewer per selected persona' "$CODEX_REFS/review.md"
+  # Pin the concurrency cap, and that it is a sliding window rather than a wave
+  # barrier (a barrier pays the slowest reviewer's tail once per wave).
+  grep -Fq 'at most three in flight' "$CODEX_REFS/review.md"
+  grep -Fq 'as soon as any reviewer returns' "$CODEX_REFS/review.md"
+  grep -Fq '../../plugins/facets/skills/pr-review-engine/SKILL.md' "$review"
+  grep -Fq 'final content of every reviewer prompt' "$review"
+  grep -Fq 'Translate only Claude execution mechanics' "$review"
+
+  for marker in \
+    '**`line` schema.**' \
+    '**`confidence` schema (advisory).**' \
+    '**Stay in scope (avoid scope creep).**' \
+    "**Don't nitpick.**" \
+    "**Intentional changes aren't defects.**" \
+    'A finding that would be **kept** (good shape):' \
+    'A finding that would be **dropped** in Step 6 (bad shape):'
+  do
+    grep -Fq "$marker" "$review_engine" \
+      || { echo "shared reviewer contract missing: $marker" >&2; return 1; }
+  done
+
+  for agent_file in "$AGENTS_DIR"/*.md; do
+    trigger=$(awk '/^---$/{f=!f; next} f && /^trigger:/{sub(/^trigger: */,""); print; exit}' "$agent_file")
+    [ -n "$trigger" ] || continue
+    for flag in $(printf '%s\n' "$trigger" | grep -oE 'HAS_[A-Z0-9_]+' | sort -u); do
+      grep -Fq -- "- \`$flag\`:" "$CODEX_REFS/review.md" \
+        || { echo "Codex review missing trigger $flag from $(basename "$agent_file")" >&2; return 1; }
+    done
+  done
+
+  grep -Fq 'keep maximum severity independently' "$CODEX_REFS/review.md"
+  authoring_ref="$SKILLS_DIR/pr-review-engine/references/skill-authoring.md"
+  grep -Fq 'Do not require a per-skill version' "$authoring_ref"
+  grep -Fq '.codex-plugin/plugin.json' "$authoring_ref"
+  run grep -Eq '^\| `implement-feedback` \| .*references/review\.md.*references/github\.md' "$CODEX_SKILL"
+  [ "$status" -eq 0 ]
+  run grep -Fq '**Fix watch:** never gate on head SHA.' "$CODEX_REFS/github.md"
+  [ "$status" -eq 0 ]
+  run grep -Fq 'RESULT_JSON` does not collect browser-console output or HTTP status' "$CODEX_REFS/wallet.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "Codex separates uncommitted and commit-authorized review loops" {
+  review="$CODEX_REFS/review.md"
+  grep -Fq '**Uncommitted variant (default):**' "$review"
+  grep -Fq '**Commit-authorized variant:**' "$review"
+  grep -Fq 'last-green snapshot' "$review"
+  grep -Fq 'last green commit' "$review"
+  grep -Fq 'Convergence requires no critical/high/medium findings and `FAILED_AGENTS == 0`' "$review"
+  grep -Fq 'never call `gh` or read PR titles, bodies, comments' "$review"
+  grep -Fq 'only after complete clean convergence' "$review"
+}
+
+@test "Codex tib-ship preserves acknowledged override flows" {
+  planning="$CODEX_REFS/planning.md"
+  grep -Fq 'require explicit confirmation to proceed' "$planning"
+  grep -Fq 'reuse it, replace it, or choose another name' "$planning"
+  grep -Fq 'ask whether to stop or proceed' "$planning"
+  grep -Fq 'if it already passes' "$planning"
+  grep -Fq 'extend, accept-and-continue with the branch marked not review-clean, or stop' "$planning"
+  grep -Fq 'selecting its commit-authorized variant' "$planning"
+  grep -Fq 'never uses the `pr-review-local --goal` GitHub/push exception' "$planning"
+  grep -Fq 'Every green review-fix commit includes a `TIB: <TIB-ID>` trailer' "$planning"
+}
+
+@test "Codex preserves local feedback and conflict boundaries" {
+  grep -Fq 'ask whether to skip (default) or append anyway' "$CODEX_REFS/feedback.md"
+  grep -Fq 'never mix review-thread fixes into `MERGE_HEAD`' "$CODEX_REFS/github.md"
+}
+
+@test "Codex shared-asset references resolve from its router" {
+  for rel in $(grep -rhoE '\.\./\.\./plugins/facets/[A-Za-z0-9._/*-]+' "$CODEX_SKILL" "$CODEX_REFS" | sort -u); do
+    rel=${rel%\*}
+    [ -e "$(dirname "$CODEX_SKILL")/$rel" ] \
+      || { echo "missing Codex shared asset: $rel" >&2; return 1; }
+  done
+}
+
+@test "Claude and Codex plugin versions move with their surfaces" {
+  base=${FACETS_VERSION_BASE:-origin/main}
+  git -C "$REPO_ROOT" rev-parse --verify "$base^{commit}" >/dev/null 2>&1 \
+    || skip "version base unavailable: $base"
+
+  changed=$(cd "$REPO_ROOT" && {
+    git diff --name-only "$base"...HEAD
+    git diff --name-only
+    git diff --cached --name-only
+    git ls-files --others --exclude-standard
+  } | sort -u)
+
+  if printf '%s\n' "$changed" | grep -Eq '^(\.codex-plugin/|\.agents/plugins/|skills/facets/|plugins/facets/)'; then
+    if git -C "$REPO_ROOT" cat-file -e "$base:.codex-plugin/plugin.json" 2>/dev/null; then
+      old=$(git -C "$REPO_ROOT" show "$base:.codex-plugin/plugin.json" | jq -r .version)
+      new=$(jq -r .version "$CODEX_PLUGIN_MANIFEST")
+      require_semver "$old" "Codex plugin base version at $base"
+      require_semver "$new" "Codex plugin version"
+      semver_gt "$new" "$old" || { echo "Codex plugin version must increase: $old -> $new" >&2; return 1; }
+    fi
+  fi
+
+  if printf '%s\n' "$changed" | grep -q '^plugins/facets/'; then
+    old=$(git -C "$REPO_ROOT" show "$base:plugins/facets/.claude-plugin/plugin.json" | jq -r .version)
+    new=$(jq -r .version "$PLUGIN_MANIFEST")
+    require_semver "$old" "Claude plugin base version at $base"
+    require_semver "$new" "Claude plugin version"
+    semver_gt "$new" "$old" || { echo "Claude plugin version must increase: $old -> $new" >&2; return 1; }
+  fi
+
+  for path in $changed; do
+    case "$path" in
+      plugins/facets/skills/*/SKILL.md|plugins/facets/skills/pr-review-engine/agents/*.md)
+        git -C "$REPO_ROOT" cat-file -e "$base:$path" 2>/dev/null || continue
+        old=$(git -C "$REPO_ROOT" show "$base:$path" | awk '/^---$/{f=!f; next} f && /^version:/{print $2; exit}')
+        new=$(frontmatter_value version "$REPO_ROOT/$path")
+        require_semver "$old" "$path base version at $base"
+        require_semver "$new" "$path version"
+        semver_gt "$new" "$old" || { echo "$path version must increase: $old -> $new" >&2; return 1; }
+        ;;
+    esac
+  done
 }
 
 @test "marketplace.json is valid JSON" {
@@ -37,9 +274,22 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "fifteen skills exist at expected paths" {
+@test "every direct Claude skill directory has a SKILL.md" {
   for skill in $SKILLS_ALL; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || { echo "missing $SKILLS_DIR/$skill/SKILL.md" >&2; return 1; }
+  done
+}
+
+@test "public Claude route inventories match user-invocable skills" {
+  expected=$(for skill in $SKILLS_ALL; do
+    skill_file="$SKILLS_DIR/$skill/SKILL.md"
+    [ "$(frontmatter_value user-invocable "$skill_file")" = false ] || echo "$skill"
+  done | sort)
+
+  for doc in "$REPO_ROOT/README.md" "$PLUGIN_DIR/README.md"; do
+    actual=$(grep -oE '/facets:[a-z0-9-]+' "$doc" | sed 's#/facets:##' | sort -u)
+    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") \
+      || { echo "$doc route inventory disagrees with skill frontmatter" >&2; return 1; }
   done
 }
 
@@ -75,32 +325,36 @@ setup() {
 }
 
 @test "no leaked @morpho-org references in plugins/" {
-  run grep -rn '@morpho-org' "$PLUGIN_DIR"
+  run grep -rn '@morpho-org' "${SHIPPED_DIRS[@]}"
   # grep returns 1 when no match — that's what we want.
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked 'morpho' references anywhere in plugins/" {
   # Skills imported from morpho-org/sdks must be fully repo-agnostic.
   # No exceptions — including author/owner metadata.
-  run grep -rni --exclude-dir=node_modules 'morpho' "$PLUGIN_DIR"
-  [ "$status" -ne 0 ]
+  run grep -rni --exclude-dir=node_modules 'morpho' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked personal-name references in plugins/" {
   # Only the public 0xbulma handle is permitted.
-  run grep -rn 'Benjamin A\|benjamin@' "$PLUGIN_DIR"
-  [ "$status" -ne 0 ]
+  run grep -rn 'Benjamin A\|benjamin@' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked <HOME> template tokens in plugins/" {
-  run grep -rn '<HOME>' "$PLUGIN_DIR"
-  [ "$status" -ne 0 ]
+  run grep -rn '<HOME>' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
-@test "no leaked /.agents/ absolute paths in plugins/" {
-  run grep -rn '/\.agents/' "$PLUGIN_DIR"
-  [ "$status" -ne 0 ]
+@test "no leaked /.agents/ absolute paths outside the shared installer" {
+  # The installer intentionally detects Codex's global npx-skills location.
+  # $REPO_ROOT/.agents is the Codex marketplace dir itself — scan it for the
+  # other guards but exclude it here, where the pattern is the path literal.
+  run grep -rn --exclude=install-prereqs.sh '/\.agents/' \
+    "$PLUGIN_DIR" "$REPO_ROOT/skills/facets" "$REPO_ROOT/.codex-plugin"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked ~/.claude/skills/ hardcoded paths in agents + skills" {
@@ -114,7 +368,7 @@ setup() {
     "$SKILLS_DIR/pr-fix" \
     "$SKILLS_DIR/pr-review-gh" \
     "$SKILLS_DIR/pr-review-local"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no hardcoded shared /tmp review-state paths in plugins/" {
@@ -130,17 +384,22 @@ setup() {
     -e '/tmp/pr-review-gh-' \
     "$PLUGIN_DIR"
   # grep exits 1 when no match — that's what we want.
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
-@test "agent inventory is exactly 17 files" {
-  # 6 baseline + 11 conditional. Three combos (ci-release-security,
-  # ui-styling-accessibility, code-simplifier-performance) split per
-  # TIP-2026-05-20-persona-refinement (11 - 3 + 7 = 15); api-security
-  # added for the server-side trust boundary: 15 + 1 = 16; skill-authoring
-  # added for the skill/plugin authoring surface: 16 + 1 = 17.
+@test "documented persona counts match the filesystem" {
   count=$(find "$AGENTS_DIR" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  [ "$count" = "17" ]
+  baseline=$(for agent_file in "$AGENTS_DIR"/*.md; do [ "$(frontmatter_value kind "$agent_file")" = baseline ] && echo x; done | wc -l | tr -d ' ')
+  conditional=$(for agent_file in "$AGENTS_DIR"/*.md; do [ "$(frontmatter_value kind "$agent_file")" = conditional ] && echo x; done | wc -l | tr -d ' ')
+
+  for doc in "$REPO_ROOT/README.md" "$PLUGIN_DIR/README.md" "$REPO_ROOT/CLAUDE.md"; do
+    grep -Eq "(^|[^0-9])${count}[- ](agent|reviewer)|${count} versioned reviewers" "$doc" \
+      || { echo "$doc does not reflect $count personas" >&2; return 1; }
+  done
+  for doc in "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md"; do
+    grep -Fq "$baseline baseline + $conditional conditional" "$doc" \
+      || { echo "$doc does not reflect $baseline baseline + $conditional conditional" >&2; return 1; }
+  done
 }
 
 @test "list-fix-rubric-agents.sh returns exit 0 + empty stdout when no agent matches" {
@@ -158,13 +417,17 @@ setup() {
   [ -z "$output" ]    || { echo "expected empty stdout; got: $output" >&2; return 1; }
 }
 
-@test "pr-fix fix-rubric agent set is exactly the five expected" {
-  # pr-fix's confidence gate (Step 6a) walks $AGENTS_DIR for files with a
-  # `## Fix rubric` section. Locks the set so a fix-rubric section can't
-  # be silently added/removed without an explicit test update.
-  # The bundled script `scripts/list-fix-rubric-agents.sh` is the single
-  # source of truth for the discovery; this test pins its output.
-  expected="ci-security dependencies docs release-integrity web3"
+@test "pr-fix fix-rubric discovery matches persona bodies" {
+  expected=$(grep -l '^## Fix rubric$' "$AGENTS_DIR"/*.md \
+             | xargs -n1 basename \
+             | sed 's/\.md$//' \
+             | sort | tr '\n' ' ' | sed 's/ $//')
+  # Pin the set explicitly as well: `expected` is the script's own algorithm, so
+  # comparing the two alone can only prove the script agrees with itself. The pin
+  # is what forces a deliberate test update when a `## Fix rubric` section is
+  # added or removed — i.e. when pr-fix's auto-apply surface changes.
+  [ "$expected" = "ci-security dependencies docs release-integrity web3" ] \
+    || { echo "fix-rubric persona set changed: $expected" >&2; return 1; }
   actual=$("$SKILLS_DIR/pr-review-engine/scripts/list-fix-rubric-agents.sh" \
            | xargs -n1 basename \
            | sed 's/\.md$//' \
@@ -239,7 +502,7 @@ setup() {
     if [ -n "$found" ]; then
       bad="${bad}\n${found}"
     fi
-  done < <(find "$SKILLS_DIR" -type f -name '*.md')
+  done < <(find "$SKILLS_DIR" "$REPO_ROOT/skills/facets" -type f -name '*.md')
   set -e
   [ -z "$bad" ] || { printf 'XML brackets found in frontmatter:%b\n' "$bad" >&2; return 1; }
 }
@@ -277,13 +540,23 @@ setup() {
     || { echo "core.md lost the __LINT_SECTION__ placeholder" >&2; return 1; }
 }
 
-@test "engine and setup skills set disable-model-invocation: true" {
-  # These two skills are invoked by other skills (engine) or by the user
-  # via a separate path (setup). They must not appear in the slash-command
-  # menu — disable-model-invocation: true is what enforces that.
+@test "engine and setup have distinct Claude invocation controls" {
+  # Both block automatic model invocation. Only the directly-read engine is
+  # hidden from the user menu; setup remains a user-invocable route.
   for skill in pr-review-engine setup; do
     flag=$(awk '/^---$/{f=!f; next} f && /^disable-model-invocation:/{print $2; exit}' "$SKILLS_DIR/$skill/SKILL.md")
     [ "$flag" = "true" ] || { echo "$skill/SKILL.md missing disable-model-invocation: true (got: $flag)" >&2; return 1; }
+  done
+  [ "$(frontmatter_value user-invocable "$SKILLS_DIR/pr-review-engine/SKILL.md")" = "false" ]
+  [ "$(frontmatter_value user-invocable "$SKILLS_DIR/setup/SKILL.md")" != "false" ]
+}
+
+@test "Claude authoring detector covers Codex surfaces" {
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  persona="$AGENTS_DIR/skill-authoring.md"
+  for token in '.codex-plugin/plugin.json' '.agents/plugins/marketplace.json' 'agents/openai.yaml'; do
+    grep -Fq "$token" "$engine" || { echo "engine detector missing $token" >&2; return 1; }
+    grep -Fq "$token" "$persona" || { echo "authoring persona missing $token" >&2; return 1; }
   done
 }
 
@@ -484,7 +757,7 @@ setup() {
   # Only treat backticked tokens as consumer names if a matching agent
   # file actually exists under $AGENTS_DIR/<name>.md — otherwise we'd
   # pick up incidental code-formatted prose like `eval()` or `0x...`.
-  for ref_file in "$REFS_DIR"/secrets.md "$REFS_DIR"/injection.md "$REFS_DIR"/effect-cleanup.md "$REFS_DIR"/github-actions.md "$REFS_DIR"/skill-authoring.md; do
+  for ref_file in $(grep -l '^## Consumers$' "$REFS_DIR"/*.md); do
     ref_name=$(basename "$ref_file")
     consumers=$(awk '/^## Consumers/,EOF' "$ref_file" | grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | sort -u)
     for c in $consumers; do
@@ -532,6 +805,84 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"another install-prereqs run is active"* ]] || { echo "missing skip message: $output" >&2; return 1; }
   [ -d "$LOCK" ] || { echo "active holder's lock was removed" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: codex finds a CODEX_HOME install" {
+  # The FACETS_AGENT branch decides whether a prereq counts as already present.
+  # Without this, flipping its `!=` or mis-nesting its brace groups still passes
+  # bash -n + the two literal greps, and every session silently re-runs `npx
+  # skills add` for all 17 prereqs (or never detects a Codex install at all).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home"; CODEX="$FAKE_HOME/.codex"
+  mkdir -p "$CODEX/skills/agent-browser"
+  : > "$CODEX/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-codex"   # the lock dir's parent must exist, or
+                                       # mkdir fails and reads as "lock held"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-codex" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" CODEX_HOME="$CODEX" FACETS_AGENT=codex \
+    run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "codex install not detected: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: claude ignores a CODEX_HOME install" {
+  # Same fixture, no FACETS_AGENT: the Claude branch must look only under
+  # ~/.claude/skills, so the Codex copy must NOT count as present.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home2"; CODEX="$FAKE_HOME/.codex"
+  mkdir -p "$CODEX/skills/agent-browser"
+  : > "$CODEX/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-claude"   # the lock dir's parent must exist, or
+                                       # mkdir fails and reads as "lock held"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-claude" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" CODEX_HOME="$CODEX" \
+    run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→ installing agent-browser"* ]] \
+    || { echo "claude branch wrongly reused the codex install: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: codex finds a ~/.agents install" {
+  # The codex arm is an OR of TWO locations; the CODEX_HOME case above covers
+  # only the first. This case covers the `$HOME/.agents/skills` fallback AND the
+  # `${CODEX_HOME:-$HOME/.codex}` default (no CODEX_HOME is set here), so
+  # deleting either leaves a failing test instead of a silent re-install of all
+  # 17 prereqs on every Codex session.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home4"
+  mkdir -p "$FAKE_HOME/.agents/skills/agent-browser"
+  : > "$FAKE_HOME/.agents/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-agents"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-agents" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" FACETS_AGENT=codex run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "~/.agents fallback not detected: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: claude finds a ~/.claude install" {
+  # The positive Claude path. Together with the two cases above this pins all
+  # three arms, so flipping the branch's `!=`/`=` or mis-nesting its brace
+  # groups fails at least one test rather than passing silently.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home3"
+  mkdir -p "$FAKE_HOME/.claude/skills/agent-browser"
+  : > "$FAKE_HOME/.claude/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-claude2"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-claude2" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "claude install not detected: $output" >&2; return 1; }
 }
 
 @test "install-prereqs.sh lock: reclaims an expired lock and releases on exit" {

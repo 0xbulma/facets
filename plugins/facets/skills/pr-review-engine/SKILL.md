@@ -1,9 +1,10 @@
 ---
 name: pr-review-engine
-version: 0.16.0
+version: 0.17.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
-compatibility: Claude Code only. Uses `disable-model-invocation` (Claude Code-specific frontmatter) to keep the engine invisible to the model's slash-command surface — not portable to Claude.ai or the Messages API.
+compatibility: Claude Code only. Callers read this file directly; Claude invocation controls keep it out of user and model skill surfaces. Not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
+user-invocable: false
 ---
 
 # pr-review-engine — shared multi-lens review dispatcher
@@ -12,8 +13,9 @@ This skill is the shared review engine for the `pr-review-gh`, `pr-review-local`
 `pr-fix`, and `tib-ship` slash commands. It supersedes the previous shared
 dispatcher at `lib/pr-review-base.md`.
 
-Do NOT invoke this skill directly via slash command — it is consumed by other
-skills (the `disable-model-invocation` flag enforces this). Callers resolve
+Do NOT invoke this skill directly — callers read it as a shared contract.
+`user-invocable: false` hides it from the `/` menu and
+`disable-model-invocation: true` blocks automatic/Skill-tool loading. Callers resolve
 branches and head SHA in their own Steps 1–2, then hand control to this skill's
 Steps 3–6.
 
@@ -162,7 +164,7 @@ Compute boolean flags from the diff and from changed files' content. Flag names 
   - **SPA / Vite / Astro:** `src/pages/**/*.{tsx,jsx,astro,mdx}`, `src/routes/**/*.{tsx,jsx}`, `src/App.{tsx,jsx,ts,js}`, `src/main.{tsx,jsx,ts,js}`, `src/index.{tsx,jsx,ts,js}`, `index.html` at repo root.
 
   Component-only changes (e.g. `components/Button.tsx`) intentionally do **not** trigger this flag. Users who want runtime validation in that case should run `/facets:tib-ship` (which always runs runtime-validation after convergence).
-- `HAS_PLUGIN_SKILLS` — true if any changed file is part of a Claude Code skill/plugin authoring surface: matches `**/SKILL.md`, `**/skills/**/agents/*.md`, `**/skills/**/references/*.md`, `.claude-plugin/plugin.json`, or `.claude-plugin/marketplace.json`. Path-based (manifests are JSON, skill files are prose), so it fires even on a docs-only skill diff — exactly when authoring conformance matters. Fires `skill-authoring`.
+- `HAS_PLUGIN_SKILLS` — true if any changed file is part of a Claude Code or Codex skill/plugin authoring surface: `**/SKILL.md`, skill `agents/*.md` or `references/*.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, or `agents/openai.yaml`. Path-based, so it fires even on a docs-only skill diff. Fires `skill-authoring`.
 
 ### Print discovery
 
@@ -305,11 +307,11 @@ Conditional (fire only when their trigger flag is true, 11 agents):
 - `ai-sdk.md` — fires when `HAS_AI_SDK`. Vercel AI SDK usage, streaming, tool calls, structured output.
 - `api-security.md` — fires when `HAS_SERVER_API`. Authn/authz on routes and server actions, boundary input validation, webhook signatures, SSRF, server-held signing keys.
 - `runtime-validation.md` — fires when `HAS_ROUTE_UI`. Boots dev server, navigates changed routes, captures console errors / network 4xx-5xx / screenshots. Excluded by `/facets:tib-ship` from its iteration loop.
-- `skill-authoring.md` — fires when `HAS_PLUGIN_SKILLS`. Reviews Claude Code skill/plugin authoring conformance against `references/skill-authoring.md` + the repo's conventions: required version bumps, the frontmatter contract, name-matches-directory, no XML brackets in frontmatter, `disable-model-invocation`, and the cross-file inventory invariants.
+- `skill-authoring.md` — fires when `HAS_PLUGIN_SKILLS`. Reviews dual-host Claude Code/Codex authoring conformance against `references/skill-authoring.md` + repo conventions: platform-specific manifests, version/frontmatter rules, packaging, trigger parity, and inventories.
 
 The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 17 agents (6 baseline + 11 conditional).
 
-Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
+Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, extend the flag detection on **both** hosts — Step 4 here, and the conditional-flag contract in `skills/facets/references/review.md` — or the Codex host cannot resolve the trigger and marks the panel incomplete.
 
 ## Step 6: Aggregate and deduplicate findings
 
@@ -468,5 +470,5 @@ These exist so the deterministic logic isn't re-derived from English by every ca
 - `references/scope-filter.md` — full rule for the Markdown documentation-example filter, including CommonMark fence handling and known limitations.
 - `references/calibration.md` — rationale for the ±15 tolerance window and the `distance_to_nearest_changed_line` audit signal.
 - `references/marketplace-rubrics.md` — inventory of marketplace skills loaded by individual agents.
-- `references/skill-authoring.md` — canonical Claude Code skill/plugin authoring contract; the rubric for `skill-authoring`.
+- `references/skill-authoring.md` — canonical dual-host Claude Code/Codex authoring contract; the rubric for `skill-authoring`.
 - `references/secrets.md`, `references/injection.md`, `references/effect-cleanup.md` — shared rubric content cross-checked by multiple agents.

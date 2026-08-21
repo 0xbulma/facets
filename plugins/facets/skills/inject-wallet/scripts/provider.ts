@@ -11,14 +11,20 @@
  *
  * Signing strategy — no in-browser cryptography:
  *   Wallet-only methods (accounts, chainId, chain switching) are answered
- *   locally. EVERYTHING else — reads, `personal_sign`, `eth_sendTransaction` —
- *   is proxied to the configured JSON-RPC endpoint. When that endpoint is Anvil
- *   with the dev account unlocked, Anvil signs and sends for us. Older Anvil
+ *   locally. Reads are proxied to the configured JSON-RPC endpoint. Sends and
+ *   signatures are proxied only when the config is NOT `readOnly` — i.e. against
+ *   a writable Anvil backend, where Anvil signs and sends for us; under
+ *   `readOnly` (an `--rpc` backend or `--impersonate`) a method is rejected up
+ *   front with EIP-1193 4100 when it is named in `WRITE_METHODS` or matches
+ *   `WRITE_METHOD_PATTERN`. Separately, the capability probes in
+ *   `UNSUPPORTED_METHODS` answer 4200 in BOTH modes, so a connector falls back
+ *   to `eth_requestAccounts` instead of reading a denial. Older Anvil
  *   builds lack `personal_sign`, so we fall back to `eth_sign` (Anvil's
  *   `eth_sign` applies the EIP-191 personal-message prefix). SIWE-heavy apps
  *   should prefer the mock-connector path — see references/mock-connector.md.
  *
- * Config: read from `window.e2eWalletConfig = { address?, chainId, rpcUrl }`,
+ * Config: read from
+ * `window.e2eWalletConfig = { address?, chainId, rpcUrl, readOnly? }`,
  * seeded by a separate init-script the orchestrator writes at run time. When
  * `address` is omitted the provider derives it from the node's `eth_accounts`
  * (works against Anvil's unlocked accounts).
@@ -37,18 +43,35 @@ type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number | string;
 	readonly rpcUrl: string;
-	/** Read-only "view as": report `address` but reject sends/signs (no key held). */
-	readonly impersonated?: boolean;
+	/**
+	 * Reject every signing/sending method before it reaches the backend. Set for
+	 * an `--rpc` backend (we hold no key there) and for read-only "view as"
+	 * impersonation (we report `address` but hold no key for it).
+	 */
+	readonly readOnly?: boolean;
 };
 
-// Methods that require the address's private key. Under read-only impersonation
-// we hold no key, so these are rejected up front instead of proxied to the
-// backend (where they would fail cryptically or hang the connect flow). This is
+// Methods that require the address's private key, or that broadcast on its
+// behalf. Under read-only we hold no key, so these are rejected up front
+// instead of proxied to the backend (where they would fail cryptically, hang
+// the connect flow, or — for a raw tx — actually reach the user's RPC). This is
 // a deny-list because reads are open-ended (the `default` case proxies any
-// unlisted method); every key-requiring send/sign variant must appear here,
-// including the EIP-5792 batched-send `wallet_sendCalls` modern AppKit emits.
+// unlisted method). It covers the relay-only raw/UserOperation broadcasts
+// (`eth_sendRawTransaction`, `eth_sendRawTransactionConditional`, ERC-4337
+// `eth_sendUserOperation` — a bundler often lives on the very URL passed to
+// `--rpc`) and the EIP-5792 batched-send `wallet_sendCalls`.
+//
+// Every entry here also matches `WRITE_METHOD_PATTERN` below, so the guard is
+// belt-and-braces: the pattern is what actually catches an unlisted variant,
+// and this list keeps the covered methods explicit and auditable if the pattern
+// is ever narrowed. Capability handshakes that mint authority or return a
+// signature do NOT belong here — see `UNSUPPORTED_METHODS`, which rejects them
+// in both modes.
 const WRITE_METHODS = new Set([
 	"eth_sendTransaction",
+	"eth_sendRawTransaction",
+	"eth_sendRawTransactionConditional",
+	"eth_sendUserOperation",
 	"eth_signTransaction",
 	"personal_sign",
 	"eth_sign",
@@ -58,6 +81,23 @@ const WRITE_METHODS = new Set([
 	"eth_signTypedData_v3",
 	"eth_signTypedData_v4",
 	"wallet_sendCalls",
+]);
+
+// A hand-kept name list fails open: the `default:` case relays anything unlisted
+// to the backend, so the next send/sign variant a wallet SDK ships would reach
+// the user's real `--rpc` endpoint. Deny by shape as well as by name.
+const WRITE_METHOD_PATTERN = /^(eth|wallet|personal)_(send|sign)/i;
+
+// Capability handshakes we do not implement. These are NOT key-requiring, so
+// rejecting them with 4100 ("Unauthorized") reads to wagmi/AppKit as a user
+// denial and aborts the connect flow. 4200 ("Unsupported Method") is the signal
+// that makes a connector fall back to `eth_requestAccounts` — which is exactly
+// what the read-only screenshot path needs. Rejected in BOTH modes so the
+// answer does not differ between an Anvil and an --rpc backend.
+const UNSUPPORTED_METHODS = new Set([
+	"wallet_grantPermissions",
+	"wallet_addSubAccount",
+	"wallet_connect",
 ]);
 
 type JsonRpcResponse = { result?: unknown; error?: { code?: number; message?: string } };
@@ -161,6 +201,10 @@ function createEip1193Provider(
 	let chainId = normalizeChainId(cfg.chainId) ?? 1;
 	let account: string | null = (cfg.address ?? "").toLowerCase() || null;
 	const rpcUrl = cfg.rpcUrl;
+	// Snapshot the guard at construction. The page-side `window.e2eWalletConfig`
+	// object is reachable from any script on the origin; reading `cfg.readOnly`
+	// per call would let page JS flip it and re-enable relaying to the backend.
+	const readOnly = cfg.readOnly === true;
 	let rpcId = 0;
 
 	async function rpc(method: string, params: unknown[]): Promise<unknown> {
@@ -189,12 +233,19 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
-		if (cfg.impersonated && WRITE_METHODS.has(method)) {
+		if (UNSUPPORTED_METHODS.has(method)) {
+			const error: Error & { code?: number } = new Error(
+				`[e2e-wallet] ${method} is not implemented by the test wallet; ` +
+					"use eth_requestAccounts to connect.",
+			);
+			error.code = 4200; // EIP-1193 "Unsupported Method" — callers fall back
+			throw error;
+		}
+		if (readOnly && (WRITE_METHODS.has(method) || WRITE_METHOD_PATTERN.test(method))) {
 			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
 			const error: Error & { code?: number } = new Error(
-				`[e2e-wallet] read-only impersonation: cannot ${method} for ${target} — no private key ` +
-					"is held for this address. Impersonation is view-only; reads proxy to the backend. For " +
-					"sends/signatures, use a key-holding Anvil account (drop --impersonate) or --mode mock.",
+				`[e2e-wallet] read-only provider: cannot ${method} for ${target}. Reads proxy to the ` +
+					"backend; for sends/signatures use a key-holding Anvil account or --mode mock.",
 			);
 			error.code = 4100; // EIP-1193 "Unauthorized"
 			throw error;
