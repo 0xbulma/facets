@@ -1,6 +1,6 @@
 ---
 name: inject-wallet
-version: 0.3.1
+version: 0.4.0
 description: Connect a test wallet so an agent can spin up a dev server and browser, get past the Reown AppKit connect modal, and screenshot/test the authenticated dApp UI. Injects an EIP-1193 + EIP-6963 provider (no wallet extension) and proxies signing/sends to Anvil (an `--rpc` backend is read-only). Use when user says /facets:inject-wallet, "screenshot my dApp", "connect a wallet to test", "test my AppKit app", or "the wallet modal blocks my browser tests". Optional Anvil fork; mock-connector fallback for SIWE-heavy apps.
 ---
 
@@ -14,7 +14,11 @@ are proxied to either chain backend; `personal_sign` and `eth_sendTransaction`
 are proxied only to a **local Anvil** node, which holds the key and signs for us
 — there is no in-browser cryptography. An `--rpc` backend is **read-only**: we
 hold no key for it, so the provider rejects every send/sign up front with an
-EIP-1193 `4100` rather than relaying it to your endpoint.
+EIP-1193 `4100` rather than relaying it to your endpoint. That guard prevents
+accidents; it is **not** an isolation boundary — the backend URL is injected
+into the page as `window.e2eWalletConfig.rpcUrl`, so any script on the origin
+can read and call it directly. Pass a keyless/public endpoint or a same-origin
+proxy, never a URL whose path or query carries an API key.
 
 The heavy lifting lives in `scripts/` (a typed Node CLI). This skill is the thin
 wrapper: pick the routes, mode, and backend, then run the CLI and interpret the

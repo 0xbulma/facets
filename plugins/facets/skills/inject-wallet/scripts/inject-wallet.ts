@@ -8,9 +8,11 @@
  *   node inject-wallet.ts --anvil --fork-url <rpc> --url /dashboard
  *   node inject-wallet.ts --rpc https://mainnet.example --url / --url /app
  *
- * The injected provider is dependency-free and signs nothing in-browser; reads
- * and sends are proxied to the backend. See SKILL.md for the full flow and the
- * mock-connector fallback.
+ * The injected provider is dependency-free and signs nothing in-browser. Reads
+ * are proxied to the backend; sends and signatures are proxied only to a
+ * writable Anvil backend — under `--rpc` or `--impersonate` the provider is
+ * read-only and rejects them up front (EIP-1193 4100). See SKILL.md for the
+ * full flow and the mock-connector fallback.
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -140,10 +142,17 @@ async function main(): Promise<number> {
 	const workDir = mkdtempSync(join(tmpdir(), "inject-wallet-"));
 	const scriptDir = import.meta.dirname;
 	const removeWorkDir = () => {
+		// Honour --no-teardown: workDir holds wallet-config.js + the stripped
+		// provider.js, the only way to replay the injected session against the
+		// Anvil/dev-server processes we deliberately left running.
+		if (!options.teardown) {
+			log(`--no-teardown: leaving injected scripts in ${workDir}`);
+			return;
+		}
 		try {
 			rmSync(workDir, { recursive: true, force: true });
-		} catch {
-			/* best-effort cleanup; process teardown must continue */
+		} catch (err) {
+			log(`could not remove ${workDir}: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	};
 

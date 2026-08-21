@@ -74,7 +74,7 @@ Claude installation mechanism (in order of automation):
 
 If a prereq is absent at review time, the consuming persona logs `Marketplace skill not found: <name> — degrading to persona's built-in rubric below` and falls through to the inline rubric in its body. No hard failure.
 
-Codex reuses the same locked installer only for explicit `$facets setup`. It discovers prereqs under `${CODEX_HOME:-$HOME/.codex}/skills` or `~/.agents/skills`. Reviews load the applicable bundled persona bodies on demand and launch one independent reviewer per selected persona, in waves of up to three, so attribution and independent agreement stay intact without expanding the router.
+Codex reuses the same locked installer only for explicit `$facets setup`. It discovers prereqs under `${CODEX_HOME:-$HOME/.codex}/skills` or `~/.agents/skills`. Reviews load the applicable bundled persona bodies on demand and launch one independent reviewer per selected persona, keeping at most three in flight at once and starting the next as soon as any reviewer returns, so attribution and independent agreement stay intact without expanding the router.
 
 ## Local development loop
 

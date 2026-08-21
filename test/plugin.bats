@@ -12,6 +12,17 @@ frontmatter_value() {
   awk -v key="$key" 'NR == 1 && /^---$/{f=1; next} f && /^---$/{exit} f && $0 ~ "^" key ":" {sub("^" key ":[[:space:]]*", ""); print; exit}' "$file"
 }
 
+# Fail loudly on a version that could not be read. `git show` of a missing blob
+# piped into `jq` yields an empty string with exit 0, and semver_gt coerces ""
+# (and a literal "null") to 0 — which would silently pass the version guard over
+# this repo's most-emphasized footgun (an unbumped plugin.json).
+require_semver() {
+  case "$1" in
+    [0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    *) echo "could not read a semver for $2 (got: '$1')" >&2; return 1 ;;
+  esac
+}
+
 semver_gt() {
   awk -v new="$1" -v old="$2" 'BEGIN {
     split(new, n, "."); split(old, o, ".")
@@ -37,6 +48,9 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
+  # Every directory whose contents ship to a user. The leaked-content guards
+  # below must cover the Codex surface as well as the Claude plugin.
+  SHIPPED_DIRS="$PLUGIN_DIR $REPO_ROOT/skills/facets $REPO_ROOT/.codex-plugin $REPO_ROOT/.agents"
   # Derive from skill DIRECTORIES, not from */SKILL.md: globbing the SKILL.md
   # files would make the "every skill dir has a SKILL.md" test below tautological
   # (and silently drop a skill that lost its SKILL.md from every downstream test).
@@ -209,6 +223,8 @@ setup() {
     if git -C "$REPO_ROOT" cat-file -e "$base:.codex-plugin/plugin.json" 2>/dev/null; then
       old=$(git -C "$REPO_ROOT" show "$base:.codex-plugin/plugin.json" | jq -r .version)
       new=$(jq -r .version "$CODEX_PLUGIN_MANIFEST")
+      require_semver "$old" "Codex plugin base version at $base"
+      require_semver "$new" "Codex plugin version"
       semver_gt "$new" "$old" || { echo "Codex plugin version must increase: $old -> $new" >&2; return 1; }
     fi
   fi
@@ -216,6 +232,8 @@ setup() {
   if printf '%s\n' "$changed" | grep -q '^plugins/facets/'; then
     old=$(git -C "$REPO_ROOT" show "$base:plugins/facets/.claude-plugin/plugin.json" | jq -r .version)
     new=$(jq -r .version "$PLUGIN_MANIFEST")
+    require_semver "$old" "Claude plugin base version at $base"
+    require_semver "$new" "Claude plugin version"
     semver_gt "$new" "$old" || { echo "Claude plugin version must increase: $old -> $new" >&2; return 1; }
   fi
 
@@ -225,6 +243,8 @@ setup() {
         git -C "$REPO_ROOT" cat-file -e "$base:$path" 2>/dev/null || continue
         old=$(git -C "$REPO_ROOT" show "$base:$path" | awk '/^---$/{f=!f; next} f && /^version:/{print $2; exit}')
         new=$(frontmatter_value version "$REPO_ROOT/$path")
+        require_semver "$old" "$path base version at $base"
+        require_semver "$new" "$path version"
         semver_gt "$new" "$old" || { echo "$path version must increase: $old -> $new" >&2; return 1; }
         ;;
     esac
@@ -302,7 +322,7 @@ setup() {
 }
 
 @test "no leaked @morpho-org references in plugins/" {
-  run grep -rn '@morpho-org' "$PLUGIN_DIR"
+  run grep -rn '@morpho-org' $SHIPPED_DIRS
   # grep returns 1 when no match — that's what we want.
   [ "$status" -ne 0 ]
 }
@@ -310,24 +330,27 @@ setup() {
 @test "no leaked 'morpho' references anywhere in plugins/" {
   # Skills imported from morpho-org/sdks must be fully repo-agnostic.
   # No exceptions — including author/owner metadata.
-  run grep -rni --exclude-dir=node_modules 'morpho' "$PLUGIN_DIR"
+  run grep -rni --exclude-dir=node_modules 'morpho' $SHIPPED_DIRS
   [ "$status" -ne 0 ]
 }
 
 @test "no leaked personal-name references in plugins/" {
   # Only the public 0xbulma handle is permitted.
-  run grep -rn 'Benjamin A\|benjamin@' "$PLUGIN_DIR"
+  run grep -rn 'Benjamin A\|benjamin@' $SHIPPED_DIRS
   [ "$status" -ne 0 ]
 }
 
 @test "no leaked <HOME> template tokens in plugins/" {
-  run grep -rn '<HOME>' "$PLUGIN_DIR"
+  run grep -rn '<HOME>' $SHIPPED_DIRS
   [ "$status" -ne 0 ]
 }
 
 @test "no leaked /.agents/ absolute paths outside the shared installer" {
   # The installer intentionally detects Codex's global npx-skills location.
-  run grep -rn --exclude=install-prereqs.sh '/\.agents/' "$PLUGIN_DIR"
+  # $REPO_ROOT/.agents is the Codex marketplace dir itself — scan it for the
+  # other guards but exclude it here, where the pattern is the path literal.
+  run grep -rn --exclude=install-prereqs.sh '/\.agents/' \
+    "$PLUGIN_DIR" "$REPO_ROOT/skills/facets" "$REPO_ROOT/.codex-plugin"
   [ "$status" -ne 0 ]
 }
 
@@ -779,6 +802,64 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"another install-prereqs run is active"* ]] || { echo "missing skip message: $output" >&2; return 1; }
   [ -d "$LOCK" ] || { echo "active holder's lock was removed" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: codex finds a CODEX_HOME install" {
+  # The FACETS_AGENT branch decides whether a prereq counts as already present.
+  # Without this, flipping its `!=` or mis-nesting its brace groups still passes
+  # bash -n + the two literal greps, and every session silently re-runs `npx
+  # skills add` for all 17 prereqs (or never detects a Codex install at all).
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home"; CODEX="$FAKE_HOME/.codex"
+  mkdir -p "$CODEX/skills/agent-browser"
+  : > "$CODEX/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-codex"   # the lock dir's parent must exist, or
+                                       # mkdir fails and reads as "lock held"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-codex" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" CODEX_HOME="$CODEX" FACETS_AGENT=codex \
+    run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "codex install not detected: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: claude ignores a CODEX_HOME install" {
+  # Same fixture, no FACETS_AGENT: the Claude branch must look only under
+  # ~/.claude/skills, so the Codex copy must NOT count as present.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home2"; CODEX="$FAKE_HOME/.codex"
+  mkdir -p "$CODEX/skills/agent-browser"
+  : > "$CODEX/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-claude"   # the lock dir's parent must exist, or
+                                       # mkdir fails and reads as "lock held"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-claude" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" CODEX_HOME="$CODEX" \
+    run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→ installing agent-browser"* ]] \
+    || { echo "claude branch wrongly reused the codex install: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: claude finds a ~/.claude install" {
+  # The positive Claude path. Together with the two cases above this pins all
+  # three arms, so flipping the branch's `!=`/`=` or mis-nesting its brace
+  # groups fails at least one test rather than passing silently.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home3"
+  mkdir -p "$FAKE_HOME/.claude/skills/agent-browser"
+  : > "$FAKE_HOME/.claude/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-claude2"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-claude2" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "claude install not detected: $output" >&2; return 1; }
 }
 
 @test "install-prereqs.sh lock: reclaims an expired lock and releases on exit" {

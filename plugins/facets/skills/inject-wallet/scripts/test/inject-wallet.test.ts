@@ -62,12 +62,17 @@ describe("queryChainId", () => {
 		expect(await queryChainId("http://x")).toBe(8453);
 	});
 
-	it("throws on a non-string result", async () => {
+	it("throws on a non-string result without echoing the (keyed) rpc url", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => ({ json: async () => ({ result: null }) })),
 		);
-		await expect(queryChainId("http://x")).rejects.toThrow(/could not read chainId/);
+		const err = await queryChainId("https://eth-mainnet.example/v2/SUPERSECRETKEY").catch(
+			(e: unknown) => e,
+		);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).toMatch(/could not read chainId/);
+		expect(message).not.toContain("SUPERSECRETKEY");
 	});
 });
 

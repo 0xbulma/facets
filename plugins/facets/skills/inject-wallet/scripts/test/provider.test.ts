@@ -130,6 +130,8 @@ describe("inject-wallet provider", () => {
 		for (const method of [
 			"eth_sendTransaction",
 			"eth_sendRawTransaction",
+			"eth_sendRawTransactionConditional",
+			"eth_sendUserOperation",
 			"eth_signTransaction",
 			"personal_sign",
 			"eth_sign",
@@ -139,6 +141,9 @@ describe("inject-wallet provider", () => {
 			"eth_signTypedData_v3",
 			"eth_signTypedData_v4",
 			"wallet_sendCalls",
+			"wallet_grantPermissions",
+			"wallet_addSubAccount",
+			"wallet_connect",
 		]) {
 			await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
 				code: 4100,
@@ -177,11 +182,18 @@ describe("inject-wallet provider", () => {
 			mustNotCall,
 		);
 		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);
+	});
+
+	it("ignores a page-side attempt to clear readOnly after construction", async () => {
+		// window.e2eWalletConfig is reachable from any script on the origin, so the
+		// guard must be snapshotted at construction rather than read per call.
+		const cfg = { address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true };
+		const { provider, calls } = build(cfg, mustNotCall);
+		cfg.readOnly = false;
 		await expect(
-			provider.request({ method: "eth_sendTransaction", params: [] }),
-		).rejects.toMatchObject({
-			code: 4100,
-		});
+			provider.request({ method: "eth_sendTransaction", params: [{}] }),
+		).rejects.toMatchObject({ code: 4100 });
+		expect(calls).toHaveLength(0);
 	});
 
 	it("surfaces RPC errors with their JSON-RPC code", async () => {

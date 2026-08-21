@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAnvilArgs, formatAnvilCommand, startAnvil } from "../lib/anvil.ts";
+import { buildAnvilArgs, makeRedactor, startAnvil } from "../lib/anvil.ts";
 import type { ChildLike } from "../lib/child.ts";
 import { fakeChild } from "./fake-child.ts";
 
@@ -18,11 +18,24 @@ describe("buildAnvilArgs", () => {
 			"https://rpc.example",
 		]);
 	});
+});
 
-	it("redacts fork credentials from logs", () => {
+describe("makeRedactor", () => {
+	it("is the identity when there is no fork url", () => {
+		expect(makeRedactor(undefined)("anvil --port 8545")).toBe("anvil --port 8545");
+	});
+
+	it("scrubs every occurrence, case-insensitively", () => {
+		const redact = makeRedactor("https://Eth-Mainnet.example/v2/KEY");
 		expect(
-			formatAnvilCommand(["--port", "8545", "--fork-url", "https://user:key@rpc.example"]),
-		).toBe("anvil --port 8545 --fork-url <redacted>");
+			redact("--fork-url https://eth-mainnet.example/v2/KEY (https://Eth-Mainnet.example/v2/KEY)"),
+		).toBe("--fork-url <redacted> (<redacted>)");
+	});
+
+	it("treats regex metacharacters in the url as literals", () => {
+		const redact = makeRedactor("https://rpc.example/v2/a+b?c=1");
+		expect(redact("url https://rpc.example/v2/a+b?c=1 end")).toBe("url <redacted> end");
+		expect(redact("url https://rpcXexample/v2/aab?c=1 end")).toContain("rpcXexample");
 	});
 });
 
@@ -56,9 +69,18 @@ describe("startAnvil", () => {
 		// thrown message, which main() prints to stderr. Redacting only the logged
 		// argv (formatAnvilCommand) would leave the credential in this path.
 		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		// Deliberately split the URL across two `data` chunks: a stream handler sees
+		// arbitrary boundaries, and neither half contains the whole URL.
 		const banner = `Fork\n  Endpoint:       ${forkUrl}\n`;
+		const cut = banner.indexOf("SUPERSECRET") + 5;
+		const chunks = [banner.slice(0, cut), banner.slice(cut)];
+		const logs: string[] = [];
 		const child: ChildLike = {
-			stdout: { on: (_event, cb) => cb(Buffer.from(banner)) },
+			stdout: {
+				on: (_event, cb) => {
+					for (const c of chunks) cb(Buffer.from(c));
+				},
+			},
 			stderr: { on: () => undefined },
 			on: () => undefined,
 			exitCode: 1,
@@ -68,7 +90,7 @@ describe("startAnvil", () => {
 		const err = await startAnvil({
 			port: 8545,
 			forkUrl,
-			log: () => undefined,
+			log: (line) => logs.push(line),
 			spawnAnvil: () => child,
 			timeoutMs: 1000,
 			pollMs: 5,
@@ -77,6 +99,9 @@ describe("startAnvil", () => {
 		expect(message).toContain("exited early");
 		expect(message).toContain("<redacted>");
 		expect(message).not.toContain("SUPERSECRETKEY");
+		// The logged argv goes through the same single redactor.
+		expect(logs.join("\n")).toContain("--fork-url <redacted>");
+		expect(logs.join("\n")).not.toContain("SUPERSECRETKEY");
 	});
 
 	it("throws when anvil exits early", async () => {

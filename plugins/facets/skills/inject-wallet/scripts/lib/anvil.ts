@@ -27,9 +27,16 @@ export function buildAnvilArgs(opts: {
 	return args;
 }
 
-/** Render argv without leaking credential-bearing fork URLs. */
-export function formatAnvilCommand(args: readonly string[]): string {
-	return `anvil ${args.map((arg, i) => (args[i - 1] === "--fork-url" ? "<redacted>" : arg)).join(" ")}`;
+/**
+ * Build a scrubber that removes a credential-bearing fork URL from any text.
+ * One mechanism covers both the logged argv and anvil's own output, so there is
+ * a single place to update when another secret-bearing flag is added.
+ * Case-insensitive: the url crate may normalize scheme/host before echoing.
+ */
+export function makeRedactor(forkUrl?: string): (text: string) => string {
+	if (!forkUrl) return (text) => text;
+	const pattern = new RegExp(forkUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+	return (text) => text.replace(pattern, "<redacted>");
 }
 
 export type StartAnvilOptions = {
@@ -46,7 +53,8 @@ export type StartAnvilOptions = {
 export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> {
 	const rpcUrl = `http://127.0.0.1:${opts.port}`;
 	const args = buildAnvilArgs(opts);
-	opts.log(formatAnvilCommand(args));
+	const redact = makeRedactor(opts.forkUrl);
+	opts.log(redact(`anvil ${args.join(" ")}`));
 
 	const spawnAnvil =
 		opts.spawnAnvil ??
@@ -61,15 +69,23 @@ export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> 
 	// Redact at the capture seam, not at each throw site: anvil echoes the fork
 	// endpoint in its startup banner and in reqwest errors, and `tail` is
 	// interpolated into both failure messages below (which reach stderr).
-	const redact = (line: string) =>
-		opts.forkUrl ? line.split(opts.forkUrl).join("<redacted>") : line;
+	// `data` chunks are not line-aligned, so hold the trailing partial line back
+	// until its rest arrives — otherwise a URL split across chunks matches neither
+	// half and lands in `tail` verbatim.
+	let carry = "";
 	const capture = (chunk: Buffer) => {
-		for (const line of chunk.toString().split("\n")) if (line.trim()) tail.push(redact(line));
+		const parts = (carry + chunk.toString()).split("\n");
+		carry = parts.pop() ?? "";
+		for (const line of parts) if (line.trim()) tail.push(redact(line));
 		while (tail.length > 30) tail.shift();
 	};
 	child.stdout?.on("data", capture);
 	child.stderr?.on("data", capture);
 	child.on("error", (err) => opts.log(`anvil spawn error: ${String(err)}`));
+
+	// A process that dies mid-line leaves its last line in `carry`; fold it in so
+	// the failure messages below don't drop the most recent (often the fatal) line.
+	const tailText = () => redact([...tail, carry].filter((l) => l.trim()).join("\n"));
 
 	const stop = () => {
 		if (!child.killed) child.kill("SIGTERM");
@@ -80,7 +96,7 @@ export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> 
 	const pollMs = opts.pollMs ?? 250;
 	while (Date.now() < deadline) {
 		if (child.exitCode !== null) {
-			throw new Error(`anvil exited early (code ${child.exitCode}):\n${tail.join("\n")}`);
+			throw new Error(`anvil exited early (code ${child.exitCode}):\n${tailText()}`);
 		}
 		try {
 			const chainHex = await jsonRpc(rpcUrl, { method: "eth_chainId" });
@@ -95,7 +111,5 @@ export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> 
 		}
 	}
 	stop();
-	throw new Error(
-		`anvil did not become ready in ${opts.timeoutMs ?? 20_000}ms:\n${tail.join("\n")}`,
-	);
+	throw new Error(`anvil did not become ready in ${opts.timeoutMs ?? 20_000}ms:\n${tailText()}`);
 }

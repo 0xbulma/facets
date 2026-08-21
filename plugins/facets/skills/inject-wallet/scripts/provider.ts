@@ -11,9 +11,11 @@
  *
  * Signing strategy — no in-browser cryptography:
  *   Wallet-only methods (accounts, chainId, chain switching) are answered
- *   locally. EVERYTHING else — reads, `personal_sign`, `eth_sendTransaction` —
- *   is proxied to the configured JSON-RPC endpoint. When that endpoint is Anvil
- *   with the dev account unlocked, Anvil signs and sends for us. Older Anvil
+ *   locally. Reads are proxied to the configured JSON-RPC endpoint. Sends and
+ *   signatures are proxied only when the config is NOT `readOnly` — i.e. against
+ *   a writable Anvil backend, where Anvil signs and sends for us; under
+ *   `readOnly` (an `--rpc` backend or `--impersonate`) every method in
+ *   `WRITE_METHODS` is rejected up front with EIP-1193 4100. Older Anvil
  *   builds lack `personal_sign`, so we fall back to `eth_sign` (Anvil's
  *   `eth_sign` applies the EIP-191 personal-message prefix). SIWE-heavy apps
  *   should prefer the mock-connector path — see references/mock-connector.md.
@@ -51,11 +53,17 @@ type WalletConfig = {
 // the connect flow, or — for a raw tx — actually reach the user's RPC). This is
 // a deny-list because reads are open-ended (the `default` case proxies any
 // unlisted method); every send/sign variant must appear here, including the
-// relay-only `eth_sendRawTransaction` and the EIP-5792 batched-send
-// `wallet_sendCalls` modern AppKit emits.
+// relay-only raw/UserOperation broadcasts (`eth_sendRawTransaction`,
+// `eth_sendRawTransactionConditional`, ERC-4337 `eth_sendUserOperation` — a
+// bundler often lives on the very URL passed to `--rpc`), the EIP-5792
+// batched-send `wallet_sendCalls`, and the newer AppKit capability methods that
+// mint authority or return a signature (ERC-7715 `wallet_grantPermissions`,
+// ERC-7895 `wallet_addSubAccount`, ERC-7846 `wallet_connect`).
 const WRITE_METHODS = new Set([
 	"eth_sendTransaction",
 	"eth_sendRawTransaction",
+	"eth_sendRawTransactionConditional",
+	"eth_sendUserOperation",
 	"eth_signTransaction",
 	"personal_sign",
 	"eth_sign",
@@ -65,6 +73,9 @@ const WRITE_METHODS = new Set([
 	"eth_signTypedData_v3",
 	"eth_signTypedData_v4",
 	"wallet_sendCalls",
+	"wallet_grantPermissions",
+	"wallet_addSubAccount",
+	"wallet_connect",
 ]);
 
 type JsonRpcResponse = { result?: unknown; error?: { code?: number; message?: string } };
@@ -168,6 +179,10 @@ function createEip1193Provider(
 	let chainId = normalizeChainId(cfg.chainId) ?? 1;
 	let account: string | null = (cfg.address ?? "").toLowerCase() || null;
 	const rpcUrl = cfg.rpcUrl;
+	// Snapshot the guard at construction. The page-side `window.e2eWalletConfig`
+	// object is reachable from any script on the origin; reading `cfg.readOnly`
+	// per call would let page JS flip it and re-enable relaying to the backend.
+	const readOnly = cfg.readOnly === true;
 	let rpcId = 0;
 
 	async function rpc(method: string, params: unknown[]): Promise<unknown> {
@@ -196,7 +211,7 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
-		if (cfg.readOnly && WRITE_METHODS.has(method)) {
+		if (readOnly && WRITE_METHODS.has(method)) {
 			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
 			const error: Error & { code?: number } = new Error(
 				`[e2e-wallet] read-only provider: cannot ${method} for ${target}. Reads proxy to the ` +

@@ -102,7 +102,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 
 ## Skills
 
-Every route below is available as `$facets <route>` in Codex and `/facets:<route>` in Claude Code. Codex loads the same bundled persona rubrics on demand and launches one independent reviewer per selected persona, in waves of up to three to fit its agent slots.
+Every route below is available as `$facets <route>` in Codex and `/facets:<route>` in Claude Code. Codex loads the same bundled persona rubrics on demand and launches one independent reviewer per selected persona, keeping at most three in flight at once to fit its agent slots and starting the next as soon as any reviewer returns.
 
 **PR navigation / review / fix**
 

@@ -43,7 +43,7 @@ Only after successful push, reply on each fixed thread with the commit SHA and r
 Only on explicit request and when recurring monitoring exists. About every five minutes, re-fetch state and stop when the PR closes.
 
 - **Review watch:** skip an unchanged head SHA; on a new SHA, rediscover context and post only net-new findings.
-- **Fix watch:** never gate on head SHA. Every cycle rediscovers project context, flags, and applicable fix rubrics, then checks base conflicts, CI state, and unresolved threads because all can change without a commit; act only on net-new thread/state work.
+- **Fix watch:** never gate on head SHA. Every cycle first checks base conflicts, CI state, and unresolved threads because all can change without a commit; end the cycle when there is no net-new thread/state work, and rediscover project context, flags, and applicable fix rubrics only on a cycle that has actionable work.
 
 If recurring monitoring is unavailable, do one shot and say so. Never run review-watch and fix-watch together.
 
