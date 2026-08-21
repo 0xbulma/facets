@@ -3,6 +3,7 @@ import {
 	backendLabel,
 	computeExitCode,
 	formatReport,
+	isReadOnlyBackend,
 	queryChainId,
 	resolveConnectedAddress,
 } from "../inject-wallet.ts";
@@ -95,6 +96,28 @@ describe("resolveConnectedAddress", () => {
 		expect(resolveConnectedAddress({ address: explicit, backendAddress: backend })).toBe(explicit);
 		expect(resolveConnectedAddress({ backendAddress: backend })).toBe(backend);
 		expect(resolveConnectedAddress({})).toBe(DEV_ACCOUNT_0);
+	});
+});
+
+describe("isReadOnlyBackend", () => {
+	const anvil = { kind: "anvil", port: 8545 } as const;
+	const rpc = { kind: "rpc", rpcUrl: "https://mainnet.example" } as const;
+
+	it("locks an --rpc backend read-only even without --impersonate", () => {
+		expect(isReadOnlyBackend({ backend: rpc })).toBe(true);
+	});
+
+	it("keeps a plain Anvil backend writable", () => {
+		expect(isReadOnlyBackend({ backend: anvil })).toBe(false);
+	});
+
+	it("locks Anvil read-only under --impersonate", () => {
+		expect(
+			isReadOnlyBackend({
+				backend: anvil,
+				impersonate: "0x1111111111111111111111111111111111111111",
+			}),
+		).toBe(true);
 	});
 });
 

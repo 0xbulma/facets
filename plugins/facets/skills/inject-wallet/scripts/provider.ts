@@ -37,20 +37,25 @@ type WalletConfig = {
 	readonly address?: string;
 	readonly chainId: number | string;
 	readonly rpcUrl: string;
-	/** Reject every signing/sending method before it reaches the backend. */
+	/**
+	 * Reject every signing/sending method before it reaches the backend. Set for
+	 * an `--rpc` backend (we hold no key there) and for read-only "view as"
+	 * impersonation (we report `address` but hold no key for it).
+	 */
 	readonly readOnly?: boolean;
-	/** Read-only "view as": report `address` but reject sends/signs (no key held). */
-	readonly impersonated?: boolean;
 };
 
-// Methods that require the address's private key. Under read-only impersonation
-// we hold no key, so these are rejected up front instead of proxied to the
-// backend (where they would fail cryptically or hang the connect flow). This is
+// Methods that require the address's private key, or that broadcast on its
+// behalf. Under read-only we hold no key, so these are rejected up front
+// instead of proxied to the backend (where they would fail cryptically, hang
+// the connect flow, or — for a raw tx — actually reach the user's RPC). This is
 // a deny-list because reads are open-ended (the `default` case proxies any
-// unlisted method); every key-requiring send/sign variant must appear here,
-// including the EIP-5792 batched-send `wallet_sendCalls` modern AppKit emits.
+// unlisted method); every send/sign variant must appear here, including the
+// relay-only `eth_sendRawTransaction` and the EIP-5792 batched-send
+// `wallet_sendCalls` modern AppKit emits.
 const WRITE_METHODS = new Set([
 	"eth_sendTransaction",
+	"eth_sendRawTransaction",
 	"eth_signTransaction",
 	"personal_sign",
 	"eth_sign",
@@ -191,7 +196,7 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
-		if ((cfg.readOnly || cfg.impersonated) && WRITE_METHODS.has(method)) {
+		if (cfg.readOnly && WRITE_METHODS.has(method)) {
 			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
 			const error: Error & { code?: number } = new Error(
 				`[e2e-wallet] read-only provider: cannot ${method} for ${target}. Reads proxy to the ` +

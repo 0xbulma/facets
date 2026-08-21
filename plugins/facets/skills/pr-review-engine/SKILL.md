@@ -311,7 +311,7 @@ Conditional (fire only when their trigger flag is true, 11 agents):
 
 The dispatcher does not hardcode names for discovery — it walks `agents/` via `find` (the doc-only fast path's skip list in Step 5.3b is the one deliberate name-based exception). Total: 17 agents (6 baseline + 11 conditional).
 
-Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, also extend Step 4's flag detection.
+Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/` with appropriate frontmatter. If conditional, extend the flag detection on **both** hosts — Step 4 here, and the conditional-flag contract in `skills/facets/references/review.md` — or the Codex host cannot resolve the trigger and marks the panel incomplete.
 
 ## Step 6: Aggregate and deduplicate findings
 

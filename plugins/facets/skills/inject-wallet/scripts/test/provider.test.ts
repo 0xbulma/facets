@@ -17,7 +17,6 @@ function build(
 		chainId: number | string;
 		rpcUrl: string;
 		readOnly?: boolean;
-		impersonated?: boolean;
 	},
 	handler: RpcHandler,
 ) {
@@ -130,6 +129,7 @@ describe("inject-wallet provider", () => {
 		// this list in sync with WRITE_METHODS so dropping an entry fails CI.
 		for (const method of [
 			"eth_sendTransaction",
+			"eth_sendRawTransaction",
 			"eth_signTransaction",
 			"personal_sign",
 			"eth_sign",
@@ -173,7 +173,7 @@ describe("inject-wallet provider", () => {
 
 	it("still reports the impersonated address for eth_requestAccounts", async () => {
 		const { provider } = build(
-			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, impersonated: true },
+			{ address: "0xWhale", chainId: 1, rpcUrl: RPC, readOnly: true },
 			mustNotCall,
 		);
 		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);

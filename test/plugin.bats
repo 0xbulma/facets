@@ -37,7 +37,10 @@ setup() {
   PLUGIN_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
   SKILLS_DIR="$PLUGIN_DIR/skills"
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
-  SKILLS_ALL=$(for skill_file in "$SKILLS_DIR"/*/SKILL.md; do basename "$(dirname "$skill_file")"; done | sort)
+  # Derive from skill DIRECTORIES, not from */SKILL.md: globbing the SKILL.md
+  # files would make the "every skill dir has a SKILL.md" test below tautological
+  # (and silently drop a skill that lost its SKILL.md from every downstream test).
+  SKILLS_ALL=$(for skill_dir in "$SKILLS_DIR"/*/; do basename "$skill_dir"; done | sort)
 }
 
 @test "Codex manifests are valid JSON" {
@@ -112,7 +115,10 @@ setup() {
   review_engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
   grep -Fq 'Enumerate every `*.md`' "$CODEX_REFS/review.md"
   grep -Fq 'one read-only reviewer per selected persona' "$CODEX_REFS/review.md"
-  grep -Fq 'waves of up to three' "$CODEX_REFS/review.md"
+  # Pin the concurrency cap, and that it is a sliding window rather than a wave
+  # barrier (a barrier pays the slowest reviewer's tail once per wave).
+  grep -Fq 'at most three in flight' "$CODEX_REFS/review.md"
+  grep -Fq 'as soon as any reviewer returns' "$CODEX_REFS/review.md"
   grep -Fq '../../plugins/facets/skills/pr-review-engine/SKILL.md' "$review"
   grep -Fq 'final content of every reviewer prompt' "$review"
   grep -Fq 'Translate only Claude execution mechanics' "$review"
@@ -390,6 +396,12 @@ setup() {
              | xargs -n1 basename \
              | sed 's/\.md$//' \
              | sort | tr '\n' ' ' | sed 's/ $//')
+  # Pin the set explicitly as well: `expected` is the script's own algorithm, so
+  # comparing the two alone can only prove the script agrees with itself. The pin
+  # is what forces a deliberate test update when a `## Fix rubric` section is
+  # added or removed — i.e. when pr-fix's auto-apply surface changes.
+  [ "$expected" = "ci-security dependencies docs release-integrity web3" ] \
+    || { echo "fix-rubric persona set changed: $expected" >&2; return 1; }
   actual=$("$SKILLS_DIR/pr-review-engine/scripts/list-fix-rubric-agents.sh" \
            | xargs -n1 basename \
            | sed 's/\.md$//' \

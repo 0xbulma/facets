@@ -88,6 +88,16 @@ export function resolveConnectedAddress(opts: {
 }
 
 /**
+ * Whether the injected provider must reject every send/sign. True for an `--rpc`
+ * backend (we hold no key for it, and a write would reach the user's real
+ * endpoint) and for read-only `--impersonate` (we report the address but hold no
+ * key). Anvil without `--impersonate` signs for us, so it stays writable. Pure.
+ */
+export function isReadOnlyBackend(opts: { backend: Backend; impersonate?: string }): boolean {
+	return opts.backend.kind === "rpc" || Boolean(opts.impersonate);
+}
+
+/**
  * Exit code policy: 0 = ok, 2 = something to look at. A route is "ok" when it
  * has no error AND (mock mode, where connection is app-handled) OR it connected
  * OR a screenshot was produced.
@@ -201,8 +211,10 @@ async function main(): Promise<number> {
 			address,
 			chainId,
 			rpcUrl,
-			readOnly: options.backend.kind === "rpc" || Boolean(options.impersonate),
-			impersonated: Boolean(options.impersonate),
+			readOnly: isReadOnlyBackend({
+				backend: options.backend,
+				impersonate: options.impersonate,
+			}),
 		};
 
 		// 2. Boot the dev server.

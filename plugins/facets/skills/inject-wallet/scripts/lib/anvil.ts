@@ -58,8 +58,13 @@ export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> 
 		throw new Error("anvil not found on PATH — install Foundry: https://getfoundry.sh");
 	}
 	const tail: string[] = [];
+	// Redact at the capture seam, not at each throw site: anvil echoes the fork
+	// endpoint in its startup banner and in reqwest errors, and `tail` is
+	// interpolated into both failure messages below (which reach stderr).
+	const redact = (line: string) =>
+		opts.forkUrl ? line.split(opts.forkUrl).join("<redacted>") : line;
 	const capture = (chunk: Buffer) => {
-		for (const line of chunk.toString().split("\n")) if (line.trim()) tail.push(line);
+		for (const line of chunk.toString().split("\n")) if (line.trim()) tail.push(redact(line));
 		while (tail.length > 30) tail.shift();
 	};
 	child.stdout?.on("data", capture);
