@@ -14,8 +14,11 @@
  *   locally. Reads are proxied to the configured JSON-RPC endpoint. Sends and
  *   signatures are proxied only when the config is NOT `readOnly` — i.e. against
  *   a writable Anvil backend, where Anvil signs and sends for us; under
- *   `readOnly` (an `--rpc` backend or `--impersonate`) every method in
- *   `WRITE_METHODS` is rejected up front with EIP-1193 4100. Older Anvil
+ *   `readOnly` (an `--rpc` backend or `--impersonate`) a method is rejected up
+ *   front with EIP-1193 4100 when it is named in `WRITE_METHODS` or matches
+ *   `WRITE_METHOD_PATTERN`. Separately, the capability probes in
+ *   `UNSUPPORTED_METHODS` answer 4200 in BOTH modes, so a connector falls back
+ *   to `eth_requestAccounts` instead of reading a denial. Older Anvil
  *   builds lack `personal_sign`, so we fall back to `eth_sign` (Anvil's
  *   `eth_sign` applies the EIP-191 personal-message prefix). SIWE-heavy apps
  *   should prefer the mock-connector path — see references/mock-connector.md.
@@ -53,13 +56,17 @@ type WalletConfig = {
 // instead of proxied to the backend (where they would fail cryptically, hang
 // the connect flow, or — for a raw tx — actually reach the user's RPC). This is
 // a deny-list because reads are open-ended (the `default` case proxies any
-// unlisted method); every send/sign variant must appear here, including the
-// relay-only raw/UserOperation broadcasts (`eth_sendRawTransaction`,
-// `eth_sendRawTransactionConditional`, ERC-4337 `eth_sendUserOperation` — a
-// bundler often lives on the very URL passed to `--rpc`), the EIP-5792
-// batched-send `wallet_sendCalls`, and the newer AppKit capability methods that
-// mint authority or return a signature (ERC-7715 `wallet_grantPermissions`,
-// ERC-7895 `wallet_addSubAccount`, ERC-7846 `wallet_connect`).
+// unlisted method). It covers the relay-only raw/UserOperation broadcasts
+// (`eth_sendRawTransaction`, `eth_sendRawTransactionConditional`, ERC-4337
+// `eth_sendUserOperation` — a bundler often lives on the very URL passed to
+// `--rpc`) and the EIP-5792 batched-send `wallet_sendCalls`.
+//
+// Every entry here also matches `WRITE_METHOD_PATTERN` below, so the guard is
+// belt-and-braces: the pattern is what actually catches an unlisted variant,
+// and this list keeps the covered methods explicit and auditable if the pattern
+// is ever narrowed. Capability handshakes that mint authority or return a
+// signature do NOT belong here — see `UNSUPPORTED_METHODS`, which rejects them
+// in both modes.
 const WRITE_METHODS = new Set([
 	"eth_sendTransaction",
 	"eth_sendRawTransaction",

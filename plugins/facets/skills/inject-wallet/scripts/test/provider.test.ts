@@ -125,8 +125,10 @@ describe("inject-wallet provider", () => {
 			},
 		);
 
-		// Every key-requiring method in the provider's deny-list must reject — keep
-		// this list in sync with WRITE_METHODS so dropping an entry fails CI.
+		// Pins the rejection OUTCOME, not membership of any one mechanism: each name
+		// below must be denied by the WRITE_METHODS list or the WRITE_METHOD_PATTERN
+		// shape check, whichever fires. The last two are deliberately absent from
+		// WRITE_METHODS so the shape check itself is under test.
 		for (const method of [
 			"eth_sendTransaction",
 			"eth_sendRawTransaction",

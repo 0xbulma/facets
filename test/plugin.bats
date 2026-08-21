@@ -354,7 +354,7 @@ setup() {
   # other guards but exclude it here, where the pattern is the path literal.
   run grep -rn --exclude=install-prereqs.sh '/\.agents/' \
     "$PLUGIN_DIR" "$REPO_ROOT/skills/facets" "$REPO_ROOT/.codex-plugin"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked ~/.claude/skills/ hardcoded paths in agents + skills" {
@@ -368,7 +368,7 @@ setup() {
     "$SKILLS_DIR/pr-fix" \
     "$SKILLS_DIR/pr-review-gh" \
     "$SKILLS_DIR/pr-review-local"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no hardcoded shared /tmp review-state paths in plugins/" {
@@ -384,7 +384,7 @@ setup() {
     -e '/tmp/pr-review-gh-' \
     "$PLUGIN_DIR"
   # grep exits 1 when no match — that's what we want.
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "documented persona counts match the filesystem" {
@@ -845,6 +845,26 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"→ installing agent-browser"* ]] \
     || { echo "claude branch wrongly reused the codex install: $output" >&2; return 1; }
+}
+
+@test "install-prereqs.sh host detection: codex finds a ~/.agents install" {
+  # The codex arm is an OR of TWO locations; the CODEX_HOME case above covers
+  # only the first. This case covers the `$HOME/.agents/skills` fallback AND the
+  # `${CODEX_HOME:-$HOME/.codex}` default (no CODEX_HOME is set here), so
+  # deleting either leaves a failing test instead of a silent re-install of all
+  # 17 prereqs on every Codex session.
+  STUB="$BATS_TEST_TMPDIR/bin"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nexit 1\n' > "$STUB/npx"; chmod +x "$STUB/npx"
+  FAKE_HOME="$BATS_TEST_TMPDIR/home4"
+  mkdir -p "$FAKE_HOME/.agents/skills/agent-browser"
+  : > "$FAKE_HOME/.agents/skills/agent-browser/SKILL.md"
+  mkdir -p "$BATS_TEST_TMPDIR/tmp-agents"
+
+  TMPDIR="$BATS_TEST_TMPDIR/tmp-agents" VERBOSE=1 PATH="$STUB:$PATH" \
+    HOME="$FAKE_HOME" FACETS_AGENT=codex run "$PLUGIN_DIR/bin/install-prereqs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agent-browser (already installed)"* ]] \
+    || { echo "~/.agents fallback not detected: $output" >&2; return 1; }
 }
 
 @test "install-prereqs.sh host detection: claude finds a ~/.claude install" {
