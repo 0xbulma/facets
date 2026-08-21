@@ -20,7 +20,8 @@
  *   `eth_sign` applies the EIP-191 personal-message prefix). SIWE-heavy apps
  *   should prefer the mock-connector path — see references/mock-connector.md.
  *
- * Config: read from `window.e2eWalletConfig = { address?, chainId, rpcUrl }`,
+ * Config: read from
+ * `window.e2eWalletConfig = { address?, chainId, rpcUrl, readOnly? }`,
  * seeded by a separate init-script the orchestrator writes at run time. When
  * `address` is omitted the provider derives it from the node's `eth_accounts`
  * (works against Anvil's unlocked accounts).
@@ -73,6 +74,20 @@ const WRITE_METHODS = new Set([
 	"eth_signTypedData_v3",
 	"eth_signTypedData_v4",
 	"wallet_sendCalls",
+]);
+
+// A hand-kept name list fails open: the `default:` case relays anything unlisted
+// to the backend, so the next send/sign variant a wallet SDK ships would reach
+// the user's real `--rpc` endpoint. Deny by shape as well as by name.
+const WRITE_METHOD_PATTERN = /^(eth|wallet|personal)_(send|sign)/i;
+
+// Capability handshakes we do not implement. These are NOT key-requiring, so
+// rejecting them with 4100 ("Unauthorized") reads to wagmi/AppKit as a user
+// denial and aborts the connect flow. 4200 ("Unsupported Method") is the signal
+// that makes a connector fall back to `eth_requestAccounts` — which is exactly
+// what the read-only screenshot path needs. Rejected in BOTH modes so the
+// answer does not differ between an Anvil and an --rpc backend.
+const UNSUPPORTED_METHODS = new Set([
 	"wallet_grantPermissions",
 	"wallet_addSubAccount",
 	"wallet_connect",
@@ -211,7 +226,15 @@ function createEip1193Provider(
 	async function request(args: Eip1193Request): Promise<unknown> {
 		const method = args?.method;
 		const params = args?.params ?? [];
-		if (readOnly && WRITE_METHODS.has(method)) {
+		if (UNSUPPORTED_METHODS.has(method)) {
+			const error: Error & { code?: number } = new Error(
+				`[e2e-wallet] ${method} is not implemented by the test wallet; ` +
+					"use eth_requestAccounts to connect.",
+			);
+			error.code = 4200; // EIP-1193 "Unsupported Method" — callers fall back
+			throw error;
+		}
+		if (readOnly && (WRITE_METHODS.has(method) || WRITE_METHOD_PATTERN.test(method))) {
 			const target = account ?? (cfg.address ? cfg.address.toLowerCase() : "the connected address");
 			const error: Error & { code?: number } = new Error(
 				`[e2e-wallet] read-only provider: cannot ${method} for ${target}. Reads proxy to the ` +

@@ -141,9 +141,10 @@ describe("inject-wallet provider", () => {
 			"eth_signTypedData_v3",
 			"eth_signTypedData_v4",
 			"wallet_sendCalls",
-			"wallet_grantPermissions",
-			"wallet_addSubAccount",
-			"wallet_connect",
+			// Not in WRITE_METHODS by name — caught by the fail-closed shape check,
+			// which is what stops the NEXT send/sign variant reaching the backend.
+			"eth_signTypedData_v5",
+			"wallet_sendPreparedCalls",
 		]) {
 			await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
 				code: 4100,
@@ -182,6 +183,24 @@ describe("inject-wallet provider", () => {
 			mustNotCall,
 		);
 		expect(await provider.request({ method: "eth_requestAccounts" })).toEqual(["0xwhale"]);
+	});
+
+	it("answers unimplemented capability probes with 4200, not 4100, in both modes", async () => {
+		// 4100 ("Unauthorized") reads to wagmi/AppKit as a user denial and aborts the
+		// connect flow; 4200 ("Unsupported Method") is what makes it fall back to
+		// eth_requestAccounts — which is exactly what the screenshot path needs.
+		for (const readOnly of [true, false]) {
+			const { provider, calls } = build(
+				{ address: "0xabc", chainId: 1, rpcUrl: RPC, readOnly },
+				mustNotCall,
+			);
+			for (const method of ["wallet_connect", "wallet_grantPermissions", "wallet_addSubAccount"]) {
+				await expect(provider.request({ method, params: [] })).rejects.toMatchObject({
+					code: 4200,
+				});
+			}
+			expect(calls).toHaveLength(0);
+		}
 	});
 
 	it("ignores a page-side attempt to clear readOnly after construction", async () => {

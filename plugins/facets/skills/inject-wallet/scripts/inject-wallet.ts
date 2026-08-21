@@ -141,28 +141,26 @@ async function main(): Promise<number> {
 	if (!options.dryRun) mkdirSync(outDir, { recursive: true });
 	const workDir = mkdtempSync(join(tmpdir(), "inject-wallet-"));
 	const scriptDir = import.meta.dirname;
-	const removeWorkDir = () => {
-		// Honour --no-teardown: workDir holds wallet-config.js + the stripped
-		// provider.js, the only way to replay the injected session against the
-		// Anvil/dev-server processes we deliberately left running.
-		if (!options.teardown) {
-			log(`--no-teardown: leaving injected scripts in ${workDir}`);
-			return;
-		}
-		try {
-			rmSync(workDir, { recursive: true, force: true });
-		} catch (err) {
-			log(`could not remove ${workDir}: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	};
-
-	const cleanups: Array<() => void> = [];
+	// Registered first so the reverse-order run below fires it LAST, after the
+	// dev server and Anvil have stopped. teardown()'s own --no-teardown early
+	// return covers the skip: workDir holds wallet-config.js + the stripped
+	// provider.js, the only way to replay the injected session against the
+	// processes we deliberately left running.
+	const cleanups: Array<() => void> = [
+		() => {
+			try {
+				rmSync(workDir, { recursive: true, force: true });
+			} catch (err) {
+				log(`could not remove ${workDir}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		},
+	];
 	let toredown = false;
 	const teardown = () => {
 		if (toredown) return; // idempotent: a signal handler + the finally block both call this
 		toredown = true;
 		if (!options.teardown) {
-			log("--no-teardown: leaving Anvil + dev server running");
+			log(`--no-teardown: leaving Anvil + dev server running; injected scripts in ${workDir}`);
 			return;
 		}
 		for (const fn of [...cleanups].reverse()) {
@@ -176,7 +174,6 @@ async function main(): Promise<number> {
 	for (const sig of ["SIGINT", "SIGTERM"] as const) {
 		process.on(sig, () => {
 			teardown();
-			removeWorkDir();
 			process.exit(130);
 		});
 	}
@@ -267,7 +264,6 @@ async function main(): Promise<number> {
 		return computeExitCode(results, options.mode);
 	} finally {
 		teardown();
-		removeWorkDir();
 	}
 }
 

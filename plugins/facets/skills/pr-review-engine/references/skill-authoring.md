@@ -55,7 +55,7 @@ Every `plugins/facets/skills/pr-review-engine/agents/*.md`:
 Adding, renaming, or removing a route/persona is never a one-file change:
 
 - Every user-invocable Claude route must be present in the Codex router; every router reference must resolve.
-- Both hosts must discover every persona from `agents/*.md`, select the same baseline/conditional set, and preserve exact persona attribution. Codex may schedule reviewers in waves, but may not combine or omit applicable personas.
+- Both hosts must discover every persona from `agents/*.md`, select the same baseline/conditional set, and preserve exact persona attribution. Codex may bound reviewer concurrency (at most three in flight, starting the next as soon as any reviewer returns), but may not batch behind a wave barrier, combine personas, or omit applicable ones.
 - Conditional trigger tokens in persona frontmatter must be defined on both hosts.
 - Human-readable route/persona enumerations in manifests, both READMEs, and repo guidance must match disk.
 - Tests derive route, reference, persona, and fix-rubric inventories from the filesystem/frontmatter. Do not add a second hardcoded list that can drift.

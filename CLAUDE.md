@@ -152,7 +152,7 @@ pnpm install && pnpm verify # all skill TS scripts: Biome + tsc + Vitest
 ## Common gotchas
 
 - **Don't put `commands/` or `skills/` inside `.claude-plugin/`.** Only `plugin.json` lives in `.claude-plugin/`.
-- **Don't reference files outside the plugin root** (`../shared-utils`). Plugins are copied to a cache; siblings won't come along.
+- **Don't reference files outside the *Claude plugin* root** (`../shared-utils`). The Claude plugin is copied to a cache from `plugins/facets/`, so siblings won't come along. This is host-specific: Codex installs from the repository root, so its router legitimately reuses `plugins/facets/` assets via `../../plugins/facets/...`.
 - **Don't reintroduce `<HOME>` template substitution.** The marketplace install model handles paths automatically.
 - **Don't try to declare rubric skills in `plugin.json` `dependencies`.** That field only resolves other plugins (different ecosystem from `npx skills`). Use the SessionStart hook + setup skill instead.
 - **`npx` consumes stdin** when called inside a `while read` loop — always pass `</dev/null` to the install command.

@@ -104,6 +104,75 @@ describe("startAnvil", () => {
 		expect(logs.join("\n")).not.toContain("SUPERSECRETKEY");
 	});
 
+	it("keeps stdout and stderr partial lines apart (no cross-stream splicing)", async () => {
+		// One shared reassembly buffer would prepend stdout's held-back partial line
+		// to the next stderr chunk, splitting the fork URL across two tail entries so
+		// the redactor matches neither half — and garbling the fatal error line.
+		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		let outCb: ((c: Buffer) => void) | undefined;
+		// startAnvil registers stdout first, then stderr; drive the interleaved
+		// writes from the stderr registration so both handlers are attached.
+		const child: ChildLike = {
+			stdout: {
+				on: (_e, cb) => {
+					outCb = cb;
+				},
+			},
+			stderr: {
+				on: (_e, errCb) => {
+					// stdout opens a partial line, stderr writes a whole one, then
+					// stdout completes its line.
+					outCb?.(Buffer.from("Fork\n  Endpoint: https://eth-mainnet.exam"));
+					errCb(Buffer.from("error: connection refused\n"));
+					outCb?.(Buffer.from("ple/v2/SUPERSECRETKEY\n"));
+				},
+			},
+			on: () => undefined,
+			exitCode: 1,
+			killed: false,
+			kill: () => undefined,
+		};
+		const err = await startAnvil({
+			port: 8545,
+			forkUrl,
+			log: () => undefined,
+			spawnAnvil: () => child,
+			timeoutMs: 1000,
+			pollMs: 5,
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).not.toContain("SUPERSECRETKEY");
+		expect(message).toContain("Endpoint: <redacted>");
+		expect(message).toContain("error: connection refused");
+	});
+
+	it("folds an unterminated final line into the failure message, redacted", async () => {
+		// A process dying mid-line leaves its last (usually fatal) line in the
+		// stream's carry; dropping it would lose the most useful diagnostic.
+		const forkUrl = "https://eth-mainnet.example/v2/SUPERSECRETKEY";
+		const child: ChildLike = {
+			stdout: {
+				on: (_e, cb) => cb(Buffer.from(`Error: reqwest error connecting to ${forkUrl}`)),
+			},
+			stderr: { on: () => undefined },
+			on: () => undefined,
+			exitCode: 1,
+			killed: false,
+			kill: () => undefined,
+		};
+		const err = await startAnvil({
+			port: 8545,
+			forkUrl,
+			log: () => undefined,
+			spawnAnvil: () => child,
+			timeoutMs: 1000,
+			pollMs: 5,
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		expect(message).toContain("Error: reqwest error connecting to <redacted>");
+		expect(message).not.toContain("SUPERSECRETKEY");
+	});
+
 	it("throws when anvil exits early", async () => {
 		await expect(
 			startAnvil({

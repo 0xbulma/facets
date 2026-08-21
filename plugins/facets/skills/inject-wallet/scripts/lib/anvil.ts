@@ -71,21 +71,38 @@ export async function startAnvil(opts: StartAnvilOptions): Promise<AnvilHandle> 
 	// interpolated into both failure messages below (which reach stderr).
 	// `data` chunks are not line-aligned, so hold the trailing partial line back
 	// until its rest arrives — otherwise a URL split across chunks matches neither
-	// half and lands in `tail` verbatim.
-	let carry = "";
-	const capture = (chunk: Buffer) => {
-		const parts = (carry + chunk.toString()).split("\n");
-		carry = parts.pop() ?? "";
-		for (const line of parts) if (line.trim()) tail.push(redact(line));
-		while (tail.length > 30) tail.shift();
+	// half and lands in `tail` verbatim. Each stream gets its OWN carry: stdout
+	// (banner) and stderr (fatal errors) interleave, and one shared buffer would
+	// splice a partial line from one onto the next chunk of the other.
+	const makeCapture = () => {
+		let carry = "";
+		return {
+			onData: (chunk: Buffer) => {
+				const parts = (carry + chunk.toString()).split("\n");
+				carry = parts.pop() ?? "";
+				// Bound the partial-line buffer too: output with no newline (a long
+				// single-line upstream error) would otherwise grow it without limit.
+				if (carry.length > 8192) {
+					parts.push(carry);
+					carry = "";
+				}
+				for (const line of parts) if (line.trim()) tail.push(redact(line));
+				while (tail.length > 30) tail.shift();
+			},
+			rest: () => carry,
+		};
 	};
-	child.stdout?.on("data", capture);
-	child.stderr?.on("data", capture);
-	child.on("error", (err) => opts.log(`anvil spawn error: ${String(err)}`));
+	const out = makeCapture();
+	const err = makeCapture();
+	child.stdout?.on("data", out.onData);
+	child.stderr?.on("data", err.onData);
+	child.on("error", (e) => opts.log(redact(`anvil spawn error: ${String(e)}`)));
 
-	// A process that dies mid-line leaves its last line in `carry`; fold it in so
+	// A process that dies mid-line leaves its last line in a carry; fold both in so
 	// the failure messages below don't drop the most recent (often the fatal) line.
-	const tailText = () => redact([...tail, carry].filter((l) => l.trim()).join("\n"));
+	// Only the carries need scrubbing here — `tail` entries were redacted on entry.
+	const tailText = () =>
+		[...tail, redact(out.rest()), redact(err.rest())].filter((l) => l.trim()).join("\n");
 
 	const stop = () => {
 		if (!child.killed) child.kill("SIGTERM");

@@ -116,6 +116,16 @@ describe("isReadOnlyBackend", () => {
 		expect(isReadOnlyBackend({ backend: anvil })).toBe(false);
 	});
 
+	it("locks an --rpc backend read-only under --impersonate too", () => {
+		// The fourth arm: an XOR-shaped predicate would pass the other three.
+		expect(
+			isReadOnlyBackend({
+				backend: rpc,
+				impersonate: "0x1111111111111111111111111111111111111111",
+			}),
+		).toBe(true);
+	});
+
 	it("locks Anvil read-only under --impersonate", () => {
 		expect(
 			isReadOnlyBackend({

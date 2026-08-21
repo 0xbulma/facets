@@ -50,7 +50,10 @@ setup() {
   AGENTS_DIR="$SKILLS_DIR/pr-review-engine/agents"
   # Every directory whose contents ship to a user. The leaked-content guards
   # below must cover the Codex surface as well as the Claude plugin.
-  SHIPPED_DIRS="$PLUGIN_DIR $REPO_ROOT/skills/facets $REPO_ROOT/.codex-plugin $REPO_ROOT/.agents"
+  # A bash array, not a string: an unquoted string expansion word-splits on a
+  # space in REPO_ROOT, and grep then exits 2 (path error) — which `-ne 0`
+  # would accept as "no match", silently scanning nothing.
+  SHIPPED_DIRS=("$PLUGIN_DIR" "$REPO_ROOT/skills/facets" "$REPO_ROOT/.codex-plugin" "$REPO_ROOT/.agents")
   # Derive from skill DIRECTORIES, not from */SKILL.md: globbing the SKILL.md
   # files would make the "every skill dir has a SKILL.md" test below tautological
   # (and silently drop a skill that lost its SKILL.md from every downstream test).
@@ -322,27 +325,27 @@ setup() {
 }
 
 @test "no leaked @morpho-org references in plugins/" {
-  run grep -rn '@morpho-org' $SHIPPED_DIRS
+  run grep -rn '@morpho-org' "${SHIPPED_DIRS[@]}"
   # grep returns 1 when no match — that's what we want.
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked 'morpho' references anywhere in plugins/" {
   # Skills imported from morpho-org/sdks must be fully repo-agnostic.
   # No exceptions — including author/owner metadata.
-  run grep -rni --exclude-dir=node_modules 'morpho' $SHIPPED_DIRS
-  [ "$status" -ne 0 ]
+  run grep -rni --exclude-dir=node_modules 'morpho' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked personal-name references in plugins/" {
   # Only the public 0xbulma handle is permitted.
-  run grep -rn 'Benjamin A\|benjamin@' $SHIPPED_DIRS
-  [ "$status" -ne 0 ]
+  run grep -rn 'Benjamin A\|benjamin@' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked <HOME> template tokens in plugins/" {
-  run grep -rn '<HOME>' $SHIPPED_DIRS
-  [ "$status" -ne 0 ]
+  run grep -rn '<HOME>' "${SHIPPED_DIRS[@]}"
+  [ "$status" -eq 1 ]   # 1 = no match; 2 = grep path error, which must fail
 }
 
 @test "no leaked /.agents/ absolute paths outside the shared installer" {
@@ -499,7 +502,7 @@ setup() {
     if [ -n "$found" ]; then
       bad="${bad}\n${found}"
     fi
-  done < <(find "$SKILLS_DIR" -type f -name '*.md')
+  done < <(find "$SKILLS_DIR" "$REPO_ROOT/skills/facets" -type f -name '*.md')
   set -e
   [ -z "$bad" ] || { printf 'XML brackets found in frontmatter:%b\n' "$bad" >&2; return 1; }
 }
