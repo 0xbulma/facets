@@ -97,16 +97,6 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.
 
 Edge-case handling (deletion-only hunks, pure renames) lives in `references/changed-lines.md`. Read it before adjusting the build rule.
 
-**Coupled-partner sweep (deterministic, runs once per review).** With the map built, sweep for files this diff changed whose historically-paired partner it left untouched — mirror drift, in one exhaustive pass rather than one instance per review round (feedback #64):
-
-```bash
-COUPLE_FINDINGS=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts" \
-  --base "$MERGE_BASE" --changed-lines "$CHANGED_LINES_FILE") \
-  || COUPLE_FINDINGS='[]'   # best-effort: a shallow clone or young repo just yields no coupling
-```
-
-The pairing is derived from `git log` before `$MERGE_BASE` — no declared pair list and no config, so it works in any repo, and the branch's own commits can't dilute the coupling they're measured against. It reports only a **strongly-coupled partner absent from the diff** (default: ≥3 co-changes and ≥75% of the source file's commits); it deliberately does not compare the contents of two changed partners, because sibling routes co-change heavily yet legitimately diverge. Carry `COUPLE_FINDINGS` into Step 6 as one more findings array.
-
 If `DIFF_SOURCE=local` AND uncommitted changes exist, also include them:
 
 ```bash
@@ -122,6 +112,35 @@ Combine the two file lists, deduplicate, announce the count of uncommitted files
 If both diffs are empty, return an empty result to the caller (it will emit the appropriate "no changes to review" sentinel).
 
 Read each changed file from the local filesystem using the Read tool so agents have full file context (not just diff hunks).
+
+### Coupled-partner sweep (deterministic, once per review)
+
+Runs **here, at the end of Step 3** — after `CHANGED_LINES` and the changed-file list are complete for the run. Order matters: the sweep asks "which changed file left its historical partner untouched?", so running it against a partial changed-set would report a partner the author already updated (every uncommitted-only file in a `DIFF_SOURCE=local` review, and any file git treats as binary, which never gets a `CHANGED_LINES` key at all). Sweeping for mirror drift in one exhaustive pass is what keeps it out of the review loop's one-nit-per-round tail (feedback #64):
+
+```bash
+# Thread results through files, not shell variables — Step 6 is a separate bash
+# call, so a variable set here won't survive (same reason CHANGED_LINES_FILE is
+# an mktemp path). Note both literal paths and reuse them in Step 6.
+COUPLE_FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-couple.XXXXXX") || { echo "mktemp failed; cannot allocate the couple-sweep path." >&2; exit 1; }
+CHANGED_FILES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-files.XXXXXX") || { echo "mktemp failed; cannot allocate the changed-files path." >&2; exit 1; }
+
+# The authoritative changed-file list: committed, plus uncommitted when local.
+{ git diff --name-only "$MERGE_BASE..${HEAD_REF}"; \
+  [ "${DIFF_SOURCE}" = "local" ] && git diff --name-only HEAD; } | sort -u > "$CHANGED_FILES_FILE"
+
+node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts" \
+  --base "$MERGE_BASE" \
+  --changed-lines "$CHANGED_LINES_FILE" \
+  --changed-files "$CHANGED_FILES_FILE" > "$COUPLE_FINDINGS_FILE"
+COUPLE_STATUS=$?
+```
+
+Branch on `COUPLE_STATUS` — **a sweep that could not run is not a clean sweep**, the same contract every review lens is held to:
+
+- **0** → `$COUPLE_FINDINGS_FILE` holds the findings array (`[]` when the sweep ran and nothing fired: too little history, a shallow clone, or no coupled partner missing). Carry the literal path into Step 6 and aggregate it as one more findings array.
+- **non-zero** (2 = misuse or an unreadable input; 3 = git could not be queried; any other = node itself failed, most commonly a runtime older than 22.18 that cannot type-strip the script) → print the script's stderr, treat `$COUPLE_FINDINGS_FILE` as empty, and **add `couple-sweep` to `FAILED_AGENTS`**. That routes it through the existing never-report-clean-when-a-lens-crashed rule in Step 6 sub-step 2, instead of silently degrading to "no drift found".
+
+The pairing is derived from `git log` before `$MERGE_BASE` — no declared pair list and no config, so it works in any repo, and the branch's own commits can't dilute the coupling they're measured against. It reports only a **strongly-coupled partner absent from the diff** (default: ≥3 co-changes and ≥75% of the source file's commits); it deliberately does not compare the contents of two changed partners, because sibling routes co-change heavily yet legitimately diverge.
 
 ## Step 4: Read project context (adaptive)
 
@@ -327,7 +346,7 @@ Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-revi
 
 Merge all agent results into a single list:
 
-0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Aggregate Step 3's `COUPLE_FINDINGS` into the same list and stamp it `agents: ["couple-sweep"]` — it is a deterministic checker rather than a persona, so it is not in `agents/`, but attribution works the same and its findings de-duplicate against a persona that happened to spot the same drift. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
+0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Aggregate the coupled-partner findings from Step 3's `$COUPLE_FINDINGS_FILE` (the literal mktemp path noted there) into the same list and stamp them `agents: ["couple-sweep"]` — it is a deterministic checker rather than a persona, so it is not in `agents/`, but attribution works the same and its findings de-duplicate against a persona that happened to spot the same drift. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
 
 1. **Scope filter (drop out-of-scope findings).** Build `CHANGED_FILES` = the deduplicated file list from Step 3:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`

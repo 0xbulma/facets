@@ -7,6 +7,7 @@ import {
 	buildCoupling,
 	DEFAULT_OPTIONS,
 	parseArgs,
+	parseChangedFiles,
 	parseChangedLines,
 	parseLog,
 	type SweepInput,
@@ -141,17 +142,75 @@ describe("sweep", () => {
 		expect(sweep(input({ commits, changedLines: { "b.md": [1] } })).findings).toHaveLength(1);
 	});
 
-	it("orders by confidence and reports how many the cap dropped", () => {
+	it("emits strongest-coupled first", () => {
+		// weak.md: 3 of 6 commits with its partner is below the floor; mid.md: 4 of
+		// 5 (80%); strong.md: 4 of 4 (100%). Ordering must be strong then mid.
+		const commits = [
+			...coupled(4, ["strong.md", "strong.mirror.md"]),
+			...coupled(4, ["mid.md", "mid.mirror.md"]),
+			["mid.md"],
+			...coupled(3, ["weak.md", "weak.mirror.md"]),
+			["weak.md"],
+			["weak.md"],
+			["weak.md"],
+		];
+		const { findings } = sweep(
+			input({ commits, changedLines: { "strong.md": [1], "mid.md": [1], "weak.md": [1] } }),
+		);
+		expect(findings.map((f) => f.file)).toEqual(["strong.md", "mid.md"]);
+		expect(findings.map((f) => f.confidence)).toEqual([85, 80]);
+	});
+
+	it("drops the WEAKEST pairs when the cap bites, never the strongest", () => {
+		// Every candidate above the cap gets a distinct confidence, so an inverted
+		// comparator would keep the wrong 20 and this fails.
+		const total = DEFAULT_OPTIONS.maxFindings + 3;
 		const commits: string[][] = [];
-		for (let i = 0; i < DEFAULT_OPTIONS.maxFindings + 3; i += 1) {
-			commits.push(...coupled(4, [`src${i}.md`, `mirror${i}.md`]));
+		for (let i = 0; i < total; i += 1) {
+			// i solo commits dilute pair i, so higher i => lower confidence. 100
+			// co-changes keeps even the weakest (100/122 = 82%) above the floor, so
+			// all `total` candidates survive filtering and only the cap removes any.
+			commits.push(...coupled(100, [`src${i}.md`, `mirror${i}.md`]));
+			for (let j = 0; j < i; j += 1) commits.push([`src${i}.md`]);
 		}
 		const changedLines = Object.fromEntries(
-			Array.from({ length: DEFAULT_OPTIONS.maxFindings + 3 }, (_, i) => [`src${i}.md`, [1]]),
+			Array.from({ length: total }, (_, i) => [`src${i}.md`, [1]]),
 		);
 		const result = sweep(input({ commits, changedLines }));
-		expect(result.findings).toHaveLength(DEFAULT_OPTIONS.maxFindings);
 		expect(result.truncated).toBe(3);
+		// The three dropped ones must be the three weakest (highest index).
+		const kept = result.findings.map((f) => f.file);
+		expect(kept).not.toContain(`src${total - 1}.md`);
+		expect(kept).not.toContain(`src${total - 2}.md`);
+		expect(kept).not.toContain(`src${total - 3}.md`);
+		expect(kept[0]).toBe("src0.md");
+		// Emitted confidence is clamped at 85, so several entries tie on the
+		// reported value; the sequence must still be non-increasing, which only
+		// holds if the sort ranks on the raw ratio rather than the emitted number.
+		const reported = result.findings.map((f) => f.confidence);
+		expect(reported).toEqual([...reported].sort((a, b) => b - a));
+	});
+
+	it("prefers the explicit changedFiles set over the changed-lines keys", () => {
+		// b.md IS in this review but git could not diff it (binary), so it has no
+		// changed-lines key. Reporting it as an untouched partner would be wrong.
+		const commits = coupled(4, ["a.md", "b.md"]);
+		expect(sweep(input({ commits, changedLines: { "a.md": [1] } })).findings).toHaveLength(1);
+		expect(
+			sweep(input({ commits, changedFiles: ["a.md", "b.md"], changedLines: { "a.md": [1] } }))
+				.findings,
+		).toEqual([]);
+	});
+
+	it("still anchors on the changed-lines map when changedFiles is supplied", () => {
+		const { findings } = sweep(
+			input({
+				commits: coupled(4, ["a.md", "b.md"]),
+				changedFiles: ["a.md"],
+				changedLines: { "a.md": [77] },
+			}),
+		);
+		expect(findings[0]?.line).toBe(77);
 	});
 
 	it("honors overridden thresholds", () => {
@@ -190,6 +249,16 @@ describe("parseChangedLines", () => {
 	});
 });
 
+describe("parseChangedFiles", () => {
+	it("splits one path per line and drops blanks", () => {
+		expect(parseChangedFiles("a.ts\n\nb/c.md\n")).toEqual(["a.ts", "b/c.md"]);
+	});
+
+	it("returns an empty list for empty input", () => {
+		expect(parseChangedFiles("")).toEqual([]);
+	});
+});
+
 describe("parseArgs", () => {
 	it("parses both required flags in either order", () => {
 		expect(parseArgs(["--changed-lines", "cl.json", "--base", "abc"])).toEqual({
@@ -198,9 +267,21 @@ describe("parseArgs", () => {
 		});
 	});
 
-	it("throws when either flag is missing", () => {
+	it("throws when either required flag is missing", () => {
 		expect(() => parseArgs(["--base", "abc"])).toThrow(UsageError);
 		expect(() => parseArgs(["--changed-lines", "cl.json"])).toThrow(UsageError);
+	});
+
+	it("parses the optional --changed-files and omits it when absent", () => {
+		expect(parseArgs(["--base", "a", "--changed-lines", "c", "--changed-files", "f"])).toEqual({
+			base: "a",
+			changedLines: "c",
+			changedFiles: "f",
+		});
+		expect(parseArgs(["--base", "a", "--changed-lines", "c"])).toEqual({
+			base: "a",
+			changedLines: "c",
+		});
 	});
 });
 
@@ -254,6 +335,99 @@ describe("CLI (real git fixture)", () => {
 				{ cwd: dir, encoding: "utf8" },
 			);
 			expect(JSON.parse(out)).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	/** Run the CLI, returning the exit code and stdout instead of throwing. */
+	function runCli(cwd: string, args: string[]): { code: number; stdout: string } {
+		try {
+			return {
+				code: 0,
+				stdout: execFileSync("node", [SCRIPT, ...args], { cwd, encoding: "utf8", stdio: "pipe" }),
+			};
+		} catch (error) {
+			if (error instanceof Error && "status" in error && typeof error.status === "number") {
+				const out = "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
+				return { code: error.status, stdout: out };
+			}
+			throw error;
+		}
+	}
+
+	it("exits 3 with empty stdout when git cannot be queried", () => {
+		// A failed sweep must never be byte-identical to a clean one: exiting 0
+		// with `[]` here would let the caller report the review clean with this
+		// lens silently skipped.
+		const { dir } = fixture();
+		try {
+			writeFileSync(join(dir, "changed-lines.json"), JSON.stringify({ "skill.md": [1] }));
+			const result = runCli(dir, [
+				"--base",
+				"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+				"--changed-lines",
+				join(dir, "changed-lines.json"),
+			]);
+			expect(result.code).toBe(3);
+			expect(result.stdout).toBe("");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("exits 2 with empty stdout when --changed-lines is unreadable", () => {
+		const { dir, base } = fixture();
+		try {
+			const result = runCli(dir, [
+				"--base",
+				base,
+				"--changed-lines",
+				join(dir, "does-not-exist.json"),
+			]);
+			expect(result.code).toBe(2);
+			expect(result.stdout).toBe("");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("exits 2 when --changed-files is unreadable", () => {
+		const { dir, base } = fixture();
+		try {
+			writeFileSync(join(dir, "changed-lines.json"), JSON.stringify({ "skill.md": [1] }));
+			const result = runCli(dir, [
+				"--base",
+				base,
+				"--changed-lines",
+				join(dir, "changed-lines.json"),
+				"--changed-files",
+				join(dir, "nope.txt"),
+			]);
+			expect(result.code).toBe(2);
+			expect(result.stdout).toBe("");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("honors --changed-files over the changed-lines keys", () => {
+		const { dir, base } = fixture();
+		try {
+			// mirror.md is in this review but absent from the changed-lines map
+			// (as a binary file would be); --changed-files must suppress the finding.
+			writeFileSync(join(dir, "changed-lines.json"), JSON.stringify({ "skill.md": [1] }));
+			writeFileSync(join(dir, "changed-files.txt"), "skill.md\nmirror.md\n");
+			const result = runCli(dir, [
+				"--base",
+				base,
+				"--changed-lines",
+				join(dir, "changed-lines.json"),
+				"--changed-files",
+				join(dir, "changed-files.txt"),
+			]);
+			expect(result.code).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual([]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

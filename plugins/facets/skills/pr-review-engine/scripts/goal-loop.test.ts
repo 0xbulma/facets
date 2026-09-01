@@ -73,6 +73,34 @@ describe("hashActionable", () => {
 		const b = hashActionable([finding("high", { file: "a 1", line: 1, description: "b" })]);
 		expect(a).not.toBe(b);
 	});
+
+	it("does not collide across record boundaries", () => {
+		// Two findings vs one whose description happens to spell out the second.
+		// Descriptions are free-form prose that routinely cites `path line` pairs,
+		// so a plain separator would hash these identically and fire GOAL_STUCK on
+		// a loop that was still making progress.
+		const two = hashActionable([
+			finding("high", { file: "a", line: 1, description: "b" }),
+			finding("high", { file: "c", line: 2, description: "d" }),
+		]);
+		const one = hashActionable([finding("high", { file: "a", line: 1, description: "bc 2 d" })]);
+		expect(two).not.toBe(one);
+	});
+
+	it("does not collide when a description contains the record separator", () => {
+		const withNewline = hashActionable([
+			finding("high", { file: "a", line: 1, description: 'x"]\n["c",2,"d' }),
+		]);
+		const asTwo = hashActionable([
+			finding("high", { file: "a", line: 1, description: "x" }),
+			finding("high", { file: "c", line: 2, description: "d" }),
+		]);
+		expect(withNewline).not.toBe(asTwo);
+	});
+
+	it("produces a hash with no control bytes (the file must stay git-text)", () => {
+		expect(hashActionable([finding("high")])).toMatch(/^[0-9a-f]{16}$/);
+	});
 });
 
 describe("nextGoalAction", () => {
@@ -210,7 +238,11 @@ describe("CLI", () => {
 	});
 
 	it("exits 2 on invalid input rather than emitting a decision", () => {
-		expect(run("not json").code).toBe(2);
+		const result = run("not json");
+		expect(result.code).toBe(2);
+		// Empty stdout on a non-zero exit is the contract: a caller that captures
+		// `$(...)` without checking the status must not be able to read a decision.
+		expect(result.stdout).toBe("");
 	});
 
 	it("runs from a path containing a space (the #42 isMain regression)", () => {

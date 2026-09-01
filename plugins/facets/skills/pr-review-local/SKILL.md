@@ -53,6 +53,7 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
 | `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
 | `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `--goal` decision helper failed | `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` (tree restored; nothing committed) |
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 | `--goal` runtime fix pass failed | `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
@@ -393,25 +394,30 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
 2. **Decide.** The whole stop-condition state machine — the `{critical, high, medium}` partition, the success check (gated on `FAILED_AGENTS == 0`), the stuck check, the `MAX_ITERS` ceiling, and the matching sentinel line — is a **tested script**, not prose the model re-derives each run (feedback #63). Pipe the post-review state to it:
 
+   Write the state to a per-run file and feed it on stdin. **No heredoc** — this snippet lives inside a numbered list, and an indented `GOAL_STATE` terminator is not recognized at column 0, which silently folds the terminator into the payload and fails the parse:
+
    ```bash
-   DECISION=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" <<'GOAL_STATE'
-   { "iteration": <i>, "max_iters": <MAX_ITERS>,
-     "failed_agents": [ ... FAILED_AGENTS names ... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
-     "prev_actionable_hash": "<prev_findings_hash>",
-     "findings": [ ... this iteration's FINDINGS, lows included ... ],
-     "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
-   GOAL_STATE
-   )
+   GOAL_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-goal-state.XXXXXX") || { echo "mktemp failed; cannot allocate the goal-state path." >&2; exit 1; }
+   # Write this iteration's state as JSON into $GOAL_STATE_FILE (use the Write tool):
+   #   { "iteration": <i>, "max_iters": <MAX_ITERS>,
+   #     "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
+   #     "prev_actionable_hash": "<prev_findings_hash>",
+   #     "findings": [ ...this iteration's FINDINGS, lows included... ],
+   #     "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
+   DECISION=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "$GOAL_STATE_FILE")
+   GOAL_STATUS=$?
    ```
 
-   It returns `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
+   **Check `GOAL_STATUS` before reading `DECISION`.** Stdout is empty on any non-zero exit (2 = invalid state, 3 = internal error, other = node itself failed — most commonly a runtime older than 22.18), and an empty capture must never be mistaken for a converged decision. On a non-zero status, or if `DECISION` does not parse to an object with a known `action`, this iteration produced **no decision**: emit `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.`, print the script's stderr, restore the tree (see *Leaving the branch clean* below), and stop for the user. Do **not** fall through to a success path — a helper failure is never clean.
+
+   On a zero status it returns `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
    - `converged` → **break, success**; carry the `low` findings forward to the summary.
    - `incomplete` → an agent crashed, so the empty actionable set is unproven (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`). Restore the tree (see *Leaving the branch clean* below), print `sentinel` (`GOAL_INCOMPLETE`) plus the failed-agent names and any findings, and stop and ask the user — do not commit or stamp the result as clean.
    - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
    - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.
    - `fix` → continue to step 3.
 
-   If the script can't run (no Node ≥ 22.18), fall back to evaluating those five conditions by hand in the order above — but say so, because the loop's stop conditions are then unverified.
+   Hand-evaluating those five conditions instead of running the script is a last resort, not a silent fallback: it is reachable only through the `GOAL_ABORTED` stop above, when the user explicitly asks to continue without the helper. Say plainly that the stop conditions are unverified in that case.
 3. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
 4. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 5). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
 5. **Commit** (only when the gate is green):
@@ -554,6 +560,7 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `GOAL_ABORTED` | Goal mode loop (decide step) | `— goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` |
 | `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 | `GOAL_RUNTIME_RED` | Goal mode runtime re-pass | `— runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |

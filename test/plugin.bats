@@ -560,11 +560,16 @@ setup() {
   engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
   grep -q 'scripts/couple-sweep.ts' "$engine" \
     || { echo "engine Step 3 no longer runs couple-sweep.ts" >&2; return 1; }
-  grep -q 'couple-sweep' "$engine" \
+  # Anchor on the STAMP, not the tool name: a bare 'couple-sweep' grep is a
+  # strict substring of the Step 3 check above, so it could never fail on its
+  # own and the whole attribution sentence could be deleted with this green.
+  grep -Fq 'agents: ["couple-sweep"]' "$engine" \
     || { echo "engine Step 6 missing the couple-sweep attribution stamp" >&2; return 1; }
   codex="$REPO_ROOT/skills/facets/references/review.md"
   grep -q 'couple-sweep.ts' "$codex" \
     || { echo "Codex review reference missing the couple-sweep helper" >&2; return 1; }
+  grep -Fq 'agents:["couple-sweep"]' "$codex" \
+    || { echo "Codex review reference missing the couple-sweep attribution stamp" >&2; return 1; }
 }
 
 @test "engine ships its bundled references/ files" {

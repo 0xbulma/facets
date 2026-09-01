@@ -3,7 +3,8 @@
  * couple-sweep.ts — deterministic cross-file consistency sweep (feedback #64).
  * Run with Node's native TypeScript support (Node >= 22.18):
  *
- *   node couple-sweep.ts --base <merge-base> --changed-lines <changed-lines.json>
+ *   node couple-sweep.ts --base <merge-base> --changed-lines <changed-lines.json> \
+ *     [--changed-files <name-only.txt>]
  *
  * The problem: on doc-heavy diffs the `--goal` loop converges one nit per round,
  * because the LLM lenses rediscover mirror drift instance by instance (findings
@@ -24,11 +25,19 @@
  * History is read from `--base` (the merge base), not HEAD, so the branch's own
  * commits cannot dilute the coupling it is being measured against.
  *
- * Output (stdout): a JSON array of engine-shaped findings, `[]` when nothing
- * fires (too little history, a shallow clone, no coupled partner missing).
- * Any cap that drops findings is reported on stderr — never silently.
+ * Pass `--changed-files` (the caller's `git diff --name-only` list) whenever it
+ * is available: the changed-lines map is keyed only by files git could diff, so
+ * a binary file — or an uncommitted one before the overlay is merged — is absent
+ * from it and would otherwise be reported as a partner the author never touched.
  *
- * Exit code: 0 on a produced result (including `[]`); 2 on CLI misuse.
+ * Output (stdout): a JSON array of engine-shaped findings, `[]` when the sweep
+ * ran and nothing fired (too little history, a shallow clone, no coupled partner
+ * missing). Any cap that drops findings is reported on stderr — never silently.
+ *
+ * Exit codes: 0 the sweep ran, findings (possibly `[]`) are on stdout; 2 CLI
+ * misuse or an unreadable input file; 3 git could not be queried. Stdout is
+ * EMPTY on any non-zero exit — a failed sweep is never a clean sweep, so the
+ * caller must check the status rather than defaulting the capture to `[]`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -70,7 +79,15 @@ const MAX_CONFIDENCE = 85;
 export type SweepInput = {
 	/** One entry per commit: the file paths it touched. */
 	commits: readonly (readonly string[])[];
-	/** The engine's CHANGED_LINES map — its keys are the changed files, its values anchor the finding. */
+	/**
+	 * The authoritative set of files this review covers. MUST be the caller's full
+	 * changed-file list, not the changed-lines keys: a file git treats as binary,
+	 * or (before the overlay is merged) an uncommitted-only file, has no map key,
+	 * and would then be reported as an absent partner the author already updated.
+	 * Defaults to the changedLines keys when omitted.
+	 */
+	changedFiles?: readonly string[];
+	/** The engine's CHANGED_LINES map — used to anchor each finding on a real diff line. */
 	changedLines: Readonly<Record<string, readonly number[]>>;
 	/** Injected existence check, so a partner deleted since is not reported as drift. */
 	exists: (path: string) => boolean;
@@ -137,7 +154,7 @@ export function sweep(
 	options: SweepOptions = DEFAULT_OPTIONS,
 ): { findings: CoupleFinding[]; truncated: number } {
 	const { totals, pairs } = buildCoupling(input.commits, options);
-	const changed = new Set(Object.keys(input.changedLines));
+	const changed = new Set(input.changedFiles ?? Object.keys(input.changedLines));
 	const scored: { finding: CoupleFinding; confidence: number; support: number }[] = [];
 
 	for (const source of [...changed].sort()) {
@@ -213,9 +230,12 @@ export function parseChangedLines(raw: string): Record<string, number[]> {
 
 export class UsageError extends Error {}
 
-export function parseArgs(argv: readonly string[]): { base: string; changedLines: string } {
+export type CliArgs = { base: string; changedLines: string; changedFiles?: string };
+
+export function parseArgs(argv: readonly string[]): CliArgs {
 	let base: string | undefined;
 	let changedLines: string | undefined;
+	let changedFiles: string | undefined;
 	for (let i = 0; i < argv.length; i += 1) {
 		if (argv[i] === "--base") {
 			base = argv[i + 1];
@@ -223,16 +243,29 @@ export function parseArgs(argv: readonly string[]): { base: string; changedLines
 		} else if (argv[i] === "--changed-lines") {
 			changedLines = argv[i + 1];
 			i += 1;
+		} else if (argv[i] === "--changed-files") {
+			changedFiles = argv[i + 1];
+			i += 1;
 		}
 	}
 	if (base === undefined || changedLines === undefined) {
-		throw new UsageError("usage: couple-sweep.ts --base <merge-base> --changed-lines <path>");
+		throw new UsageError(
+			"usage: couple-sweep.ts --base <merge-base> --changed-lines <path> [--changed-files <path>]",
+		);
 	}
-	return { base, changedLines };
+	return changedFiles === undefined ? { base, changedLines } : { base, changedLines, changedFiles };
+}
+
+/** One path per line; blank lines dropped. The caller's `git diff --name-only` output. */
+export function parseChangedFiles(raw: string): string[] {
+	return raw
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line !== "");
 }
 
 function main(): number {
-	let args: { base: string; changedLines: string };
+	let args: CliArgs;
 	try {
 		args = parseArgs(process.argv.slice(2));
 	} catch (error) {
@@ -253,6 +286,18 @@ function main(): number {
 		return 2;
 	}
 
+	let changedFiles: string[] | undefined;
+	if (args.changedFiles !== undefined) {
+		try {
+			changedFiles = parseChangedFiles(readFileSync(args.changedFiles, "utf8"));
+		} catch (error) {
+			process.stderr.write(
+				`couple-sweep: cannot read --changed-files: ${error instanceof Error ? error.message : error}\n`,
+			);
+			return 2;
+		}
+	}
+
 	// History from the merge base, so the branch's own commits can't dilute the
 	// coupling. A shallow clone or a young repo just yields fewer commits -> [].
 	let log: string;
@@ -262,13 +307,18 @@ function main(): number {
 			["log", `--pretty=format:@%H`, "--name-only", "-n", String(HISTORY_DEPTH), args.base],
 			{ encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
 		);
-	} catch {
-		process.stderr.write("couple-sweep: git log failed; emitting no coupling findings.\n");
-		process.stdout.write("[]\n");
-		return 0;
+	} catch (error) {
+		// A failed sweep is NOT a clean sweep. Exiting 0 with `[]` would be
+		// byte-identical to "checked, no drift", so the caller would report a
+		// review as clean with this lens silently skipped. Exit 3 with empty
+		// stdout instead, and surface git's own message.
+		process.stderr.write(
+			`couple-sweep: git log failed: ${error instanceof Error ? error.message : String(error)}\n`,
+		);
+		return 3;
 	}
 
-	const result = sweep({ commits: parseLog(log), changedLines, exists: existsSync });
+	const result = sweep({ commits: parseLog(log), changedFiles, changedLines, exists: existsSync });
 	if (result.truncated > 0) {
 		process.stderr.write(
 			`couple-sweep: reporting the ${DEFAULT_OPTIONS.maxFindings} strongest coupled-partner ` +
