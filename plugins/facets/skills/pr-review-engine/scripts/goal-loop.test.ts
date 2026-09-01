@@ -51,10 +51,20 @@ describe("partition", () => {
 		expect(result.low.map((f) => f.severity)).toEqual(["low"]);
 	});
 
-	it("treats an unrecognized severity as non-actionable (never auto-fixed on a guess)", () => {
+	it("routes an unrecognized severity to `unknown` — never auto-fixed, never clean", () => {
+		// Not actionable: fixing it would mean guessing at the blast radius.
+		// Not `low` either: `low` means "proven harmless", and an unparseable
+		// label proves nothing. It gets its own bucket.
 		const result = partition([finding("catastrophic")]);
 		expect(result.actionable).toEqual([]);
+		expect(result.low).toEqual([]);
+		expect(result.unknown).toHaveLength(1);
+	});
+
+	it("keeps `low` in the triage bucket, not in `unknown`", () => {
+		const result = partition([finding("low")]);
 		expect(result.low).toHaveLength(1);
+		expect(result.unknown).toEqual([]);
 	});
 });
 
@@ -120,6 +130,30 @@ describe("nextGoalAction", () => {
 		// ledger stamp and the push, none of which have run yet, and it is the token
 		// a wrapping /goal audit matches on. The Final summary mints it instead.
 		expect(decision.sentinel).toBeNull();
+	});
+
+	it("refuses to converge while any finding carries an unrecognized severity", () => {
+		// A red re-gate's synthetic findings are model-authored and never pass
+		// validate-findings, which is the only thing that rejects unknown labels.
+		// So this is precisely the input that carries "the tree is red".
+		const decision = nextGoalAction(state({ findings: [finding("blocker")] }));
+		expect(decision.action).toBe("incomplete");
+		expect(decision.sentinel).toContain("GOAL_INCOMPLETE");
+		expect(decision.sentinel).toContain("1 finding(s) carry an unrecognized severity (blocker)");
+	});
+
+	it("prefers the unknown-severity stop over an otherwise-clean converge", () => {
+		const decision = nextGoalAction(state({ findings: [finding("low"), finding("oops")] }));
+		expect(decision.action).toBe("incomplete");
+	});
+
+	it("lists each distinct unrecognized label once, sorted", () => {
+		const decision = nextGoalAction(
+			state({ findings: [finding("zeta"), finding("alpha"), finding("zeta")] }),
+		);
+		expect(decision.sentinel).toContain(
+			"3 finding(s) carry an unrecognized severity (alpha, zeta)",
+		);
 	});
 
 	it("reports incomplete — not clean — when an agent failed (feedback #45)", () => {

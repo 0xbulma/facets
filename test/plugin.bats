@@ -668,6 +668,14 @@ setup() {
   # 4. The goal loop must check the decision status before reading a decision.
   grep -Fq 'Check the printed' "$local_skill" \
     || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
+  # 5. A red re-gate must reach the decision. goal-loop.ts takes no gate-status
+  # input, so folding the gate's failures into the state payload as synthetic
+  # findings is the ONLY thing stopping the loop converging on a red tree. Both
+  # halves — the producer at loop step 4 and the consumer in the payload spec.
+  grep -Fq 'becomes additional synthetic findings for the next iteration' "$local_skill" \
+    || { echo "pr-review-local lost the red-re-gate synthetic-findings producer" >&2; return 1; }
+  grep -Fq 'PLUS any synthetic findings carried' "$local_skill" \
+    || { echo "pr-review-local lost the red-re-gate findings in the decide payload" >&2; return 1; }
 }
 
 @test "engine prints every value a later bash block consumes" {

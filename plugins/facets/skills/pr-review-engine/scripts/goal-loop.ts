@@ -51,6 +51,9 @@ import { fileURLToPath } from "node:url";
 /** Severities the loop auto-fixes. `low` is never auto-fixed — it is carried to the summary for the user to triage. */
 const ACTIONABLE_SEVERITIES = new Set(["critical", "high", "medium"]);
 
+/** The only non-actionable label that still counts as a proven-clean outcome. */
+const TRIAGE_SEVERITY = "low";
+
 export type GoalAction = "fix" | "converged" | "stuck" | "maxed" | "incomplete";
 
 /** A finding as produced by the engine's `FINDINGS` (extra keys are ignored). */
@@ -107,18 +110,32 @@ export function hashActionable(findings: readonly GoalFinding[]): string {
 	return createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
-/** Split `FINDINGS` into the auto-fixable set and the carried-forward `low` triage list. */
+/**
+ * Split `FINDINGS` into the auto-fixable set, the carried-forward `low` triage
+ * list, and anything whose severity is not a recognized label.
+ *
+ * `unknown` exists because two intents were being conflated. Not auto-fixing a
+ * finding whose severity you cannot parse is right — you would be guessing at a
+ * blast radius. Concluding it is therefore harmless is not: the synthetic
+ * findings a red re-gate produces are authored by the model and never pass
+ * `validate-findings.ts`, which is the only thing that rejects unknown labels.
+ * So the single input that carries "the tree is red" is exactly the input a typo
+ * can turn into a non-blocking `low`. Unknown is never fixed AND never clean.
+ */
 export function partition(findings: readonly GoalFinding[]): {
 	actionable: GoalFinding[];
 	low: GoalFinding[];
+	unknown: GoalFinding[];
 } {
 	const actionable: GoalFinding[] = [];
 	const low: GoalFinding[] = [];
+	const unknown: GoalFinding[] = [];
 	for (const finding of findings) {
 		if (ACTIONABLE_SEVERITIES.has(finding.severity)) actionable.push(finding);
-		else low.push(finding);
+		else if (finding.severity === TRIAGE_SEVERITY) low.push(finding);
+		else unknown.push(finding);
 	}
-	return { actionable, low };
+	return { actionable, low, unknown };
 }
 
 /**
@@ -135,13 +152,27 @@ export function partition(findings: readonly GoalFinding[]): {
  *   5. otherwise -> fix
  */
 export function nextGoalAction(state: GoalLoopState): GoalLoopDecision {
-	const { actionable, low } = partition(state.findings);
+	const { actionable, low, unknown } = partition(state.findings);
 	const hash = hashActionable(actionable);
 	const base = {
 		actionable_hash: hash,
 		actionable_count: actionable.length,
 		low_count: low.length,
 	};
+
+	// Before any success check: an unparseable severity means the set cannot be
+	// proven clean. Do not auto-fix it (the blast radius is a guess) and do not
+	// converge past it — stop and let the user resolve it.
+	if (unknown.length > 0) {
+		const labels = [...new Set(unknown.map((f) => f.severity))].sort().join(", ");
+		return {
+			...base,
+			action: "incomplete",
+			sentinel:
+				`Sentinel: GOAL_INCOMPLETE — ${unknown.length} finding(s) carry an unrecognized severity ` +
+				`(${labels}); the set cannot be proven clean — correct the severities and re-run --goal.`,
+		};
+	}
 
 	if (actionable.length === 0 && state.failed_agents.length === 0) {
 		// Deliberately no sentinel. GOAL_CLEAN certifies work that has NOT happened
