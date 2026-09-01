@@ -507,20 +507,64 @@ setup() {
   [ -z "$bad" ] || { printf 'XML brackets found in frontmatter:%b\n' "$bad" >&2; return 1; }
 }
 
-@test "engine ships scripts/ with the five bundled helpers" {
+@test "engine ships scripts/ with the seven bundled helpers" {
   # The Anthropic Skills guide (p. 26) recommends scripting deterministic
-  # logic instead of expressing it only in language. The five helpers
+  # logic instead of expressing it only in language. The seven helpers
   # implement the diff-line build (TS), the finding validator (TS), the
   # findings-ledger merge for stateful re-runs (TS, feedback #19), the
-  # git-scope helpers extracted from inline bash (TS, feedback #31), and the
-  # fix-rubric agent discovery (bash) — locking the file list catches a future
-  # edit that removes any of them.
+  # git-scope helpers extracted from inline bash (TS, feedback #31), the
+  # goal-loop stop conditions (TS, feedback #63), the coupled-partner
+  # consistency sweep (TS, feedback #64), and the fix-rubric agent discovery
+  # (bash) — locking the file list catches a future edit that removes any.
   SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
   [ -x "$SCRIPTS_DIR/build-changed-lines.ts" ]   || { echo "missing/non-executable: build-changed-lines.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/validate-findings.ts" ]     || { echo "missing/non-executable: validate-findings.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/findings-ledger.ts" ]       || { echo "missing/non-executable: findings-ledger.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/review-scope.ts" ]          || { echo "missing/non-executable: review-scope.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/goal-loop.ts" ]             || { echo "missing/non-executable: goal-loop.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/couple-sweep.ts" ]          || { echo "missing/non-executable: couple-sweep.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
+}
+
+@test "every bundled TS helper ships a colocated test (no untested deterministic logic)" {
+  # The whole argument for these scripts is that their logic fails a gate when
+  # it regresses. A helper without a colocated *.test.ts is prose with extra
+  # steps. Derived from disk so a new helper can't opt out by omission.
+  SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
+  for script in "$SCRIPTS_DIR"/*.ts; do
+    case "$script" in *.test.ts) continue ;; esac
+    expected="${script%.ts}.test.ts"
+    [ -f "$expected" ] || { echo "missing colocated test: $expected" >&2; return 1; }
+  done
+}
+
+@test "goal mode delegates its stop conditions to goal-loop.ts (feedback #63)" {
+  # The success/stuck/ceiling decision must not drift back into prose the model
+  # re-derives each run. Anchor on the delegation AND on every action the
+  # script can return, so a partial revert fails here.
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q 'scripts/goal-loop.ts' "$skill" \
+    || { echo "pr-review-local goal mode no longer calls goal-loop.ts" >&2; return 1; }
+  for action in converged incomplete stuck maxed fix; do
+    grep -q "\`$action\`" "$skill" || { echo "goal mode missing the '$action' branch" >&2; return 1; }
+  done
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+  grep -q 'goal-loop.ts' "$codex" \
+    || { echo "Codex review reference missing the goal-loop.ts delegation" >&2; return 1; }
+}
+
+@test "engine runs the deterministic coupled-partner sweep on both hosts (feedback #64)" {
+  # A cross-host mechanism: the Claude engine invokes it in Step 3 and stamps
+  # its attribution in Step 6; the Codex router must invoke the same helper, or
+  # the two hosts produce different findings from the same diff.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  grep -q 'scripts/couple-sweep.ts' "$engine" \
+    || { echo "engine Step 3 no longer runs couple-sweep.ts" >&2; return 1; }
+  grep -q 'couple-sweep' "$engine" \
+    || { echo "engine Step 6 missing the couple-sweep attribution stamp" >&2; return 1; }
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+  grep -q 'couple-sweep.ts' "$codex" \
+    || { echo "Codex review reference missing the couple-sweep helper" >&2; return 1; }
 }
 
 @test "engine ships its bundled references/ files" {

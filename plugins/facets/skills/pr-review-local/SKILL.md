@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.12.1
+version: 2.13.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration, then pushes the converged commits to the branch's existing open PR) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -384,25 +384,41 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
    ```
 3. **Pre-existing red gate** — run `<TEST_CMD>` once (resolved by the sniff above). If it already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
    - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`.
-   - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 6) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
+   - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 4) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
 
 ### The loop
 
 `prev_findings_hash = ""`. For `i = 1..MAX_ITERS` (default `5` — a ceiling, not a target; expect convergence by iteration 2–3):
 
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
-2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
-3. **Success check.** If `actionable` is empty **AND** `FAILED_AGENTS == 0` → **break, success** (carry the lows forward to the summary). If `actionable` is empty but `FAILED_AGENTS > 0`, an agent crashed and the empty actionable set is unproven — do NOT declare clean (the same single-shot contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`): restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.`, print the failed-agent names and any findings, and stop and ask the user (do not commit or stamp the result as clean).
-4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
-5. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
-6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 7). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
-7. **Commit** (only when the gate is green):
+2. **Decide.** The whole stop-condition state machine — the `{critical, high, medium}` partition, the success check (gated on `FAILED_AGENTS == 0`), the stuck check, the `MAX_ITERS` ceiling, and the matching sentinel line — is a **tested script**, not prose the model re-derives each run (feedback #63). Pipe the post-review state to it:
+
+   ```bash
+   DECISION=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" <<'GOAL_STATE'
+   { "iteration": <i>, "max_iters": <MAX_ITERS>,
+     "failed_agents": [ ... FAILED_AGENTS names ... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
+     "prev_actionable_hash": "<prev_findings_hash>",
+     "findings": [ ... this iteration's FINDINGS, lows included ... ],
+     "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
+   GOAL_STATE
+   )
+   ```
+
+   It returns `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
+   - `converged` → **break, success**; carry the `low` findings forward to the summary.
+   - `incomplete` → an agent crashed, so the empty actionable set is unproven (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`). Restore the tree (see *Leaving the branch clean* below), print `sentinel` (`GOAL_INCOMPLETE`) plus the failed-agent names and any findings, and stop and ask the user — do not commit or stamp the result as clean.
+   - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
+   - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.
+   - `fix` → continue to step 3.
+
+   If the script can't run (no Node ≥ 22.18), fall back to evaluating those five conditions by hand in the order above — but say so, because the loop's stop conditions are then unverified.
+3. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
+4. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 5). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
+5. **Commit** (only when the gate is green):
    ```
    fix(review): iteration <i> — <N> findings
    ```
-8. Set `prev_findings_hash = hash`; continue.
-
-If `i == MAX_ITERS` and `actionable` is still non-empty → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?`, print the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop.
+6. Continue with the next iteration.
 
 ### Leaving the branch clean on a non-success exit
 
@@ -422,7 +438,7 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
 2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
 3. If it returns any `critical`/`high` findings → run **one** dedicated runtime-fix pass — **not** a re-entry of the static loop, so the loop's `GOAL_STUCK` / `GOAL_MAXED` exits do not apply here. Apply the fixes, then **leave the work uncommitted until it is proven good on both gates** (so any failure is undone by the uncommitted-only restore — no committed runtime fix can be left behind):
-   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 5). Do **not** commit yet.
+   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 3). Do **not** commit yet.
    - Re-gate (`<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`). **If non-green** (the runtime fix broke the static gate) → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`; do **not** re-run `runtime-validation`.
    - If the gate is green → re-run `runtime-validation` exactly once more (still uncommitted):
      - **If that re-run is clean** → commit `fix(review): runtime — <N> findings`, then fall through to the Final summary with `Runtime check: failed-then-fixed` (count this single runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).

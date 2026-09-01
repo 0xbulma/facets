@@ -1,6 +1,6 @@
 ---
 name: pr-review-engine
-version: 0.17.0
+version: 0.18.0
 description: Run a parallel multi-lens review of the current diff. Invoked by other skills (pr-review-gh, pr-review-local, pr-fix, tib-ship), not by the user. Walks agents/, decides which apply via diff path patterns and dependency markers, fans out one sub-agent per match, aggregates findings. Replaces the previous lib/pr-review-base.md dispatcher with a real Anthropic-pattern skill (mirrors anthropics/skills/skills/skill-creator).
 compatibility: Claude Code only. Callers read this file directly; Claude invocation controls keep it out of user and model skill surfaces. Not portable to Claude.ai or the Messages API.
 disable-model-invocation: true
@@ -96,6 +96,16 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/build-changed-lines.
 ```
 
 Edge-case handling (deletion-only hunks, pure renames) lives in `references/changed-lines.md`. Read it before adjusting the build rule.
+
+**Coupled-partner sweep (deterministic, runs once per review).** With the map built, sweep for files this diff changed whose historically-paired partner it left untouched — mirror drift, in one exhaustive pass rather than one instance per review round (feedback #64):
+
+```bash
+COUPLE_FINDINGS=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts" \
+  --base "$MERGE_BASE" --changed-lines "$CHANGED_LINES_FILE") \
+  || COUPLE_FINDINGS='[]'   # best-effort: a shallow clone or young repo just yields no coupling
+```
+
+The pairing is derived from `git log` before `$MERGE_BASE` — no declared pair list and no config, so it works in any repo, and the branch's own commits can't dilute the coupling they're measured against. It reports only a **strongly-coupled partner absent from the diff** (default: ≥3 co-changes and ≥75% of the source file's commits); it deliberately does not compare the contents of two changed partners, because sibling routes co-change heavily yet legitimately diverge. Carry `COUPLE_FINDINGS` into Step 6 as one more findings array.
 
 If `DIFF_SOURCE=local` AND uncommitted changes exist, also include them:
 
@@ -317,7 +327,7 @@ Adding a new agent = drop a new file under `${CLAUDE_PLUGIN_ROOT}/skills/pr-revi
 
 Merge all agent results into a single list:
 
-0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
+0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Aggregate Step 3's `COUPLE_FINDINGS` into the same list and stamp it `agents: ["couple-sweep"]` — it is a deterministic checker rather than a persona, so it is not in `agents/`, but attribution works the same and its findings de-duplicate against a persona that happened to spot the same drift. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
 
 1. **Scope filter (drop out-of-scope findings).** Build `CHANGED_FILES` = the deduplicated file list from Step 3:
    - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
@@ -383,7 +393,7 @@ Severity labels:
 
 The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/facets:pr-fix` / `/facets:tib-ship`) consumes:
 
-- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, confidence?, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `confidence` is the agent-self-reported certainty the finding is real (integer 0–100, normalized by `validate-findings.ts`, max-of-group on merge); absent when the agent stated none. It is **advisory triage metadata** — callers render it and may sort by it, but the engine never drops a finding on it. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
+- `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, confidence?, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding, plus `couple-sweep` for the deterministic coupled-partner check (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `confidence` is the agent-self-reported certainty the finding is real (integer 0–100, normalized by `validate-findings.ts`, max-of-group on merge); absent when the agent stated none. It is **advisory triage metadata** — callers render it and may sort by it, but the engine never drops a finding on it. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
 - `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.
@@ -460,6 +470,8 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 - `scripts/validate-findings.ts` — applies the WHAT/FIX schema check + ±15 line-window filter + Markdown fenced-block detection. Emits dropped-findings with `drop_reason` and `distance_to_nearest_changed_line`, and tags each kept finding with `snapped_line` (the nearest diff line to anchor an inline comment on). Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/findings-ledger.ts` — merges a fresh review's findings into a persisted per-PR/branch ledger and classifies each as net-new / recurring / resolved / suppressed (wontfix). Also serves the **idempotency cache** (`--check-cache --run-hash`): records each run's input identity (`last_run`) and reports a cache hit so a caller can short-circuit the agent panel on an unchanged re-run. Pure core + injected IO; run by the **caller** (`pr-review-gh` / `pr-review-local`), not the engine, which stays stateless. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/review-scope.ts` — testable git-scope helpers extracted from the review skills' inline bash (feedback #31): `toHttpsUrl` (SSH→HTTPS rewrite for the fetch fallback) and `runHash` (the content-based idempotency-cache identity). Pure cores are unit-tested; the CLI shells to git and is integration-tested against a fixture repo. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/couple-sweep.ts` — the deterministic coupled-partner sweep (feedback #64). Derives file pairings from `git log` before the merge base and emits engine-shaped findings for every changed file whose strongly-coupled partner is missing from the diff — exhaustive in one pass, where an LLM lens rediscovers such drift one instance per review round. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/goal-loop.ts` — the `--goal` loop's post-iteration decision (feedback #63): success check, failed-agent incomplete guard, stuck check, iteration ceiling, and the matching `GOAL_*` sentinel, as one pure function under test. Run by `pr-review-local`'s goal mode, not by the engine. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").
