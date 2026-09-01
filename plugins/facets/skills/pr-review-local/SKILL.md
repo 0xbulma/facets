@@ -161,11 +161,16 @@ MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
 # rationale live in the tested review-scope.ts (so the #23 content-blindness
 # regression is covered by a gate, not just prose).
 RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
+# PRINT it. Step 6b consumes this many bash calls later, across the whole agent
+# panel. Unset, Step 6b stamps `--run-hash ""`, which findings-ledger never treats
+# as a cache hit — so every unchanged re-run silently pays the full panel again.
+echo "RUN_HASH=$RUN_HASH"
 
 # Fail open: capture the result, and on any error fall through to a normal
 # review — never skip the review on an unreadable cache result.
 CACHE_JSON=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
   --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH") || CACHE_JSON=""
+echo "CACHE_JSON=$CACHE_JSON"   # print it — the branch below reads this value
 ```
 
 - **`cache_hit` true** → do NOT run Steps 3–6. Reprint the returned `findings` + `counts` as the Step 7 output, header marked `(cached — input unchanged since the last review of <head_sha>)`, then ask the user: **reuse this, or force a fresh review?** On *reuse* → emit the matching `REVIEW_*` sentinel from the cached counts and stop. On *force / re-review* → fall through to Steps 3–6 as a normal run. (No `--force` flag — the prompt is the bypass, keeping the flag surface flat.)
@@ -416,7 +421,9 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
       { "iteration": <i>, "max_iters": <MAX_ITERS>,
         "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
         "prev_actionable_hash": "<prev_findings_hash>",
-        "findings": [ ...this iteration's FINDINGS, lows included... ],
+        "findings": [ ...this iteration's FINDINGS, lows included, PLUS any synthetic findings carried
+                      from a previous iteration's red re-gate (step 4) — the gate's failure has no other
+                      channel into the decision, and omitting it lets the loop converge on a red tree... ],
         "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
       ```
 

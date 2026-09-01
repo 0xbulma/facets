@@ -549,8 +549,15 @@ setup() {
     grep -q "\`$action\`" "$skill" || { echo "goal mode missing the '$action' branch" >&2; return 1; }
   done
   codex="$REPO_ROOT/skills/facets/references/review.md"
-  grep -q 'goal-loop.ts' "$codex" \
+  # NOT a bare 'goal-loop.ts' grep: the filename also appears in an incidental
+  # scoping sentence, so the entire delegation paragraph could be deleted while
+  # this stayed green. Anchor on strings unique to the paragraph itself.
+  grep -Fq 'goal-loop.ts` on stdin' "$codex" \
     || { echo "Codex review reference missing the goal-loop.ts delegation" >&2; return 1; }
+  grep -Fq 'Carry `actionable_hash` forward as the next call' "$codex" \
+    || { echo "Codex review reference missing the carry-forward rule" >&2; return 1; }
+  grep -Fq 'an empty capture is never a decision' "$codex" \
+    || { echo "Codex review reference missing the no-decision rail" >&2; return 1; }
 }
 
 @test "engine runs the deterministic coupled-partner sweep on both hosts (feedback #64)" {
@@ -558,7 +565,9 @@ setup() {
   # its attribution in Step 6; the Codex router must invoke the same helper, or
   # the two hosts produce different findings from the same diff.
   engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
-  grep -q 'scripts/couple-sweep.ts' "$engine" \
+  # Anchor on the INVOCATION, not the bare path — the Bundled-scripts inventory
+  # carries the same path, so a bare grep survives repointing Step 3 elsewhere.
+  grep -Fq 'node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts"' "$engine" \
     || { echo "engine Step 3 no longer runs couple-sweep.ts" >&2; return 1; }
   # Anchor on the STAMP, not the tool name: a bare 'couple-sweep' grep is a
   # strict substring of the Step 3 check above, so it could never fail on its
@@ -652,6 +661,10 @@ setup() {
     || { echo "engine lost the changed-lines-map half of the scope-filter rail" >&2; return 1; }
   grep -Fq "Step 6's changed-file list or changed-lines map could not be read" "$engine" \
     || { echo "engine lost the scope-filter clause in the FAILED_AGENTS contract" >&2; return 1; }
+  grep -Fq 'add `scope-filter` to `FAILED_AGENTS`' "$codex" \
+    || { echo "Codex lost the scope-filter terminal — the hosts disagree on incomplete" >&2; return 1; }
+  grep -Fq 'reports an unreadable `--changed-lines` map **in band**' "$codex" \
+    || { echo "Codex lost the in-band validator-error rail" >&2; return 1; }
   # 4. The goal loop must check the decision status before reading a decision.
   grep -Fq 'Check the printed' "$local_skill" \
     || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
@@ -675,7 +688,7 @@ setup() {
     || { echo "the aborted sweep no longer reports a status to Step 6" >&2; return 1; }
   # The caller's own cross-block values, locked the same way.
   local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
-  for var in GOAL_STATE_FILE HEAD_BRANCH HEAD_SHA; do
+  for var in GOAL_STATE_FILE HEAD_BRANCH HEAD_SHA RUN_HASH; do
     grep -Fq "echo \"$var=\$$var\"" "$local_skill" \
       || { echo "pr-review-local never prints \$$var, so a later block cannot read it" >&2; return 1; }
   done
