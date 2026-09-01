@@ -575,6 +575,10 @@ setup() {
   for host in "$engine" "$codex"; do
     grep -Fq -- '--changed-files' "$host" \
       || { echo "missing the --changed-files wiring: $host" >&2; return 1; }
+    # Without the merge exemption, several drifted partners for one file collapse
+    # into a single finding and resurface one per round — the tail #64 removes.
+    grep -Fq 'cite different partner paths' "$host" \
+      || { echo "missing the couple-sweep dedup exemption: $host" >&2; return 1; }
   done
 }
 

@@ -29,9 +29,15 @@
  *     "actionable_hash": "…", "actionable_count": N, "low_count": K,
  *     "sentinel": "Sentinel: GOAL_… — …" | null }
  *
+ * `sentinel` is null for BOTH `fix` and `converged`: `fix` has nothing to report,
+ * and `converged` must not mint GOAL_CLEAN at loop-break — that token certifies
+ * the runtime pass, ledger stamp and push, which happen afterwards, so the Final
+ * summary owns it. The three failure actions each carry their own sentinel.
+ *
  * The caller carries `actionable_hash` forward as the next call's
  * `prev_actionable_hash`, and branches on `action`: `fix` continues the loop;
- * every other value stops it after printing `sentinel`.
+ * `converged` breaks it successfully and proceeds to the post-convergence steps;
+ * `stuck`, `maxed` and `incomplete` stop it after printing `sentinel`.
  *
  * Exit codes: 0 a decision was produced on stdout; 2 CLI misuse / invalid input;
  * 3 internal error. Stdout is EMPTY on any non-zero exit, so a caller must check
@@ -138,13 +144,13 @@ export function nextGoalAction(state: GoalLoopState): GoalLoopDecision {
 	};
 
 	if (actionable.length === 0 && state.failed_agents.length === 0) {
-		return {
-			...base,
-			action: "converged",
-			sentinel:
-				`Sentinel: GOAL_CLEAN — review passes cleanly after ${state.iteration} iteration(s) ` +
-				`on ${state.head_branch} vs ${state.base_branch}; ${low.length} low finding(s) triaged (not auto-fixed).`,
-		};
+		// Deliberately no sentinel. GOAL_CLEAN certifies work that has NOT happened
+		// at loop-break — the runtime pass, the ledger stamp and the push all come
+		// after — and it is the completion token a wrapping `/goal` audit matches on.
+		// Returning it here would let any caller that prints the decision emit it
+		// early, so the loop cannot mint it even by accident; the Final summary owns
+		// GOAL_CLEAN. Every stopping action below DOES carry its sentinel.
+		return { ...base, action: "converged", sentinel: null };
 	}
 
 	if (actionable.length === 0) {

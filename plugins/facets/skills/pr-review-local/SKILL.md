@@ -394,27 +394,36 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
 2. **Decide.** The whole stop-condition state machine — the `{critical, high, medium}` partition, the success check (gated on `FAILED_AGENTS == 0`), the stuck check, the `MAX_ITERS` ceiling, and the matching sentinel line — is a **tested script**, not prose the model re-derives each run (feedback #63). Pipe the post-review state to it:
 
-   Write the state to a per-run file and feed it on stdin. **No heredoc** — this snippet lives inside a numbered list, and an indented `GOAL_STATE` terminator is not recognized at column 0, which silently folds the terminator into the payload and fails the parse:
+   This takes **three** steps, not one. The state has to be written between the two bash calls, and a shell variable does not survive from the first call to the second — so the path is printed, and step 3 uses that printed literal. No heredoc either: an indented terminator is not recognized at column 0 and would silently fold into the payload.
 
-   ```bash
-   GOAL_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-goal-state.XXXXXX") || { echo "mktemp failed; cannot allocate the goal-state path." >&2; exit 1; }
-   # Write this iteration's state as JSON into $GOAL_STATE_FILE (use the Write tool):
-   #   { "iteration": <i>, "max_iters": <MAX_ITERS>,
-   #     "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
-   #     "prev_actionable_hash": "<prev_findings_hash>",
-   #     "findings": [ ...this iteration's FINDINGS, lows included... ],
-   #     "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
-   # PRINT both — do not capture into shell variables. Step 3's own rule applies
-   # here too: the next step is a separate bash call, so a variable set now is
-   # gone, and a captured decision would be unreadable.
-   node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "$GOAL_STATE_FILE"
-   echo "GOAL_STATUS=$?"
-   ```
+   1. Allocate the state file and **print** its path:
+
+      ```bash
+      GOAL_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-goal-state.XXXXXX") || { echo "mktemp failed; cannot allocate the goal-state path." >&2; exit 1; }
+      echo "GOAL_STATE_FILE=$GOAL_STATE_FILE"
+      ```
+
+   2. Write this iteration's state to that **literal** path with the Write tool:
+
+      ```json
+      { "iteration": <i>, "max_iters": <MAX_ITERS>,
+        "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
+        "prev_actionable_hash": "<prev_findings_hash>",
+        "findings": [ ...this iteration's FINDINGS, lows included... ],
+        "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
+      ```
+
+   3. Run the decision against that literal path. Print both the decision and the status — do not capture either into a shell variable, or the next step cannot read them:
+
+      ```bash
+      node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "<the GOAL_STATE_FILE path printed in step 1>"
+      echo "GOAL_STATUS=$?"
+      ```
 
    **Check the printed `GOAL_STATUS` before reading the decision JSON above it.** Stdout is empty on any non-zero exit (2 = invalid state, 3 = internal error, other = node itself failed — most commonly a runtime older than 22.18), and an empty capture must never be mistaken for a converged decision. On a non-zero status, or if the printed decision does not parse to an object with a known `action`, this iteration produced **no decision**: emit `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.`, print the script's stderr, restore the tree (see *Leaving the branch clean* below), and stop for the user. Do **not** fall through to a success path — a helper failure is never clean.
 
    On a zero status it prints `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
-   - `converged` → **break, success**; carry the `low` findings forward to the summary. Do **not** print the returned `sentinel` here — the Final summary owns the terminal `GOAL_CLEAN`, and it is only true after the runtime pass, the ledger stamp, and the push. Emitting that completion token at loop-break would certify work that has not happened yet (and it is what a wrapping `/goal` audit keys off).
+   - `converged` → **break, success**; carry the `low` findings forward to the summary. Its `sentinel` is `null` by construction — the script cannot mint `GOAL_CLEAN`, because that token certifies the runtime pass, the ledger stamp and the push, none of which have run yet, and it is what a wrapping `/goal` audit keys off. The Final summary mints it.
    - `incomplete` → an agent crashed, so the empty actionable set is unproven (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`). Restore the tree (see *Leaving the branch clean* below), print `sentinel` (`GOAL_INCOMPLETE`) plus the failed-agent names and any findings, and stop and ask the user — do not commit or stamp the result as clean.
    - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
    - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.
@@ -431,7 +440,7 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 
 ### Leaving the branch clean on a non-success exit
 
-Whenever goal mode stops **without** converging — `GOAL_INCOMPLETE` (a failed agent left the actionable set unproven), `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
+Whenever goal mode stops **without** converging — `GOAL_ABORTED` from the decide step (`goal-loop.ts` produced no decision), `GOAL_INCOMPLETE` (a failed agent left the actionable set unproven), `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
 
 ```bash
 git checkout -- .   # discard the current iteration's uncommitted edits to tracked files
@@ -453,7 +462,7 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
      - **If that re-run is clean** → commit `fix(review): runtime — <N> findings`, then fall through to the Final summary with `Runtime check: failed-then-fixed` (count this single runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
      - **If still red** → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`, print the runtime findings, and stop and ask the user.
 
-   `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the third non-success exit the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
+   `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the last of the non-success exits the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
 

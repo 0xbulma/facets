@@ -116,9 +116,10 @@ describe("nextGoalAction", () => {
 		const decision = nextGoalAction(state({ iteration: 2, findings: [finding("low")] }));
 		expect(decision.action).toBe("converged");
 		expect(decision.low_count).toBe(1);
-		expect(decision.sentinel).toContain("GOAL_CLEAN");
-		expect(decision.sentinel).toContain("after 2 iteration(s) on feat/x vs main");
-		expect(decision.sentinel).toContain("1 low finding(s) triaged");
+		// No sentinel at loop-break: GOAL_CLEAN certifies the runtime pass, the
+		// ledger stamp and the push, none of which have run yet, and it is the token
+		// a wrapping /goal audit matches on. The Final summary mints it instead.
+		expect(decision.sentinel).toBeNull();
 	});
 
 	it("reports incomplete — not clean — when an agent failed (feedback #45)", () => {
@@ -155,6 +156,33 @@ describe("nextGoalAction", () => {
 
 	it("converges at the ceiling rather than reporting maxed", () => {
 		expect(nextGoalAction(state({ iteration: 5, findings: [] })).action).toBe("converged");
+	});
+
+	it("never emits GOAL_CLEAN from the loop, on any converging shape", () => {
+		// Structural guard: if the script cannot produce the token, no caller can
+		// print it early — however the surrounding prose is worded.
+		for (const iteration of [1, 3, 5]) {
+			for (const findings of [[], [finding("low")], [finding("low"), finding("low")]]) {
+				const decision = nextGoalAction(state({ iteration, findings }));
+				expect(decision.action).toBe("converged");
+				expect(decision.sentinel).toBeNull();
+			}
+		}
+	});
+
+	it("still carries a sentinel on every stopping action that is not converged", () => {
+		const hash = hashActionable([finding("high")]);
+		expect(nextGoalAction(state({ failed_agents: ["web3"] })).sentinel).toContain(
+			"GOAL_INCOMPLETE",
+		);
+		expect(
+			nextGoalAction(
+				state({ iteration: 2, findings: [finding("high")], prev_actionable_hash: hash }),
+			).sentinel,
+		).toContain("GOAL_STUCK");
+		expect(nextGoalAction(state({ iteration: 5, findings: [finding("high")] })).sentinel).toContain(
+			"GOAL_MAXED",
+		);
 	});
 
 	it("prefers stuck over maxed when both hold on the final iteration", () => {
@@ -259,7 +287,12 @@ describe("CLI", () => {
 		// => no decision produced", so it must be reachable and distinguishable.
 		const fd = openSync(tmpdir(), "r");
 		try {
-			const result = execFileSync("node", [SCRIPT], { stdio: [fd, "pipe", "pipe"] });
+			const result = execFileSync("node", [SCRIPT], {
+				stdio: [fd, "pipe", "pipe"],
+				// Without this, error.stdout is a Buffer, the `typeof === "string"`
+				// guard below always falls through to "" and the assertion is vacuous.
+				encoding: "utf8",
+			});
 			expect.unreachable(`expected a non-zero exit, got: ${result.toString()}`);
 		} catch (error) {
 			expect(error instanceof Error && "status" in error && error.status).toBe(3);
