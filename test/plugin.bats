@@ -619,6 +619,51 @@ setup() {
   done
 }
 
+@test "engine never-report-clean rails are phrase-anchored (feedback #63/#64)" {
+  # Three prose rails stop a broken helper reading as a clean review. Each was
+  # mutation-checked to confirm the suite went green without it, so each needs a
+  # gate. Anchor on DISTINCTIVE PHRASING, never a bare token: `GOAL_ABORTED`,
+  # `CHANGED_FILES_FILE` and `couple-sweep` all already occur many times, so a
+  # bare-token grep survives the rail's removal (same trap as feedback #45).
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+
+  # 1. A sweep that exited 0 but produced no parseable payload is not clean.
+  grep -Fq 'parses as a JSON array' "$engine" \
+    || { echo "engine lost the couple-sweep parsed-payload precondition" >&2; return 1; }
+  grep -Fq 'parses as a JSON array' "$codex" \
+    || { echo "Codex lost the couple-sweep parsed-payload precondition" >&2; return 1; }
+  # 2. A failed sweep reaches the caller through FAILED_AGENTS, not silence.
+  grep -Fq 'add `couple-sweep` to `FAILED_AGENTS`' "$engine" \
+    || { echo "engine lost the couple-sweep FAILED_AGENTS routing" >&2; return 1; }
+  grep -Fq 'add `couple-sweep` to `FAILED_AGENTS`' "$codex" \
+    || { echo "Codex lost the couple-sweep FAILED_AGENTS routing" >&2; return 1; }
+  # 3. A lost changed-file list must not silently empty the scope filter.
+  grep -Fq 'missing, unreadable, or empty' "$engine" \
+    || { echo "engine lost the changed-file-list scope rail" >&2; return 1; }
+  grep -Fq 'scope-filter' "$engine" \
+    || { echo "engine lost the scope-filter FAILED_AGENTS terminal" >&2; return 1; }
+  # 4. The goal loop must check the decision status before reading a decision.
+  grep -Fq 'could not produce a decision' "$local_skill" \
+    || { echo "pr-review-local lost the no-decision rail" >&2; return 1; }
+  grep -Fq 'Check the printed' "$local_skill" \
+    || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
+}
+
+@test "engine prints every value a later bash block consumes" {
+  # Each documented block is a SEPARATE bash call, so a value that is only
+  # assigned is unreachable downstream. This bug recurred four times across this
+  # feature's review; lock the producer side of every cross-block value.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  for var in MERGE_BASE CHANGED_LINES_FILE CHANGED_FILES_FILE COUPLE_FINDINGS_FILE; do
+    grep -Fq "echo \"$var=\$$var\"" "$engine" \
+      || { echo "engine never prints \$$var, so a later block cannot read it" >&2; return 1; }
+  done
+  grep -Fq 'echo "GOAL_STATE_FILE=$GOAL_STATE_FILE"' "$SKILLS_DIR/pr-review-local/SKILL.md" \
+    || { echo "pr-review-local never prints \$GOAL_STATE_FILE" >&2; return 1; }
+}
+
 @test "engine SKILL.md documents the scope-filter contract" {
   # The Step 6 sub-step 1 contract names three drop categories and the
   # CHANGED_LINES tolerance window. Locks these in so a future edit

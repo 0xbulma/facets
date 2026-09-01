@@ -54,6 +54,11 @@ Compute the merge-base and the diff:
 
 ```bash
 MERGE_BASE=$(git merge-base origin/${BASE_BRANCH} ${HEAD_REF})
+# PRINT it. Later steps run as separate bash calls, so an unprinted value is
+# unrecoverable there — and `git diff "$MERGE_BASE..HEAD"` with it unset silently
+# becomes `HEAD..HEAD`, i.e. an empty diff that reads as "nothing changed".
+# Thread the printed literal SHA downstream, exactly like HEAD_REF.
+echo "MERGE_BASE=$MERGE_BASE"
 
 git diff $MERGE_BASE..${HEAD_REF}
 git diff --name-only $MERGE_BASE..${HEAD_REF}
@@ -87,6 +92,7 @@ Build `CHANGED_LINES` as a map `{ "<file-path>": <sorted-int-set> }` by parsing 
 # CHANGED_LINES_FILE and reuse the SAME path in Step 6 — it's a separate bash call,
 # so the shell variable won't survive; thread the literal path like HEAD_REF.
 CHANGED_LINES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-lines.XXXXXX") || { echo "mktemp failed; cannot allocate the changed-lines path." >&2; exit 1; }
+echo "CHANGED_LINES_FILE=$CHANGED_LINES_FILE"   # print it — a later block cannot read the variable
 # The redirect discards node's own exit, so check it explicitly: a failed or partial
 # build leaves an empty/truncated map, and the Step 6 scope filter would then over-drop
 # every finding — "no findings" would read as clean. Abort loudly instead of trusting it.
@@ -136,6 +142,7 @@ echo "COUPLE_FINDINGS_FILE=$COUPLE_FINDINGS_FILE"
 # wrote nothing — and an empty list is not an empty repo, it is a broken scope.
 # (`set -o pipefail` is the wrong tool here: in PR mode the `[ … ]` test is the
 # group's last command and exits 1, which would fail every non-local review.)
+# $MERGE_BASE here is the literal SHA printed above, not a surviving variable.
 git diff --name-only "$MERGE_BASE..${HEAD_REF}" > "$CHANGED_FILES_FILE" \
   || { echo "changed-file list failed; cannot scope the sweep." >&2; exit 1; }
 if [ "${DIFF_SOURCE}" = "local" ]; then
@@ -143,8 +150,10 @@ if [ "${DIFF_SOURCE}" = "local" ]; then
     || { echo "uncommitted changed-file list failed; cannot scope the sweep." >&2; exit 1; }
 fi
 sort -u -o "$CHANGED_FILES_FILE" "$CHANGED_FILES_FILE"
-[ -s "$CHANGED_FILES_FILE" ] || { echo "changed-file list is empty; refusing to run the sweep." >&2; exit 1; }
+[ -s "$CHANGED_FILES_FILE" ] || { echo "changed-file list is empty; refusing to run the sweep." >&2; echo "COUPLE_STATUS=1"; exit 1; }
 
+# $MERGE_BASE and $CHANGED_LINES_FILE are the LITERALS printed earlier in Step 3 —
+# substitute them, do not rely on the variables surviving into this call.
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts" \
   --base "$MERGE_BASE" \
   --changed-lines "$CHANGED_LINES_FILE" \
@@ -368,7 +377,7 @@ Merge all agent results into a single list:
 
 0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Aggregate the coupled-partner findings from Step 3's `$COUPLE_FINDINGS_FILE` (the literal mktemp path noted there) into the same list and stamp them `agents: ["couple-sweep"]` — it is a deterministic checker rather than a persona, so it is not in `agents/`, but attribution works the same and its findings de-duplicate against a persona that happened to spot the same drift. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
 
-1. **Scope filter (drop out-of-scope findings).** `CHANGED_FILES` = the deduplicated file list Step 3 already wrote to `$CHANGED_FILES_FILE` (the literal path Step 3 printed, one path per line). **If that file is missing, unreadable, or empty, abort the aggregation and report the review as incomplete** — never fall back to an empty `CHANGED_FILES`, which would fail every finding's file-level check and turn a full panel into a silent "no findings". Read that file; do **not** re-derive the list with a second pair of `git diff --name-only` calls — a file touched mid-review would make the scope filter disagree with the set the sweep was measured against.
+1. **Scope filter (drop out-of-scope findings).** `CHANGED_FILES` = the deduplicated file list Step 3 already wrote to `$CHANGED_FILES_FILE` (the literal path Step 3 printed, one path per line). **If that file is missing, unreadable, or empty, do not fall back to an empty `CHANGED_FILES`** — that would fail every finding's file-level check and turn a full panel into a silent "no findings". Instead add `scope-filter` to `FAILED_AGENTS` (count + name) and return the findings unfiltered, so the caller's existing never-report-clean-when-a-lens-crashed rule carries it to `REVIEW_INCOMPLETE` / `GOAL_INCOMPLETE`. "Report it as incomplete" is not a channel the engine has; `FAILED_AGENTS` is. Read that file; do **not** re-derive the list with a second pair of `git diff --name-only` calls — a file touched mid-review would make the scope filter disagree with the set the sweep was measured against.
 
    For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. If `finding.file` is the literal string `"runtime"` (the `runtime-validation` sentinel for findings with no source location), **keep it** — skip both the file-level and line-level scope filters for that finding. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
 
@@ -433,7 +442,7 @@ The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/fac
 
 - `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, confidence?, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding, plus `couple-sweep` for the deterministic coupled-partner check (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `confidence` is the agent-self-reported certainty the finding is real (integer 0–100, normalized by `validate-findings.ts`, max-of-group on merge); absent when the agent stated none. It is **advisory triage metadata** — callers render it and may sort by it, but the engine never drops a finding on it. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
-- `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output, plus `couple-sweep` when Step 3's deterministic sweep exited non-zero (or returned an unparseable payload). `couple-sweep` is a checker rather than a launched agent, so it is **not** in `TOTAL_AGENTS_LAUNCHED` — meaning the failure count can exceed the launched-agent total. Callers render it through the same `<N> of <M> agents failed (<names>)` line as any other failure; the point of the entry is that it blocks a clean verdict, not how it is worded.
+- `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output, plus `couple-sweep` when Step 3's deterministic sweep exited non-zero (or returned an unparseable payload), and `scope-filter` when Step 6's changed-file list could not be read. `couple-sweep` is a checker rather than a launched agent, so it is **not** in `TOTAL_AGENTS_LAUNCHED` — meaning the failure count can exceed the launched-agent total. Callers render it through the same `<N> of <M> agents failed (<names>)` line as any other failure; the point of the entry is that it blocks a clean verdict, not how it is worded.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.
 - `DROPPED_COUNTS` — `{out_of_scope, pre_existing, doc_example}` totals on the dropped findings.
 - `TOTAL_AGENTS_LAUNCHED` — count of baseline + fired conditional agents, minus `EXCLUDE_AGENTS`.
@@ -509,7 +518,7 @@ The window is a fixed engine constant. See `references/calibration.md` for the r
 - `scripts/findings-ledger.ts` — merges a fresh review's findings into a persisted per-PR/branch ledger and classifies each as net-new / recurring / resolved / suppressed (wontfix). Also serves the **idempotency cache** (`--check-cache --run-hash`): records each run's input identity (`last_run`) and reports a cache hit so a caller can short-circuit the agent panel on an unchanged re-run. Pure core + injected IO; run by the **caller** (`pr-review-gh` / `pr-review-local`), not the engine, which stays stateless. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/review-scope.ts` — testable git-scope helpers extracted from the review skills' inline bash (feedback #31): `toHttpsUrl` (SSH→HTTPS rewrite for the fetch fallback) and `runHash` (the content-based idempotency-cache identity). Pure cores are unit-tested; the CLI shells to git and is integration-tested against a fixture repo. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/couple-sweep.ts` — the deterministic coupled-partner sweep (feedback #64). Derives file pairings from `git log` before the merge base and emits engine-shaped findings for every changed file whose strongly-coupled partner is missing from the diff — exhaustive in one pass, where an LLM lens rediscovers such drift one instance per review round. Run via `node` (Node ≥ 22.18, native type-stripping).
-- `scripts/goal-loop.ts` — the `--goal` loop's post-iteration decision (feedback #63): success check, failed-agent incomplete guard, stuck check, iteration ceiling, and the matching `GOAL_*` sentinel, as one pure function under test. Run by `pr-review-local`'s goal mode, not by the engine. Run via `node` (Node ≥ 22.18, native type-stripping).
+- `scripts/goal-loop.ts` — the `--goal` loop's post-iteration decision (feedback #63): success check, failed-agent incomplete guard, stuck check, iteration ceiling, and the matching `GOAL_*` sentinel for each *stopping* action, as one pure function under test. `converged` deliberately returns `sentinel: null` — the caller's Final summary owns `GOAL_CLEAN`, which is only true after the runtime pass, the ledger stamp and the push. Run by `pr-review-local`'s goal mode, not by the engine. Run via `node` (Node ≥ 22.18, native type-stripping).
 - `scripts/list-fix-rubric-agents.sh` — discovers which agents carry a `## Fix rubric` section. Used by `pr-fix`'s rubric-loading loop and by the bats invariant test.
 
 These exist so the deterministic logic isn't re-derived from English by every caller (per the Anthropic Skills guide, p. 26: "Code is deterministic; language interpretation isn't").
