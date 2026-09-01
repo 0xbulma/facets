@@ -100,6 +100,13 @@ if [ -z "$HEAD_BRANCH" ]; then
   HEAD_BRANCH=$(git rev-parse --short HEAD)   # detached HEAD — display only
 fi
 HEAD_SHA=$(git rev-parse HEAD)
+# PRINT both. Every later step is a separate bash call, so an unprinted value is
+# unrecoverable there — and these two are consumed by the Step 2c cache key, the
+# Step 6b ledger path, the goal-mode ledger stamp and the push block. Unset, the
+# ledger path collapses to one file shared by every branch and the push block
+# runs `gh pr list --head ""` / `git push origin ""`. Thread the printed literals.
+echo "HEAD_BRANCH=$HEAD_BRANCH"
+echo "HEAD_SHA=$HEAD_SHA"
 ```
 
 Resolve `<BASE_BRANCH>`:

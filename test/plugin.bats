@@ -642,11 +642,17 @@ setup() {
   # 3. A lost changed-file list must not silently empty the scope filter.
   grep -Fq 'missing, unreadable, or empty' "$engine" \
     || { echo "engine lost the changed-file-list scope rail" >&2; return 1; }
-  grep -Fq 'scope-filter' "$engine" \
-    || { echo "engine lost the scope-filter FAILED_AGENTS terminal" >&2; return 1; }
+  # NOT a bare `scope-filter` grep: `references/scope-filter.md` occurs twice
+  # unconditionally. Nor a shared phrase — the rail has TWO halves that repeat the
+  # same clause, so one anchor stays green while the other half is deleted. Give
+  # each half a string unique to it.
+  grep -Fq '(count + name) and return the findings unfiltered' "$engine" \
+    || { echo "engine lost the changed-file-list half of the scope-filter rail" >&2; return 1; }
+  grep -Fq 'reports an unreadable map **in band**' "$engine" \
+    || { echo "engine lost the changed-lines-map half of the scope-filter rail" >&2; return 1; }
+  grep -Fq "Step 6's changed-file list or changed-lines map could not be read" "$engine" \
+    || { echo "engine lost the scope-filter clause in the FAILED_AGENTS contract" >&2; return 1; }
   # 4. The goal loop must check the decision status before reading a decision.
-  grep -Fq 'could not produce a decision' "$local_skill" \
-    || { echo "pr-review-local lost the no-decision rail" >&2; return 1; }
   grep -Fq 'Check the printed' "$local_skill" \
     || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
 }
@@ -660,8 +666,19 @@ setup() {
     grep -Fq "echo \"$var=\$$var\"" "$engine" \
       || { echo "engine never prints \$$var, so a later block cannot read it" >&2; return 1; }
   done
-  grep -Fq 'echo "GOAL_STATE_FILE=$GOAL_STATE_FILE"' "$SKILLS_DIR/pr-review-local/SKILL.md" \
-    || { echo "pr-review-local never prints \$GOAL_STATE_FILE" >&2; return 1; }
+  # COUPLE_STATUS has TWO producers — the normal path and the empty-list abort.
+  # Losing either makes Step 6 branch on an unset status, i.e. a failed sweep
+  # reads as clean. A loop over the name alone would not catch that.
+  grep -Fq 'echo "COUPLE_STATUS=$?"' "$engine" \
+    || { echo "engine never prints COUPLE_STATUS on the normal path" >&2; return 1; }
+  grep -Fq 'echo "COUPLE_STATUS=1"' "$engine" \
+    || { echo "the aborted sweep no longer reports a status to Step 6" >&2; return 1; }
+  # The caller's own cross-block values, locked the same way.
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  for var in GOAL_STATE_FILE HEAD_BRANCH HEAD_SHA; do
+    grep -Fq "echo \"$var=\$$var\"" "$local_skill" \
+      || { echo "pr-review-local never prints \$$var, so a later block cannot read it" >&2; return 1; }
+  done
 }
 
 @test "engine SKILL.md documents the scope-filter contract" {
