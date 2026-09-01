@@ -125,17 +125,31 @@ COUPLE_FINDINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-couple.XXXXXX") || { echo 
 CHANGED_FILES_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-changed-files.XXXXXX") || { echo "mktemp failed; cannot allocate the changed-files path." >&2; exit 1; }
 
 # The authoritative changed-file list: committed, plus uncommitted when local.
-{ git diff --name-only "$MERGE_BASE..${HEAD_REF}"; \
-  [ "${DIFF_SOURCE}" = "local" ] && git diff --name-only HEAD; } | sort -u > "$CHANGED_FILES_FILE"
+# Guard each git call separately. A pipeline's status is the LAST command's, so
+# `{ git …; git …; } | sort -u` reports success even when both gits failed and
+# wrote nothing — and an empty list is not an empty repo, it is a broken scope.
+# (`set -o pipefail` is the wrong tool here: in PR mode the `[ … ]` test is the
+# group's last command and exits 1, which would fail every non-local review.)
+git diff --name-only "$MERGE_BASE..${HEAD_REF}" > "$CHANGED_FILES_FILE" \
+  || { echo "changed-file list failed; cannot scope the sweep." >&2; exit 1; }
+if [ "${DIFF_SOURCE}" = "local" ]; then
+  git diff --name-only HEAD >> "$CHANGED_FILES_FILE" \
+    || { echo "uncommitted changed-file list failed; cannot scope the sweep." >&2; exit 1; }
+fi
+sort -u -o "$CHANGED_FILES_FILE" "$CHANGED_FILES_FILE"
+[ -s "$CHANGED_FILES_FILE" ] || { echo "changed-file list is empty; refusing to run the sweep." >&2; exit 1; }
 
 node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts" \
   --base "$MERGE_BASE" \
   --changed-lines "$CHANGED_LINES_FILE" \
   --changed-files "$CHANGED_FILES_FILE" > "$COUPLE_FINDINGS_FILE"
-COUPLE_STATUS=$?
+# PRINT the status. `COUPLE_STATUS=$?` alone is a shell variable, and Step 6 is a
+# separate bash call — the same reason the findings go to a file. Echoing puts it
+# in the transcript, where the dispatcher can actually read it.
+echo "COUPLE_STATUS=$?"
 ```
 
-Branch on `COUPLE_STATUS` — **a sweep that could not run is not a clean sweep**, the same contract every review lens is held to:
+Branch on the printed `COUPLE_STATUS` — **a sweep that could not run is not a clean sweep**, the same contract every review lens is held to:
 
 - **0** → `$COUPLE_FINDINGS_FILE` holds the findings array (`[]` when the sweep ran and nothing fired: too little history, a shallow clone, or no coupled partner missing). Carry the literal path into Step 6 and aggregate it as one more findings array.
 - **non-zero** (2 = misuse or an unreadable input; 3 = git could not be queried; any other = node itself failed, most commonly a runtime older than 22.18 that cannot type-strip the script) → print the script's stderr, treat `$COUPLE_FINDINGS_FILE` as empty, and **add `couple-sweep` to `FAILED_AGENTS`**. That routes it through the existing never-report-clean-when-a-lens-crashed rule in Step 6 sub-step 2, instead of silently degrading to "no drift found".
@@ -348,9 +362,7 @@ Merge all agent results into a single list:
 
 0. **Stamp attribution.** As you aggregate each agent's returned array into the combined findings list (the `findings.json` you pass to `validate-findings.ts`), add `agents: ["<name of the agent that produced it>"]` to every finding — the persona `name` from the agent file that emitted it. Aggregate the coupled-partner findings from Step 3's `$COUPLE_FINDINGS_FILE` (the literal mktemp path noted there) into the same list and stamp them `agents: ["couple-sweep"]` — it is a deterministic checker rather than a persona, so it is not in `agents/`, but attribution works the same and its findings de-duplicate against a persona that happened to spot the same drift. Agents do NOT self-report their name; the dispatcher stamps it, because it alone knows which array came from which agent. `validate-findings.ts` passes the field through untouched, so it rides along to `FINDINGS`. **Confidence is different — it is agent-self-reported** (already on each finding); you do not stamp it. `validate-findings.ts` normalizes it to an integer 0–100 on every kept finding (clamping out-of-range, dropping a missing/non-numeric value to "unstated"), so `FINDINGS` carries a clean `confidence` or none.
 
-1. **Scope filter (drop out-of-scope findings).** Build `CHANGED_FILES` = the deduplicated file list from Step 3:
-   - committed: `git diff --name-only $MERGE_BASE..${HEAD_REF}`
-   - plus uncommitted: `git diff --name-only HEAD` (only when `DIFF_SOURCE=local`)
+1. **Scope filter (drop out-of-scope findings).** `CHANGED_FILES` = the deduplicated file list Step 3 already wrote to `$CHANGED_FILES_FILE` (the literal mktemp path noted there, one path per line). Read that file; do **not** re-derive the list with a second pair of `git diff --name-only` calls — a file touched mid-review would make the scope filter disagree with the set the sweep was measured against.
 
    For every agent finding, first guard `finding.file`: if it is missing, not a string, or empty, treat the finding as malformed and route it to sub-step 2's partial-failure handling instead of dropping it here. If `finding.file` is the literal string `"runtime"` (the `runtime-validation` sentinel for findings with no source location), **keep it** — skip both the file-level and line-level scope filters for that finding. Otherwise, compare `finding.file` against `CHANGED_FILES` after path normalization (strip leading `./`, strip diff prefixes `a/` and `b/`, strip the repo-root prefix on absolute paths; case-sensitive compare to match git's default).
 
@@ -394,6 +406,7 @@ Merge all agent results into a single list:
 3. **Deduplicate** with this rule (do NOT collapse genuinely distinct findings):
    - Findings on the SAME file at the EXACT same line are duplicates ONLY when their descriptions overlap meaningfully (≥50% token overlap, or one is a clear paraphrase of the other). Keep the merged survivor per the rule below; if descriptions don't overlap, keep BOTH.
    - Findings within ±3 lines on the same file are merged ONLY when severities AND descriptions overlap.
+   - **Never merge two `couple-sweep` findings that cite different partner paths.** They share one description template, so the token-overlap test would collapse them — and a file with three drifted partners would surface one per review round, which is precisely the tail the sweep exists to remove. Different partner ⇒ distinct finding.
    - **When merging, reconcile the two orthogonal axes separately** — severity ("how bad if real") and confidence ("how likely real") do not trade off against each other:
      - **Severity → max.** Keep the *highest* severity of the merged group. Never let a more-confident lower-severity finding silently downgrade a critical — the engine's bias is that a false clean is unrecoverable.
      - **Description + confidence → the higher-confidence finding wins.** Take the survivor's `description` from whichever merged finding had the higher `confidence` (the better-verified statement of the problem), and set `confidence` to the max of the group. A finding with no confidence loses to any finding that has one; if none has a confidence, the survivor has none.
@@ -414,7 +427,7 @@ The caller (Step 7 of `/facets:pr-review-gh` / `/facets:pr-review-local` / `/fac
 
 - `FINDINGS` — sorted, deduplicated array of `{severity, file, line, description, agents, confidence?, snapped_line?}`. `agents` is the list of reviewer personas that reported the finding, plus `couple-sweep` for the deterministic coupled-partner check (stamped in Step 6 sub-step 0, unioned across duplicates in sub-step 3); callers render it as a `[persona, …]` attribution token on each finding. `confidence` is the agent-self-reported certainty the finding is real (integer 0–100, normalized by `validate-findings.ts`, max-of-group on merge); absent when the agent stated none. It is **advisory triage metadata** — callers render it and may sort by it, but the engine never drops a finding on it. `snapped_line` is the nearest actual diff line (the anchor for a GitHub inline comment; equals `line` when the cited line is itself changed); absent on the `runtime` sentinel and pure-rename keeps.
 - `DROPPED_FINDINGS` — findings the scope filter dropped, each tagged with `drop_reason` (`file-out-of-scope` / `line-pre-existing` / `doc-example-fp`). Consumer skills render this as a collapsible audit section after the main findings list — never a silent nuke.
-- `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output.
+- `FAILED_AGENTS` — count + names of agents that returned `agent_error` or malformed output, plus `couple-sweep` when Step 3's deterministic sweep exited non-zero. `couple-sweep` is a checker, not a launched agent, so it is **not** counted in `TOTAL_AGENTS_LAUNCHED`; render it as an extra named failure rather than folding it into the `<N> of <M> agents failed` ratio.
 - `COUNTS` — `{critical, high, medium, low}` totals on the kept findings.
 - `DROPPED_COUNTS` — `{out_of_scope, pre_existing, doc_example}` totals on the dropped findings.
 - `TOTAL_AGENTS_LAUNCHED` — count of baseline + fired conditional agents, minus `EXCLUDE_AGENTS`.

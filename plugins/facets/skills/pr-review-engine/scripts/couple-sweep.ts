@@ -137,9 +137,9 @@ function describe(pairing: Pairing): string {
 	const { source, partner, co, total } = pairing;
 	const percent = Math.round((co / total) * 100);
 	return (
-		`WHAT: \`${source}\` co-changed with \`${partner}\` in ${co} of its last ` +
-		`${total} commits (${percent}%), but \`${partner}\` is absent from this diff — ` +
-		"the paired file has likely drifted out of sync with this change. " +
+		`WHAT: coupled partner \`${partner}\` is absent from this diff — ` +
+		`\`${source}\` co-changed with it in ${co} of its last ${total} commits (${percent}%), ` +
+		"so the pair has likely drifted. " +
 		`FIX: apply the matching update to \`${partner}\`, or state why the pairing no longer holds.`
 	);
 }
@@ -154,23 +154,42 @@ export function sweep(
 	options: SweepOptions = DEFAULT_OPTIONS,
 ): { findings: CoupleFinding[]; truncated: number } {
 	const { totals, pairs } = buildCoupling(input.commits, options);
-	const changed = new Set(input.changedFiles ?? Object.keys(input.changedLines));
+	// Two distinct roles. `inDiff` decides whether a PARTNER counts as already
+	// updated — it must be the caller's full changed-file list, including files
+	// git could not diff. `sources` decides which files may CARRY a finding, and
+	// is restricted to the changed-lines map: a file with no map key has no line
+	// to anchor on, and the engine's scope filter drops such a finding as
+	// out-of-scope, so emitting one would be a silent no-op.
+	const inDiff = new Set(input.changedFiles ?? Object.keys(input.changedLines));
+	const sources = Object.keys(input.changedLines)
+		.filter((file) => inDiff.has(file))
+		.sort();
 	const scored: { finding: CoupleFinding; confidence: number; support: number }[] = [];
 
-	for (const source of [...changed].sort()) {
+	for (const source of sources) {
 		const total = totals.get(source) ?? 0;
 		const row = pairs.get(source);
 		if (total === 0 || row === undefined) continue;
 
+		let emitted = 0;
 		for (const [partner, co] of [...row].sort((a, b) => a[0].localeCompare(b[0]))) {
-			if (changed.has(partner) || co < options.minSupport) continue;
+			if (inDiff.has(partner) || co < options.minSupport) continue;
 			const confidence = co / total;
 			if (confidence < options.minConfidence || !input.exists(partner)) continue;
 
 			// Anchor on a line the diff actually touched, so the engine's scope
 			// filter keeps the finding. A pure rename has no changed line; the
 			// filter short-circuits that case, so line 1 is safe there.
-			const anchor = input.changedLines[source]?.[0] ?? 1;
+			//
+			// Walk a different changed line per emitted partner: Step 6 merges
+			// same-file findings within +/-3 lines whose descriptions overlap, and
+			// every finding here shares one template. Without spreading, a file
+			// with three drifted partners collapses to ONE finding and the next
+			// partner only appears after the first is fixed — reinstating exactly
+			// the one-instance-per-round tail this sweep exists to remove.
+			const lines = input.changedLines[source] ?? [];
+			const anchor = lines[Math.min(emitted, lines.length - 1)] ?? 1;
+			emitted += 1;
 			scored.push({
 				confidence,
 				support: co,
@@ -290,6 +309,16 @@ function main(): number {
 	if (args.changedFiles !== undefined) {
 		try {
 			changedFiles = parseChangedFiles(readFileSync(args.changedFiles, "utf8"));
+			if (changedFiles.length === 0) {
+				// The caller only passes this flag when it has a list, and the engine
+				// bails out earlier on an empty diff. An empty file therefore means the
+				// caller's list-building failed — and an empty changed set would make
+				// the sweep emit `[]` at exit 0, indistinguishable from "no drift".
+				process.stderr.write(
+					"couple-sweep: --changed-files is empty; the review scope could not be determined\n",
+				);
+				return 2;
+			}
 		} catch (error) {
 			process.stderr.write(
 				`couple-sweep: cannot read --changed-files: ${error instanceof Error ? error.message : error}\n`,

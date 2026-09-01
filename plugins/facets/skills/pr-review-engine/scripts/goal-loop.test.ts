@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+	closeSync,
+	copyFileSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	realpathSync,
+	rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -225,7 +233,8 @@ describe("CLI", () => {
 			};
 		} catch (error) {
 			if (error instanceof Error && "status" in error && typeof error.status === "number") {
-				return { code: error.status, stdout: "" };
+				const out = "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
+				return { code: error.status, stdout: out };
 			}
 			throw error;
 		}
@@ -243,6 +252,25 @@ describe("CLI", () => {
 		// Empty stdout on a non-zero exit is the contract: a caller that captures
 		// `$(...)` without checking the status must not be able to read a decision.
 		expect(result.stdout).toBe("");
+	});
+
+	it("exits 3 with empty stdout when stdin cannot be read", () => {
+		// The documented internal-error path. Both hosts branch on "non-zero exit
+		// => no decision produced", so it must be reachable and distinguishable.
+		const fd = openSync(tmpdir(), "r");
+		try {
+			const result = execFileSync("node", [SCRIPT], { stdio: [fd, "pipe", "pipe"] });
+			expect.unreachable(`expected a non-zero exit, got: ${result.toString()}`);
+		} catch (error) {
+			expect(error instanceof Error && "status" in error && error.status).toBe(3);
+			const out =
+				error instanceof Error && "stdout" in error && typeof error.stdout === "string"
+					? error.stdout
+					: "";
+			expect(out).toBe("");
+		} finally {
+			closeSync(fd);
+		}
 	});
 
 	it("runs from a path containing a space (the #42 isMain regression)", () => {

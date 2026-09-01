@@ -570,6 +570,12 @@ setup() {
     || { echo "Codex review reference missing the couple-sweep helper" >&2; return 1; }
   grep -Fq 'agents:["couple-sweep"]' "$codex" \
     || { echo "Codex review reference missing the couple-sweep attribution stamp" >&2; return 1; }
+  # The --changed-files wiring is what stops a binary or uncommitted-only file
+  # being reported as an untouched partner; without it the fix silently regresses.
+  for host in "$engine" "$codex"; do
+    grep -Fq -- '--changed-files' "$host" \
+      || { echo "missing the --changed-files wiring: $host" >&2; return 1; }
+  done
 }
 
 @test "engine ships its bundled references/ files" {

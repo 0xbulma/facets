@@ -350,7 +350,7 @@ Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).
 
 ## Goal mode (`--goal`): review → fix → re-review loop
 
-Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs — the loop body is identical; only the terminal differs (this skill pushes the converged branch to its existing open PR, whereas `tib-ship` stops short of pushing).
+Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop shape as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs. Two things differ: this skill delegates its stop conditions to the tested `goal-loop.ts` whereas `tib-ship` still carries its own convergence prose (until it is migrated, on both hosts), and the terminals differ (this skill pushes the converged branch to its existing open PR, whereas `tib-ship` stops short of pushing).
 
 **"Passes cleanly" = no `critical`/`high`/`medium` findings remain.** `low` findings are never auto-fixed — they are carried to the final summary for the user to triage.
 
@@ -404,14 +404,17 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
    #     "prev_actionable_hash": "<prev_findings_hash>",
    #     "findings": [ ...this iteration's FINDINGS, lows included... ],
    #     "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
-   DECISION=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "$GOAL_STATE_FILE")
-   GOAL_STATUS=$?
+   # PRINT both — do not capture into shell variables. Step 3's own rule applies
+   # here too: the next step is a separate bash call, so a variable set now is
+   # gone, and a captured decision would be unreadable.
+   node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "$GOAL_STATE_FILE"
+   echo "GOAL_STATUS=$?"
    ```
 
-   **Check `GOAL_STATUS` before reading `DECISION`.** Stdout is empty on any non-zero exit (2 = invalid state, 3 = internal error, other = node itself failed — most commonly a runtime older than 22.18), and an empty capture must never be mistaken for a converged decision. On a non-zero status, or if `DECISION` does not parse to an object with a known `action`, this iteration produced **no decision**: emit `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.`, print the script's stderr, restore the tree (see *Leaving the branch clean* below), and stop for the user. Do **not** fall through to a success path — a helper failure is never clean.
+   **Check the printed `GOAL_STATUS` before reading the decision JSON above it.** Stdout is empty on any non-zero exit (2 = invalid state, 3 = internal error, other = node itself failed — most commonly a runtime older than 22.18), and an empty capture must never be mistaken for a converged decision. On a non-zero status, or if the printed decision does not parse to an object with a known `action`, this iteration produced **no decision**: emit `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.`, print the script's stderr, restore the tree (see *Leaving the branch clean* below), and stop for the user. Do **not** fall through to a success path — a helper failure is never clean.
 
-   On a zero status it returns `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
-   - `converged` → **break, success**; carry the `low` findings forward to the summary.
+   On a zero status it prints `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
+   - `converged` → **break, success**; carry the `low` findings forward to the summary. Do **not** print the returned `sentinel` here — the Final summary owns the terminal `GOAL_CLEAN`, and it is only true after the runtime pass, the ledger stamp, and the push. Emitting that completion token at loop-break would certify work that has not happened yet (and it is what a wrapping `/goal` audit keys off).
    - `incomplete` → an agent crashed, so the empty actionable set is unproven (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`). Restore the tree (see *Leaving the branch clean* below), print `sentinel` (`GOAL_INCOMPLETE`) plus the failed-agent names and any findings, and stop and ask the user — do not commit or stamp the result as clean.
    - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
    - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.

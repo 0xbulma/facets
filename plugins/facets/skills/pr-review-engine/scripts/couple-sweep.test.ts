@@ -202,6 +202,44 @@ describe("sweep", () => {
 		).toEqual([]);
 	});
 
+	it("emits one finding per drifted partner, on distinct lines", () => {
+		// Step 6 merges same-file findings within +/-3 lines that share a template.
+		// Collapsing three partners into one would reinstate the very
+		// one-instance-per-round tail this sweep exists to remove.
+		// A real mirror cluster: every commit touches the source and all its
+		// partners together (this repo's inject-wallet trio is exactly this shape).
+		const commits = Array.from({ length: 4 }, () => ["src.md", "p1.md", "p2.md", "p3.md"]);
+		const { findings } = sweep(input({ commits, changedLines: { "src.md": [10, 40, 90] } }));
+		expect(findings).toHaveLength(3);
+		expect(new Set(findings.map((f) => f.line))).toEqual(new Set([10, 40, 90]));
+		const partners = findings.map((f) => f.description.match(/`([^`]+)`/)?.[1]);
+		expect(new Set(partners)).toEqual(new Set(["p1.md", "p2.md", "p3.md"]));
+	});
+
+	it("reuses the last changed line when partners outnumber them", () => {
+		const commits = Array.from({ length: 4 }, () => ["src.md", "p1.md", "p2.md"]);
+		const { findings } = sweep(input({ commits, changedLines: { "src.md": [7] } }));
+		expect(findings).toHaveLength(2);
+		expect(findings.map((f) => f.line)).toEqual([7, 7]);
+	});
+
+	it("never emits a finding on a file absent from the changed-lines map", () => {
+		// binary.md is in the review (so it suppresses partners) but git could not
+		// diff it, so there is no line to anchor on and the engine's scope filter
+		// would drop any finding carried by it.
+		const commits = coupled(4, ["binary.md", "partner.md"]);
+		const { findings } = sweep(input({ commits, changedFiles: ["binary.md"], changedLines: {} }));
+		expect(findings).toEqual([]);
+	});
+
+	it("treats an EMPTY changedFiles list as an empty scope, not as absent", () => {
+		// `[]` is not nullish, so it must override the changed-lines fallback
+		// rather than silently falling back to it.
+		const args = { commits: coupled(4, ["a.md", "b.md"]), changedLines: { "a.md": [1] } };
+		expect(sweep(input(args)).findings).toHaveLength(1);
+		expect(sweep(input({ ...args, changedFiles: [] })).findings).toEqual([]);
+	});
+
 	it("still anchors on the changed-lines map when changedFiles is supplied", () => {
 		const { findings } = sweep(
 			input({
@@ -428,6 +466,29 @@ describe("CLI (real git fixture)", () => {
 			]);
 			expect(result.code).toBe(0);
 			expect(JSON.parse(result.stdout)).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("exits 2 when --changed-files is present but empty", () => {
+		// An empty list would make the sweep emit `[]` at exit 0 — byte-identical
+		// to a clean sweep — so a caller whose list-building failed would read it
+		// as "no drift".
+		const { dir, base } = fixture();
+		try {
+			writeFileSync(join(dir, "changed-lines.json"), JSON.stringify({ "skill.md": [1] }));
+			writeFileSync(join(dir, "changed-files.txt"), "\n\n");
+			const result = runCli(dir, [
+				"--base",
+				base,
+				"--changed-lines",
+				join(dir, "changed-lines.json"),
+				"--changed-files",
+				join(dir, "changed-files.txt"),
+			]);
+			expect(result.code).toBe(2);
+			expect(result.stdout).toBe("");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
