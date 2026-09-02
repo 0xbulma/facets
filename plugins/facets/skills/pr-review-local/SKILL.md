@@ -49,6 +49,8 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` converges, PR status unknown (gh down) | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: skipped (gh unavailable)` (couldn't query the PR; converged commits left local; never asserts "no PR"). |
 | `--goal` converges, push rejected | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: FAILED — push manually` (review still converged; tree untouched; never force-pushed). |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
+| `--goal`, zero actionable + unrecognized severity | `Sentinel: GOAL_INCOMPLETE — <N> finding(s) carry an unrecognized severity (<labels>); the set cannot be proven clean. Re-emit them with a severity of critical, high, medium or low, then re-run --goal.` (tree restored; nothing committed) |
+| `--goal`, zero actionable + red re-gate | `Sentinel: GOAL_INCOMPLETE — no actionable findings remain but the last re-gate was red; a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.` (tree restored; nothing committed) |
 | `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
 | `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
@@ -422,8 +424,11 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
         "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
         "prev_actionable_hash": "<prev_findings_hash>",
         "findings": [ ...this iteration's FINDINGS, lows included, PLUS any synthetic findings carried
-                      from a previous iteration's red re-gate (step 4) — the gate's failure has no other
-                      channel into the decision, and omitting it lets the loop converge on a red tree... ],
+                      from a previous iteration's red re-gate (step 4), each with a severity of
+                      critical/high/medium/low — an unrecognized label is neither fixed nor called clean... ],
+        "gate_green": <true on iteration 1 (pre-flight gate 3 proved it), otherwise whether the PREVIOUS
+                       iteration's re-gate ended green. Required: the script refuses to converge on a red
+                       tree, and omitting the field yields no decision rather than a false clean>,
         "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
       ```
 
@@ -438,7 +443,7 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 
    On a zero status it prints `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
    - `converged` → **break, success**; carry the `low` findings forward to the summary. Its `sentinel` is `null` by construction — the script cannot mint `GOAL_CLEAN`, because that token certifies the runtime pass, the ledger stamp and the push, none of which have run yet, and it is what a wrapping `/goal` audit keys off. The Final summary mints it.
-   - `incomplete` → an agent crashed, so the empty actionable set is unproven (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`). Restore the tree (see *Leaving the branch clean* below), print `sentinel` (`GOAL_INCOMPLETE`) plus the failed-agent names and any findings, and stop and ask the user — do not commit or stamp the result as clean.
+   - `incomplete` → the actionable set is empty but **cannot be proven clean**. Three causes share this action: an agent crashed (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`); a finding carries a severity the loop can neither fix nor call harmless; or the last re-gate was red. Restore the tree (see *Leaving the branch clean* below), print the returned `sentinel` **verbatim — it names which cause fired** — plus the failed-agent names *when `failed_agents` is non-empty* and any findings, and stop and ask the user. Do not commit or stamp the result as clean.
    - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
    - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.
    - `fix` → continue to step 3.
@@ -583,6 +588,8 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `FIX_ABORTED` | Step 7b pre-flight | `— working tree is not clean. Commit or stash before --fix.` |
 | `GOAL_CLEAN` | Goal mode final summary | `— review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` |
 | `GOAL_INCOMPLETE` | Goal mode loop (success check) | `— <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` |
+| `GOAL_INCOMPLETE` | Goal mode loop (severity veto, checked before the success check) | `— <N> finding(s) carry an unrecognized severity (<labels>); the set cannot be proven clean. Re-emit them with a severity of critical, high, medium or low, then re-run --goal.` |
+| `GOAL_INCOMPLETE` | Goal mode loop (gate veto, checked before the success check) | `— no actionable findings remain but the last re-gate was red; a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |

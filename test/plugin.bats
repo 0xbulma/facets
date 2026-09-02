@@ -180,7 +180,11 @@ setup() {
   grep -Fq '**Commit-authorized variant:**' "$review"
   grep -Fq 'last-green snapshot' "$review"
   grep -Fq 'last green commit' "$review"
-  grep -Fq 'Convergence requires no critical/high/medium findings and `FAILED_AGENTS == 0`' "$review"
+  # The predicate gained two more preconditions (unrecognized severity, red
+  # re-gate); anchor on the two original clauses so this keeps locking what it
+  # was written to lock without pinning the whole sentence.
+  grep -Fq 'Convergence requires no critical/high/medium findings' "$review"
+  grep -Fq '`FAILED_AGENTS == 0`' "$review"
   grep -Fq 'never call `gh` or read PR titles, bodies, comments' "$review"
   grep -Fq 'only after complete clean convergence' "$review"
 }
@@ -676,6 +680,15 @@ setup() {
     || { echo "pr-review-local lost the red-re-gate synthetic-findings producer" >&2; return 1; }
   grep -Fq 'PLUS any synthetic findings carried' "$local_skill" \
     || { echo "pr-review-local lost the red-re-gate findings in the decide payload" >&2; return 1; }
+  # 6. `gate_green` is the POSITIVE half of that rail: the script refuses to
+  # converge on a red tree, and a caller that omits the field gets no decision
+  # rather than a false clean. Both hosts must send it.
+  grep -Fq 'gate_green' "$local_skill" \
+    || { echo "pr-review-local no longer sends gate_green to the decision" >&2; return 1; }
+  grep -Fq 'gate_green' "$codex" \
+    || { echo "Codex payload spec no longer sends gate_green" >&2; return 1; }
+  grep -Fq 'a green last re-gate reported through the required `gate_green` field' "$codex" \
+    || { echo "Codex convergence predicate omits the gate precondition" >&2; return 1; }
 }
 
 @test "engine prints every value a later bash block consumes" {

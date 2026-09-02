@@ -33,6 +33,7 @@ function state(over: Partial<GoalLoopState> = {}): GoalLoopState {
 		total_agents_launched: 12,
 		prev_actionable_hash: "",
 		findings: [],
+		gate_green: true,
 		head_branch: "feat/x",
 		base_branch: "main",
 		...over,
@@ -145,6 +146,34 @@ describe("nextGoalAction", () => {
 	it("prefers the unknown-severity stop over an otherwise-clean converge", () => {
 		const decision = nextGoalAction(state({ findings: [finding("low"), finding("oops")] }));
 		expect(decision.action).toBe("incomplete");
+	});
+
+	it("still fixes a round that has real work, despite an unrecognized severity", () => {
+		// Blocking `fix` here would be actively harmful: the caller's stop path runs
+		// `git checkout -- .`, throwing away the previous round's uncommitted repair.
+		// The veto still fires the moment the actionable set empties.
+		const decision = nextGoalAction(state({ findings: [finding("high"), finding("blocker")] }));
+		expect(decision.action).toBe("fix");
+	});
+
+	it("refuses to converge when the last re-gate was red", () => {
+		// A red gate reaches the decision only if the model re-authors it as
+		// findings. Requiring it as an input makes the omission fail closed.
+		const decision = nextGoalAction(state({ findings: [], gate_green: false }));
+		expect(decision.action).toBe("incomplete");
+		expect(decision.sentinel).toContain("the last re-gate was red");
+	});
+
+	it("still fixes a round with work left even when the gate is red", () => {
+		expect(nextGoalAction(state({ findings: [finding("high")], gate_green: false })).action).toBe(
+			"fix",
+		);
+	});
+
+	it("requires gate_green — a caller that omits it gets no decision, not a converge", () => {
+		const { gate_green: _omitted, ...withoutGate } = state();
+		expect(() => parseState(JSON.stringify(withoutGate))).toThrow(UsageError);
+		expect(() => parseState(JSON.stringify({ ...state(), gate_green: "yes" }))).toThrow(UsageError);
 	});
 
 	it("lists each distinct unrecognized label once, sorted", () => {

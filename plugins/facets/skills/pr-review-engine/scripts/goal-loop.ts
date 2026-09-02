@@ -20,6 +20,7 @@
  *     "total_agents_launched": 12,
  *     "prev_actionable_hash": "a1b2…",      // "" on iteration 1
  *     "findings": [ {severity, file, line, description}, … ],   // ALL findings, lows included
+ *     "gate_green": true,                   // did the last re-gate end green? required
  *     "head_branch": "feat/x",
  *     "base_branch": "main"
  *   }
@@ -71,6 +72,14 @@ export type GoalLoopState = {
 	total_agents_launched: number;
 	prev_actionable_hash: string;
 	findings: GoalFinding[];
+	/**
+	 * Did the previous iteration's re-gate (format/lint/typecheck/test) end green?
+	 * Required, and deliberately not inferable from `findings`: a red gate reaches
+	 * the decision only if the model re-authors the gate output as findings, which
+	 * is precisely the re-derived stop condition this script exists to replace.
+	 * `true` on iteration 1 — pre-flight gate 3 establishes a green baseline.
+	 */
+	gate_green: boolean;
 	head_branch: string;
 	base_branch: string;
 };
@@ -141,15 +150,21 @@ export function partition(findings: readonly GoalFinding[]): {
 /**
  * The loop's whole stop-condition state machine, as one pure function.
  *
- * Check order matters and mirrors the documented contract:
- *   1. no actionable findings AND no failed agent  -> converged
- *   2. no actionable findings BUT an agent failed  -> incomplete (an empty set is
- *      unproven when a lens crashed; a false clean is unrecoverable)
- *   3. the same actionable set two iterations running -> stuck
- *   4. the iteration ceiling is reached with work left -> maxed (stop BEFORE
+ * Check order matters and mirrors the documented contract. The first three fire
+ * only when the actionable set is empty — i.e. exactly where a clean verdict
+ * would otherwise be minted; none of them blocks a round that still has work:
+ *   1. nothing actionable BUT a finding carries an unrecognized severity ->
+ *      incomplete (never auto-fixed: the blast radius is a guess; never clean:
+ *      a mislabeled synthetic finding is the input that carries "the tree is red")
+ *   2. nothing actionable BUT the last re-gate was red -> incomplete (a green
+ *      tree is a required input, not something inferred from an empty finding set)
+ *   3. nothing actionable AND no failed agent -> converged; if a lens crashed
+ *      instead -> incomplete (an empty set is unproven; a false clean is unrecoverable)
+ *   4. the same actionable set two iterations running -> stuck
+ *   5. the iteration ceiling is reached with work left -> maxed (stop BEFORE
  *      fixing: an unreviewed fix round would leave committed work no lens ever
  *      saw, and would make the reported residual stale relative to the tree)
- *   5. otherwise -> fix
+ *   6. otherwise -> fix
  */
 export function nextGoalAction(state: GoalLoopState): GoalLoopDecision {
 	const { actionable, low, unknown } = partition(state.findings);
@@ -160,17 +175,30 @@ export function nextGoalAction(state: GoalLoopState): GoalLoopDecision {
 		low_count: low.length,
 	};
 
-	// Before any success check: an unparseable severity means the set cannot be
-	// proven clean. Do not auto-fix it (the blast radius is a guess) and do not
-	// converge past it — stop and let the user resolve it.
-	if (unknown.length > 0) {
+	// Conditions that veto a CLEAN verdict without blocking further work. They are
+	// checked only where they matter — at the point the loop would otherwise call
+	// the branch converged. Blocking `fix` too would be worse than useless: the
+	// caller's stop path runs `git checkout -- .`, discarding the uncommitted
+	// repair the previous round produced.
+	if (actionable.length === 0 && unknown.length > 0) {
 		const labels = [...new Set(unknown.map((f) => f.severity))].sort().join(", ");
 		return {
 			...base,
 			action: "incomplete",
 			sentinel:
 				`Sentinel: GOAL_INCOMPLETE — ${unknown.length} finding(s) carry an unrecognized severity ` +
-				`(${labels}); the set cannot be proven clean — correct the severities and re-run --goal.`,
+				`(${labels}); the set cannot be proven clean. Re-emit them with a severity of ` +
+				"critical, high, medium or low, then re-run --goal.",
+		};
+	}
+
+	if (actionable.length === 0 && !state.gate_green) {
+		return {
+			...base,
+			action: "incomplete",
+			sentinel:
+				"Sentinel: GOAL_INCOMPLETE — no actionable findings remain but the last re-gate was red; " +
+				"a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.",
 		};
 	}
 
@@ -221,6 +249,12 @@ export function nextGoalAction(state: GoalLoopState): GoalLoopDecision {
 function requireString(source: Record<string, unknown>, key: string): string {
 	const value = source[key];
 	if (typeof value !== "string") throw new UsageError(`"${key}" must be a string`);
+	return value;
+}
+
+function requireBoolean(source: Record<string, unknown>, key: string): boolean {
+	const value = source[key];
+	if (typeof value !== "boolean") throw new UsageError(`"${key}" must be a boolean`);
 	return value;
 }
 
@@ -283,6 +317,7 @@ export function parseState(raw: string): GoalLoopState {
 		total_agents_launched: requireCount(parsed, "total_agents_launched"),
 		prev_actionable_hash: requireString(parsed, "prev_actionable_hash"),
 		findings: parseFindings(parsed.findings),
+		gate_green: requireBoolean(parsed, "gate_green"),
 		head_branch: requireString(parsed, "head_branch"),
 		base_branch: requireString(parsed, "base_branch"),
 	};
