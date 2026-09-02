@@ -337,6 +337,23 @@ describe("CLI", () => {
 		expect(JSON.parse(result.stdout).action).toBe("fix");
 	});
 
+	it("carries gate_green=false through parseState into a red-gate stop", () => {
+		// The veto tests build state in memory and the other CLI cases use the
+		// fixture default `true`, so nothing covered the parse -> decision wiring:
+		// making requireBoolean return a constant would disable the whole rail
+		// with every test still green.
+		const result = run(JSON.stringify(state({ findings: [], gate_green: false })));
+		expect(result.code).toBe(0);
+		const decision = JSON.parse(result.stdout);
+		expect(decision.action).toBe("incomplete");
+		expect(decision.sentinel).toContain("the last re-gate was red");
+	});
+
+	it("carries gate_green=true through parseState into a converge", () => {
+		const result = run(JSON.stringify(state({ findings: [], gate_green: true })));
+		expect(JSON.parse(result.stdout).action).toBe("converged");
+	});
+
 	it("exits 2 on invalid input rather than emitting a decision", () => {
 		const result = run("not json");
 		expect(result.code).toBe(2);

@@ -672,10 +672,11 @@ setup() {
   # 4. The goal loop must check the decision status before reading a decision.
   grep -Fq 'Check the printed' "$local_skill" \
     || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
-  # 5. A red re-gate must reach the decision. goal-loop.ts takes no gate-status
-  # input, so folding the gate's failures into the state payload as synthetic
-  # findings is the ONLY thing stopping the loop converging on a red tree. Both
-  # halves — the producer at loop step 4 and the consumer in the payload spec.
+  # 5. A red re-gate reaches the decision through TWO complementary channels, and
+  # both must survive. The synthetic findings carry the gate's DETAILS so the next
+  # round can repair them (producer at loop step 4, consumer in the payload spec);
+  # rail 6's `gate_green` carries the gate's STATUS so the decision can veto a
+  # converge outright. Neither substitutes for the other.
   grep -Fq 'becomes additional synthetic findings for the next iteration' "$local_skill" \
     || { echo "pr-review-local lost the red-re-gate synthetic-findings producer" >&2; return 1; }
   grep -Fq 'PLUS any synthetic findings carried' "$local_skill" \
@@ -685,10 +686,26 @@ setup() {
   # rather than a false clean. Both hosts must send it.
   grep -Fq 'gate_green' "$local_skill" \
     || { echo "pr-review-local no longer sends gate_green to the decision" >&2; return 1; }
-  grep -Fq 'gate_green' "$codex" \
+  # NOT a bare 'gate_green' grep: the convergence-predicate sentence below also
+  # contains the token, so the payload clause could be deleted while this passed.
+  grep -Fq 'findings, gate_green, head_branch' "$codex" \
     || { echo "Codex payload spec no longer sends gate_green" >&2; return 1; }
   grep -Fq 'a green last re-gate reported through the required `gate_green` field' "$codex" \
     || { echo "Codex convergence predicate omits the gate precondition" >&2; return 1; }
+  # 7. The commit is the last unguarded step on the convergence path. A rejected
+  # commit leaves the fixes uncommitted while the next review still sees them in
+  # the local diff — so the loop converges truthfully and mints GOAL_CLEAN over
+  # work that was never committed, then pushes the pre-fix HEAD.
+  grep -Fq 'the commit failed; the fixes are uncommitted' "$local_skill" \
+    || { echo "pr-review-local lost the failed-commit guard" >&2; return 1; }
+  grep -Fq 'check that the commit actually succeeded' "$codex" \
+    || { echo "Codex lost the failed-commit guard" >&2; return 1; }
+  # 8. gate_green must be an observed result, not an assumed one — the whole
+  # point of making it a required input.
+  grep -Fq 'the OBSERVED gate result, never an assumption' "$local_skill" \
+    || { echo "pr-review-local no longer requires gate_green to be observed" >&2; return 1; }
+  grep -Fq 'carries the OBSERVED gate result' "$codex" \
+    || { echo "Codex no longer requires gate_green to be observed" >&2; return 1; }
 }
 
 @test "engine prints every value a later bash block consumes" {

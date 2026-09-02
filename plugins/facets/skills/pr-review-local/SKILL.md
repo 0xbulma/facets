@@ -397,7 +397,7 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
      exit 1
    fi
    ```
-3. **Pre-existing red gate** — run `<TEST_CMD>` once (resolved by the sniff above). If it already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
+3. **Pre-existing red gate** — run the **same sequence the re-gate uses**, `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>` (resolved by the sniff above), not `<TEST_CMD>` alone. It is the baseline every later re-gate is compared against, and it is what seeds `gate_green` for iteration 1 — proving only the test command would let a branch with a red lint and no findings converge on iteration 1 without any gate having run. If any of them already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
    - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`.
    - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 4) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
 
@@ -426,9 +426,12 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
         "findings": [ ...this iteration's FINDINGS, lows included, PLUS any synthetic findings carried
                       from a previous iteration's red re-gate (step 4), each with a severity of
                       critical/high/medium/low — an unrecognized label is neither fixed nor called clean... ],
-        "gate_green": <true on iteration 1 (pre-flight gate 3 proved it), otherwise whether the PREVIOUS
-                       iteration's re-gate ended green. Required: the script refuses to converge on a red
-                       tree, and omitting the field yields no decision rather than a false clean>,
+        "gate_green": <the OBSERVED gate result, never an assumption. On iteration 1: the actual outcome of
+                       pre-flight gate 3 — `false` if any resolved command failed beyond an accepted red
+                       baseline, and `false` if any of the three was unresolvable and skipped (an unrun gate
+                       is not a green one). On later iterations: whether the PREVIOUS iteration's re-gate
+                       (step 4) ended green. Required: the script refuses to converge on a red tree, and
+                       omitting the field yields no decision rather than a false clean>,
         "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
       ```
 
@@ -451,10 +454,14 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
    Hand-evaluating those five conditions instead of running the script is a last resort, not a silent fallback: it is reachable only through the `GOAL_ABORTED` stop above, when the user explicitly asks to continue without the helper. Say plainly that the stop conditions are unverified in that case.
 3. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
 4. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 5). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
-5. **Commit** (only when the gate is green):
+5. **Commit** (only when the gate is green) — and **check that it succeeded**:
+
+   ```bash
+   git commit -m "fix(review): iteration <i> — <N> findings" \
+     || { echo "Sentinel: GOAL_ABORTED — iteration <i> passed the gate but the commit failed; the fixes are uncommitted." >&2; exit 1; }
    ```
-   fix(review): iteration <i> — <N> findings
-   ```
+
+   This is the one step on the convergence path whose failure is otherwise invisible. A rejected commit (signing agent down, a pre-commit hook, an empty index) leaves the fixes as uncommitted edits — and because the next review reads the local diff it still sees them, finds nothing actionable, and reports a genuinely green gate, so the loop converges from a *truthful* state and mints `GOAL_CLEAN` over work that was never committed. The ledger would then stamp a HEAD that is not the last fix commit, and the push would ship the pre-fix HEAD. On failure, print git's stderr and stop for the user; do **not** restore the tree — the uncommitted edits are the work.
 6. Continue with the next iteration.
 
 ### Leaving the branch clean on a non-success exit
