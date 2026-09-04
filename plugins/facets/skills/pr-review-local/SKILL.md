@@ -54,7 +54,8 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
 | `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
-| `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal.` |
+| `--goal` commit rejected (signing / hook / empty index) | `Sentinel: GOAL_ABORTED — iteration <i> passed the gate but the commit failed; the fixes are uncommitted.` (tree **not** restored — the uncommitted edits are the work) |
 | `--goal` decision helper failed | `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` (tree restored; nothing committed) |
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
@@ -372,7 +373,7 @@ Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — St
 
 ### Command sniff (once)
 
-Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — the pre-flight gates below depend on `<TEST_CMD>`.
+Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — pre-flight gate 3 below runs `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>` and depends on all three.
 
 > **Package-manager pre-run-install guard (same as Step 7b).** When the resolved `<exec>` is `pnpm exec` or a `pnpm` script, pnpm's `verify-deps-before-run` can fire an implicit `pnpm install` that fails on a from-source native build and sinks an otherwise-green gate. Prefer the resolved binary (`./node_modules/.bin/<tool>`) or disable the check (`pnpm --config.verify-deps-before-run=false exec <tool>` — flag before `exec` — or env `npm_config_verify_deps_before_run=false`). A failed pre-run install is a tooling failure to surface — not a gate result, and not grounds to treat the iteration as red.
 
@@ -398,8 +399,9 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
    fi
    ```
 3. **Pre-existing red gate** — run the **same sequence the re-gate uses**, `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>` (resolved by the sniff above), not `<TEST_CMD>` alone. It is the baseline every later re-gate is compared against, and it is what seeds `gate_green` for iteration 1 — proving only the test command would let a branch with a red lint and no findings converge on iteration 1 without any gate having run. If any of them already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
-   - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`.
-   - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 4) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
+   Run all three before deciding, so the baseline is complete rather than truncated at the first red.
+   - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`, where `<FAILED_CMD>` names the command that actually failed — reporting `<TEST_CMD>` when the lint was red sends the user to the wrong place.
+   - On **proceed** → record a **per-command** *pre-existing baseline*: failing test IDs for `<TEST_CMD>`, rule + `file:line` for `<LINT_CMD>`, error code + `file:line` for `<TYPECHECK_CMD>`. The re-gate (loop step 4) then treats the gate as green so long as **no command reports a failure absent from its own baseline** — a test-shaped baseline cannot represent an accepted red lint, so the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
 
 ### The loop
 
@@ -427,11 +429,14 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
                       from a previous iteration's red re-gate (step 4), each with a severity of
                       critical/high/medium/low — an unrecognized label is neither fixed nor called clean... ],
         "gate_green": <the OBSERVED gate result, never an assumption. On iteration 1: the actual outcome of
-                       pre-flight gate 3 — `false` if any resolved command failed beyond an accepted red
-                       baseline, and `false` if any of the three was unresolvable and skipped (an unrun gate
-                       is not a green one). On later iterations: whether the PREVIOUS iteration's re-gate
-                       (step 4) ended green. Required: the script refuses to converge on a red tree, and
-                       omitting the field yields no decision rather than a false clean>,
+                       pre-flight gate 3 — `false` when a RESOLVED command failed beyond an accepted red
+                       baseline. A command the sniff could not resolve is neither red nor green: exclude it
+                       and report the skip as a coverage gap (the sniff already prescribes a one-line
+                       warning) — treating it as red would make `--goal` permanently unusable on a repo
+                       with no linter, contradicting the idempotence guarantee that an already-clean branch
+                       converges on iteration 1. On later iterations: whether the PREVIOUS iteration's
+                       re-gate (step 4) ended green under the same rule. Required: the script refuses to
+                       converge on a red tree, and omitting the field yields no decision, not a false clean>,
         "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
       ```
 
@@ -457,6 +462,15 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
 5. **Commit** (only when the gate is green) — and **check that it succeeded**:
 
    ```bash
+   # STAGE FIRST. The loop's fixes are unstaged worktree edits (step 3 reuses
+   # Step 7b's discipline, which forbids `git add`), so a bare `git commit`
+   # would hit an empty index, exit 1 and fire the guard below on every green
+   # iteration. Stage tracked edits with `git add -u`, and add any file a fix
+   # created explicitly — never a blind `git add -A`, which would also sweep
+   # untracked artifacts the gate commands just produced (coverage dirs,
+   # build info). Same rule as `pr-create` Step 3.
+   git add -u
+   # git add <path>   # for each new file this iteration's fixes created
    git commit -m "fix(review): iteration <i> — <N> findings" \
      || { echo "Sentinel: GOAL_ABORTED — iteration <i> passed the gate but the commit failed; the fixes are uncommitted." >&2; exit 1; }
    ```
@@ -599,7 +613,8 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `GOAL_INCOMPLETE` | Goal mode loop (gate veto, checked before the success check) | `— no actionable findings remain but the last re-gate was red; a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
-| `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal.` |
+| `GOAL_ABORTED` | Goal mode loop (step 5 commit) | `— iteration <i> passed the gate but the commit failed; the fixes are uncommitted.` (the one abort that does NOT restore the tree) |
 | `GOAL_ABORTED` | Goal mode loop (decide step) | `— goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` |
 | `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |

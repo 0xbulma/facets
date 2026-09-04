@@ -20,7 +20,7 @@
  *     "total_agents_launched": 12,
  *     "prev_actionable_hash": "a1b2…",      // "" on iteration 1
  *     "findings": [ {severity, file, line, description}, … ],   // ALL findings, lows included
- *     "gate_green": true,                   // did the last re-gate end green? required
+ *     "gate_green": true,                   // OBSERVED result of the last gate; required, never assumed
  *     "head_branch": "feat/x",
  *     "base_branch": "main"
  *   }
@@ -77,7 +77,10 @@ export type GoalLoopState = {
 	 * Required, and deliberately not inferable from `findings`: a red gate reaches
 	 * the decision only if the model re-authors the gate output as findings, which
 	 * is precisely the re-derived stop condition this script exists to replace.
-	 * `true` on iteration 1 — pre-flight gate 3 establishes a green baseline.
+	 * On iteration 1 this is the OBSERVED outcome of the caller's baseline gate,
+	 * never an assumed `true`: `false` when a RESOLVED gate command failed beyond
+	 * an accepted red baseline. A command the caller could not resolve at all is
+	 * neither red nor green — it is excluded, and reported as a coverage gap.
 	 */
 	gate_green: boolean;
 	head_branch: string;

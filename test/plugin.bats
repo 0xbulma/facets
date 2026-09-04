@@ -684,7 +684,9 @@ setup() {
   # 6. `gate_green` is the POSITIVE half of that rail: the script refuses to
   # converge on a red tree, and a caller that omits the field gets no decision
   # rather than a false clean. Both hosts must send it.
-  grep -Fq 'gate_green' "$local_skill" \
+  # Payload-unique anchor: the bare token also occurs in the gate-3 prose, so a
+  # bare grep survives deleting the payload field entirely.
+  grep -Fq '"gate_green": <the OBSERVED' "$local_skill" \
     || { echo "pr-review-local no longer sends gate_green to the decision" >&2; return 1; }
   # NOT a bare 'gate_green' grep: the convergence-predicate sentence below also
   # contains the token, so the payload clause could be deleted while this passed.
@@ -706,6 +708,26 @@ setup() {
     || { echo "pr-review-local no longer requires gate_green to be observed" >&2; return 1; }
   grep -Fq 'carries the OBSERVED gate result' "$codex" \
     || { echo "Codex no longer requires gate_green to be observed" >&2; return 1; }
+  # 9. WHAT observes it: the baseline gate must run the same three commands the
+  # re-gate does. Proving only tests lets a red lint converge on iteration 1.
+  grep -Fq 'not `<TEST_CMD>` alone' "$local_skill" \
+    || { echo "pr-review-local baseline gate reverted to test-only" >&2; return 1; }
+  grep -Fq 'not the test command alone' "$codex" \
+    || { echo "Codex baseline gate reverted to test-only" >&2; return 1; }
+  # 10. The failed-commit abort is the ONE abort that must not restore — the
+  # uncommitted edits are the work. Losing the exception deletes the fixes.
+  grep -Fq 'do **not** restore the tree — the uncommitted edits are the work' "$local_skill" \
+    || { echo "pr-review-local lost the do-not-restore exception on a failed commit" >&2; return 1; }
+  grep -Fq 'do not restore, the edits are the work' "$codex" \
+    || { echo "Codex lost the do-not-restore exception on a failed commit" >&2; return 1; }
+  grep -Fq 'restore per the variant rules below exactly as for an incomplete/stuck/maxed exit' "$codex" \
+    || { echo "Codex lost the no-decision restore rule" >&2; return 1; }
+  # 11. The loop must STAGE before committing, or the guard above fires every
+  # green iteration and --goal can never converge.
+  # The token also appears in the explanatory comment two lines above the
+  # command, so anchor on the executable line itself.
+  grep -Eq '^   git add -u$' "$local_skill" \
+    || { echo "pr-review-local commits without staging; every green iteration would abort" >&2; return 1; }
 }
 
 @test "engine prints every value a later bash block consumes" {
