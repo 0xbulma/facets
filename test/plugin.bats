@@ -180,7 +180,11 @@ setup() {
   grep -Fq '**Commit-authorized variant:**' "$review"
   grep -Fq 'last-green snapshot' "$review"
   grep -Fq 'last green commit' "$review"
-  grep -Fq 'Convergence requires no critical/high/medium findings and `FAILED_AGENTS == 0`' "$review"
+  # The predicate gained two more preconditions (unrecognized severity, red
+  # re-gate); anchor on the two original clauses so this keeps locking what it
+  # was written to lock without pinning the whole sentence.
+  grep -Fq 'Convergence requires no critical/high/medium findings' "$review"
+  grep -Fq '`FAILED_AGENTS == 0`' "$review"
   grep -Fq 'never call `gh` or read PR titles, bodies, comments' "$review"
   grep -Fq 'only after complete clean convergence' "$review"
 }
@@ -507,20 +511,88 @@ setup() {
   [ -z "$bad" ] || { printf 'XML brackets found in frontmatter:%b\n' "$bad" >&2; return 1; }
 }
 
-@test "engine ships scripts/ with the five bundled helpers" {
+@test "engine ships scripts/ with the seven bundled helpers" {
   # The Anthropic Skills guide (p. 26) recommends scripting deterministic
-  # logic instead of expressing it only in language. The five helpers
+  # logic instead of expressing it only in language. The seven helpers
   # implement the diff-line build (TS), the finding validator (TS), the
   # findings-ledger merge for stateful re-runs (TS, feedback #19), the
-  # git-scope helpers extracted from inline bash (TS, feedback #31), and the
-  # fix-rubric agent discovery (bash) — locking the file list catches a future
-  # edit that removes any of them.
+  # git-scope helpers extracted from inline bash (TS, feedback #31), the
+  # goal-loop stop conditions (TS, feedback #63), the coupled-partner
+  # consistency sweep (TS, feedback #64), and the fix-rubric agent discovery
+  # (bash) — locking the file list catches a future edit that removes any.
   SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
   [ -x "$SCRIPTS_DIR/build-changed-lines.ts" ]   || { echo "missing/non-executable: build-changed-lines.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/validate-findings.ts" ]     || { echo "missing/non-executable: validate-findings.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/findings-ledger.ts" ]       || { echo "missing/non-executable: findings-ledger.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/review-scope.ts" ]          || { echo "missing/non-executable: review-scope.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/goal-loop.ts" ]             || { echo "missing/non-executable: goal-loop.ts" >&2; return 1; }
+  [ -x "$SCRIPTS_DIR/couple-sweep.ts" ]          || { echo "missing/non-executable: couple-sweep.ts" >&2; return 1; }
   [ -x "$SCRIPTS_DIR/list-fix-rubric-agents.sh" ]|| { echo "missing/non-executable: list-fix-rubric-agents.sh" >&2; return 1; }
+}
+
+@test "every bundled TS helper ships a colocated test (no untested deterministic logic)" {
+  # The whole argument for these scripts is that their logic fails a gate when
+  # it regresses. A helper without a colocated *.test.ts is prose with extra
+  # steps. Derived from disk so a new helper can't opt out by omission.
+  SCRIPTS_DIR="$SKILLS_DIR/pr-review-engine/scripts"
+  for script in "$SCRIPTS_DIR"/*.ts; do
+    case "$script" in *.test.ts) continue ;; esac
+    expected="${script%.ts}.test.ts"
+    [ -f "$expected" ] || { echo "missing colocated test: $expected" >&2; return 1; }
+  done
+}
+
+@test "goal mode delegates its stop conditions to goal-loop.ts (feedback #63)" {
+  # The success/stuck/ceiling decision must not drift back into prose the model
+  # re-derives each run. Anchor on the delegation AND on every action the
+  # script can return, so a partial revert fails here.
+  skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  grep -q 'scripts/goal-loop.ts' "$skill" \
+    || { echo "pr-review-local goal mode no longer calls goal-loop.ts" >&2; return 1; }
+  for action in converged incomplete stuck maxed fix; do
+    grep -q "\`$action\`" "$skill" || { echo "goal mode missing the '$action' branch" >&2; return 1; }
+  done
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+  # NOT a bare 'goal-loop.ts' grep: the filename also appears in an incidental
+  # scoping sentence, so the entire delegation paragraph could be deleted while
+  # this stayed green. Anchor on strings unique to the paragraph itself.
+  grep -Fq 'goal-loop.ts` on stdin' "$codex" \
+    || { echo "Codex review reference missing the goal-loop.ts delegation" >&2; return 1; }
+  grep -Fq 'Carry `actionable_hash` forward as the next call' "$codex" \
+    || { echo "Codex review reference missing the carry-forward rule" >&2; return 1; }
+  grep -Fq 'an empty capture is never a decision' "$codex" \
+    || { echo "Codex review reference missing the no-decision rail" >&2; return 1; }
+}
+
+@test "engine runs the deterministic coupled-partner sweep on both hosts (feedback #64)" {
+  # A cross-host mechanism: the Claude engine invokes it in Step 3 and stamps
+  # its attribution in Step 6; the Codex router must invoke the same helper, or
+  # the two hosts produce different findings from the same diff.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  # Anchor on the INVOCATION, not the bare path — the Bundled-scripts inventory
+  # carries the same path, so a bare grep survives repointing Step 3 elsewhere.
+  grep -Fq 'node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/couple-sweep.ts"' "$engine" \
+    || { echo "engine Step 3 no longer runs couple-sweep.ts" >&2; return 1; }
+  # Anchor on the STAMP, not the tool name: a bare 'couple-sweep' grep is a
+  # strict substring of the Step 3 check above, so it could never fail on its
+  # own and the whole attribution sentence could be deleted with this green.
+  grep -Fq 'agents: ["couple-sweep"]' "$engine" \
+    || { echo "engine Step 6 missing the couple-sweep attribution stamp" >&2; return 1; }
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+  grep -q 'couple-sweep.ts' "$codex" \
+    || { echo "Codex review reference missing the couple-sweep helper" >&2; return 1; }
+  grep -Fq 'agents:["couple-sweep"]' "$codex" \
+    || { echo "Codex review reference missing the couple-sweep attribution stamp" >&2; return 1; }
+  # The --changed-files wiring is what stops a binary or uncommitted-only file
+  # being reported as an untouched partner; without it the fix silently regresses.
+  for host in "$engine" "$codex"; do
+    grep -Fq -- '--changed-files' "$host" \
+      || { echo "missing the --changed-files wiring: $host" >&2; return 1; }
+    # Without the merge exemption, several drifted partners for one file collapse
+    # into a single finding and resurface one per round — the tail #64 removes.
+    grep -Fq 'cite different partner paths' "$host" \
+      || { echo "missing the couple-sweep dedup exemption: $host" >&2; return 1; }
+  done
 }
 
 @test "engine ships its bundled references/ files" {
@@ -557,6 +629,162 @@ setup() {
   for token in '.codex-plugin/plugin.json' '.agents/plugins/marketplace.json' 'agents/openai.yaml'; do
     grep -Fq "$token" "$engine" || { echo "engine detector missing $token" >&2; return 1; }
     grep -Fq "$token" "$persona" || { echo "authoring persona missing $token" >&2; return 1; }
+  done
+}
+
+@test "engine never-report-clean rails are phrase-anchored (feedback #63/#64)" {
+  # Three prose rails stop a broken helper reading as a clean review. Each was
+  # mutation-checked to confirm the suite went green without it, so each needs a
+  # gate. Anchor on DISTINCTIVE PHRASING, never a bare token: `GOAL_ABORTED`,
+  # `CHANGED_FILES_FILE` and `couple-sweep` all already occur many times, so a
+  # bare-token grep survives the rail's removal (same trap as feedback #45).
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  codex="$REPO_ROOT/skills/facets/references/review.md"
+
+  # 1. A sweep that exited 0 but produced no parseable payload is not clean.
+  grep -Fq 'parses as a JSON array' "$engine" \
+    || { echo "engine lost the couple-sweep parsed-payload precondition" >&2; return 1; }
+  grep -Fq 'parses as a JSON array' "$codex" \
+    || { echo "Codex lost the couple-sweep parsed-payload precondition" >&2; return 1; }
+  # 2. A failed sweep reaches the caller through FAILED_AGENTS, not silence.
+  grep -Fq 'add `couple-sweep` to `FAILED_AGENTS`' "$engine" \
+    || { echo "engine lost the couple-sweep FAILED_AGENTS routing" >&2; return 1; }
+  grep -Fq 'add `couple-sweep` to `FAILED_AGENTS`' "$codex" \
+    || { echo "Codex lost the couple-sweep FAILED_AGENTS routing" >&2; return 1; }
+  # 3. A lost changed-file list must not silently empty the scope filter.
+  grep -Fq 'missing, unreadable, or empty' "$engine" \
+    || { echo "engine lost the changed-file-list scope rail" >&2; return 1; }
+  # NOT a bare `scope-filter` grep: `references/scope-filter.md` occurs twice
+  # unconditionally. Nor a shared phrase — the rail has TWO halves that repeat the
+  # same clause, so one anchor stays green while the other half is deleted. Give
+  # each half a string unique to it.
+  grep -Fq '(count + name) and return the findings unfiltered' "$engine" \
+    || { echo "engine lost the changed-file-list half of the scope-filter rail" >&2; return 1; }
+  grep -Fq 'reports an unreadable map **in band**' "$engine" \
+    || { echo "engine lost the changed-lines-map half of the scope-filter rail" >&2; return 1; }
+  grep -Fq "Step 6's changed-file list or changed-lines map could not be read" "$engine" \
+    || { echo "engine lost the scope-filter clause in the FAILED_AGENTS contract" >&2; return 1; }
+  grep -Fq 'add `scope-filter` to `FAILED_AGENTS`' "$codex" \
+    || { echo "Codex lost the scope-filter terminal — the hosts disagree on incomplete" >&2; return 1; }
+  grep -Fq 'reports an unreadable `--changed-lines` map **in band**' "$codex" \
+    || { echo "Codex lost the in-band validator-error rail" >&2; return 1; }
+  # 4. The goal loop must check the decision status before reading a decision.
+  grep -Fq 'Check the printed' "$local_skill" \
+    || { echo "pr-review-local lost the check-status-first instruction" >&2; return 1; }
+  # 5. A red re-gate reaches the decision through TWO complementary channels, and
+  # both must survive. The synthetic findings carry the gate's DETAILS so the next
+  # round can repair them (producer at loop step 4, consumer in the payload spec);
+  # rail 6's `gate_green` carries the gate's STATUS so the decision can veto a
+  # converge outright. Neither substitutes for the other.
+  grep -Fq 'becomes additional synthetic findings for the next iteration' "$local_skill" \
+    || { echo "pr-review-local lost the red-re-gate synthetic-findings producer" >&2; return 1; }
+  grep -Fq 'PLUS any synthetic findings carried' "$local_skill" \
+    || { echo "pr-review-local lost the red-re-gate findings in the decide payload" >&2; return 1; }
+  # 6. `gate_green` is the POSITIVE half of that rail: the script refuses to
+  # converge on a red tree, and a caller that omits the field gets no decision
+  # rather than a false clean. Both hosts must send it.
+  # Payload-unique anchor: the bare token also occurs in the gate-3 prose, so a
+  # bare grep survives deleting the payload field entirely.
+  grep -Fq '"gate_green": <the OBSERVED' "$local_skill" \
+    || { echo "pr-review-local no longer sends gate_green to the decision" >&2; return 1; }
+  # NOT a bare 'gate_green' grep: the convergence-predicate sentence below also
+  # contains the token, so the payload clause could be deleted while this passed.
+  grep -Fq 'findings, gate_green, head_branch' "$codex" \
+    || { echo "Codex payload spec no longer sends gate_green" >&2; return 1; }
+  grep -Fq 'a green last re-gate reported through the required `gate_green` field' "$codex" \
+    || { echo "Codex convergence predicate omits the gate precondition" >&2; return 1; }
+  # 7. The commit is the last unguarded step on the convergence path. A rejected
+  # commit leaves the fixes uncommitted while the next review still sees them in
+  # the local diff — so the loop converges truthfully and mints GOAL_CLEAN over
+  # work that was never committed, then pushes the pre-fix HEAD.
+  # Anchor on the EXECUTABLE echo (`" >&2` never appears in the backticked table
+  # rows that repeat the phrase) — a bare-phrase grep matched three lines.
+  grep -Fq 'the fixes are uncommitted; they are staged — commit them by hand (do not stash), then re-run --goal." >&2' "$local_skill" \
+    || { echo "pr-review-local lost the failed-commit guard" >&2; return 1; }
+  grep -Fq 'the runtime fix is uncommitted; it is staged — commit it by hand (do not stash), then re-run --goal." >&2' "$local_skill" \
+    || { echo "pr-review-local lost the failed-RUNTIME-commit guard" >&2; return 1; }
+  grep -Fq 'check that the runtime commit actually succeeded' "$codex" \
+    || { echo "Codex lost the failed-runtime-commit guard" >&2; return 1; }
+  # A no-op iteration must NOT fire the guard (empty index is legitimate there).
+  grep -Fq 'if git diff --cached --quiet; then' "$local_skill" \
+    || { echo "pr-review-local commit guard fires on a no-op iteration" >&2; return 1; }
+  grep -Fq 'check that the commit actually succeeded' "$codex" \
+    || { echo "Codex lost the failed-commit guard" >&2; return 1; }
+  # 8. gate_green must be an observed result, not an assumed one — the whole
+  # point of making it a required input.
+  grep -Fq 'the OBSERVED gate result, never an assumption' "$local_skill" \
+    || { echo "pr-review-local no longer requires gate_green to be observed" >&2; return 1; }
+  grep -Fq 'carries the OBSERVED gate result' "$codex" \
+    || { echo "Codex no longer requires gate_green to be observed" >&2; return 1; }
+  # 9. WHAT observes it: the baseline gate must run the same three commands the
+  # re-gate does. Proving only tests lets a red lint converge on iteration 1.
+  grep -Fq 'not `<TEST_CMD>` alone' "$local_skill" \
+    || { echo "pr-review-local baseline gate reverted to test-only" >&2; return 1; }
+  grep -Fq 'not the test command alone' "$codex" \
+    || { echo "Codex baseline gate reverted to test-only" >&2; return 1; }
+  # 10. The failed-commit abort is the ONE abort that must not restore — the
+  # uncommitted edits are the work. Losing the exception deletes the fixes.
+  grep -Fq 'do **not** restore the tree — the uncommitted edits are the work' "$local_skill" \
+    || { echo "pr-review-local lost the do-not-restore exception on a failed commit" >&2; return 1; }
+  grep -Fq 'do not restore, the edits are the work' "$codex" \
+    || { echo "Codex lost the do-not-restore exception on a failed commit" >&2; return 1; }
+  grep -Fq 'restore per the variant rules below exactly as for an incomplete/stuck/maxed exit' "$codex" \
+    || { echo "Codex lost the no-decision restore rule" >&2; return 1; }
+  # 11. The loop must STAGE before committing, or the guard above fires every
+  # green iteration and --goal can never converge.
+  # The token also appears in the explanatory comment two lines above the
+  # command, so anchor on the executable line itself.
+  grep -Eq '^   git add -u$' "$local_skill" \
+    || { echo "pr-review-local commits without staging; every green iteration would abort" >&2; return 1; }
+  # 12. Gate 3's baseline is PER-COMMAND (a test-shaped one cannot represent an
+  # accepted red lint, so it would never clear), and an unresolvable command is
+  # neither red nor green (else --goal is unusable on a repo with no linter).
+  grep -Fq 'record a **per-command** *pre-existing baseline*' "$local_skill" \
+    || { echo "pr-review-local baseline reverted to test-only" >&2; return 1; }
+  grep -Fq 'no command reports a failure absent from its own baseline' "$local_skill" \
+    || { echo "pr-review-local lost the per-command green rule" >&2; return 1; }
+  grep -Fq 'record a per-command baseline' "$codex" \
+    || { echo "Codex baseline reverted to test-only" >&2; return 1; }
+  grep -Fq "no failure absent from that command's own baseline" "$codex" \
+    || { echo "Codex lost the per-command green rule" >&2; return 1; }
+  grep -Fq 'is **neither red nor green**: exclude it' "$local_skill" \
+    || { echo "pr-review-local treats an unresolvable command as red again" >&2; return 1; }
+  grep -Fq 'is neither red nor green — exclude it' "$codex" \
+    || { echo "Codex treats an unresolvable command as red again" >&2; return 1; }
+  grep -Fq '<FAILED_CMD> fails before any fix); fix it or run without --goal." >&2' "$local_skill" \
+    || { echo "pr-review-local gate-3 sentinel reverted to naming <TEST_CMD>" >&2; return 1; }
+  # 13. The non-delegated Codex loop (tib-ship) must keep its own stuck rule.
+  grep -Fq 'the same hash twice means stuck' "$codex" \
+    || { echo "Codex tib-ship has no stuck rule" >&2; return 1; }
+  # 14. An ungated converge must be visible in the summary on both hosts.
+  grep -Fq 'Gate coverage:' "$local_skill" \
+    || { echo "pr-review-local summary no longer reports gate coverage" >&2; return 1; }
+  grep -Fq 'report gate coverage' "$codex" \
+    || { echo "Codex convergence report no longer covers gate coverage" >&2; return 1; }
+}
+
+@test "engine prints every value a later bash block consumes" {
+  # Each documented block is a SEPARATE bash call, so a value that is only
+  # assigned is unreachable downstream. This bug recurred four times across this
+  # feature's review; lock the producer side of every cross-block value.
+  engine="$SKILLS_DIR/pr-review-engine/SKILL.md"
+  for var in MERGE_BASE CHANGED_LINES_FILE CHANGED_FILES_FILE COUPLE_FINDINGS_FILE; do
+    grep -Fq "echo \"$var=\$$var\"" "$engine" \
+      || { echo "engine never prints \$$var, so a later block cannot read it" >&2; return 1; }
+  done
+  # COUPLE_STATUS has TWO producers — the normal path and the empty-list abort.
+  # Losing either makes Step 6 branch on an unset status, i.e. a failed sweep
+  # reads as clean. A loop over the name alone would not catch that.
+  grep -Fq 'echo "COUPLE_STATUS=$?"' "$engine" \
+    || { echo "engine never prints COUPLE_STATUS on the normal path" >&2; return 1; }
+  grep -Fq 'echo "COUPLE_STATUS=1"' "$engine" \
+    || { echo "the aborted sweep no longer reports a status to Step 6" >&2; return 1; }
+  # The caller's own cross-block values, locked the same way.
+  local_skill="$SKILLS_DIR/pr-review-local/SKILL.md"
+  for var in GOAL_STATE_FILE HEAD_BRANCH HEAD_SHA RUN_HASH; do
+    grep -Fq "echo \"$var=\$$var\"" "$local_skill" \
+      || { echo "pr-review-local never prints \$$var, so a later block cannot read it" >&2; return 1; }
   done
 }
 

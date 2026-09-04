@@ -1,6 +1,6 @@
 ---
 name: pr-review-local
-version: 2.12.1
+version: 2.13.0
 description: Pre-PR local code review. Reviews local branch changes (committed + uncommitted) using parallel specialized agents (6 baseline + conditional Web3, React/Next, styling, accessibility, AI-SDK, API-security, CI-security, release-integrity, dependencies, route-UI) and outputs findings in the terminal. Optionally applies fixes with --fix (refuses on dirty tree), or loops review/fix/re-review with --goal (commits each iteration, then pushes the converged commits to the branch's existing open PR) until no critical/high/medium findings remain. Use when user says /facets:pr-review-local, "review my changes", "review before PR", "local review", "deep review", or "review and fix until clean".
 ---
 
@@ -49,10 +49,16 @@ A maintainer changing this skill should verify each outcome shape:
 | `--goal` converges, PR status unknown (gh down) | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: skipped (gh unavailable)` (couldn't query the PR; converged commits left local; never asserts "no PR"). |
 | `--goal` converges, push rejected | `Sentinel: GOAL_CLEAN — ...` plus `Pushed: FAILED — push manually` (review still converged; tree untouched; never force-pushed). |
 | `--goal` on already-clean branch | `Sentinel: GOAL_CLEAN — ... after 1 iteration(s) ...` (idempotent: no commits made). |
+| `--goal`, zero actionable + unrecognized severity | `Sentinel: GOAL_INCOMPLETE — <N> finding(s) carry an unrecognized severity (<labels>); the set cannot be proven clean. Re-emit them with a severity of critical, high, medium or low, then re-run --goal.` (tree restored; nothing committed) |
+| `--goal`, zero actionable + red re-gate | `Sentinel: GOAL_INCOMPLETE — no actionable findings remain but the last re-gate was red; a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.` (tree restored; nothing committed) |
 | `--goal`, zero actionable + agent crash | `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` (tree restored; nothing committed or stamped). |
 | `--goal` aborted on dirty tree | `Sentinel: GOAL_ABORTED — working tree is not clean; commit or stash before --goal.` |
 | `--goal` aborted on detached HEAD | `Sentinel: GOAL_ABORTED — detached HEAD; check out a branch before --goal.` |
-| `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `--goal` aborted on red base gate | `Sentinel: GOAL_ABORTED — base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal.` |
+| `--goal` commit rejected (signing / hook) | `Sentinel: GOAL_ABORTED — iteration <i> passed the gate but the commit failed; the fixes are uncommitted; they are staged — commit them by hand (do not stash), then re-run --goal.` (tree **not** restored — the staged edits are the work) |
+| `--goal` runtime commit rejected | `Sentinel: GOAL_ABORTED — the runtime fix passed both gates but the commit failed; the runtime fix is uncommitted; it is staged — commit it by hand (do not stash), then re-run --goal.` (tree **not** restored) |
+| `--goal` no-op iteration (all findings carried) | no sentinel — `iteration <i>: no fixes applied (all findings carried); nothing to commit — continuing.`, then the next review; a repeat lands on `GOAL_STUCK` |
+| `--goal` decision helper failed | `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` (tree restored; nothing committed) |
 | `--goal` same findings twice | `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `--goal` hits the ceiling | `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 | `--goal` runtime fix pass failed | `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |
@@ -99,6 +105,13 @@ if [ -z "$HEAD_BRANCH" ]; then
   HEAD_BRANCH=$(git rev-parse --short HEAD)   # detached HEAD — display only
 fi
 HEAD_SHA=$(git rev-parse HEAD)
+# PRINT both. Every later step is a separate bash call, so an unprinted value is
+# unrecoverable there — and these two are consumed by the Step 2c cache key, the
+# Step 6b ledger path, the goal-mode ledger stamp and the push block. Unset, the
+# ledger path collapses to one file shared by every branch and the push block
+# runs `gh pr list --head ""` / `git push origin ""`. Thread the printed literals.
+echo "HEAD_BRANCH=$HEAD_BRANCH"
+echo "HEAD_SHA=$HEAD_SHA"
 ```
 
 Resolve `<BASE_BRANCH>`:
@@ -153,11 +166,16 @@ MERGE_BASE=$(git merge-base "origin/<BASE_BRANCH>" HEAD)
 # rationale live in the tested review-scope.ts (so the #23 content-blindness
 # regression is covered by a gate, not just prose).
 RUN_HASH=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/review-scope.ts" --run-hash --base "$MERGE_BASE")
+# PRINT it. Step 6b consumes this many bash calls later, across the whole agent
+# panel. Unset, Step 6b stamps `--run-hash ""`, which findings-ledger never treats
+# as a cache hit — so every unchanged re-run silently pays the full panel again.
+echo "RUN_HASH=$RUN_HASH"
 
 # Fail open: capture the result, and on any error fall through to a normal
 # review — never skip the review on an unreadable cache result.
 CACHE_JSON=$(node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/findings-ledger.ts" \
   --ledger "$LEDGER" --check-cache --run-hash "$RUN_HASH") || CACHE_JSON=""
+echo "CACHE_JSON=$CACHE_JSON"   # print it — the branch below reads this value
 ```
 
 - **`cache_hit` true** → do NOT run Steps 3–6. Reprint the returned `findings` + `counts` as the Step 7 output, header marked `(cached — input unchanged since the last review of <head_sha>)`, then ask the user: **reuse this, or force a fresh review?** On *reuse* → emit the matching `REVIEW_*` sentinel from the cached counts and stop. On *force / re-review* → fall through to Steps 3–6 as a normal run. (No `--force` flag — the prompt is the bypass, keeping the flag surface flat.)
@@ -349,7 +367,7 @@ Sentinel: FIX_DONE_LOCAL — <X> applied, <Y> skipped (Local-only, unstaged).
 
 ## Goal mode (`--goal`): review → fix → re-review loop
 
-Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs — the loop body is identical; only the terminal differs (this skill pushes the converged branch to its existing open PR, whereas `tib-ship` stops short of pushing).
+Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — Steps 7 and 7b do **not** run in goal mode). This is the autonomous-completion loop: review, fix the actionable findings, re-gate, commit, and re-review until the review passes cleanly. It is the same proven loop shape as `tib-ship` Step 5–6 (`${CLAUDE_PLUGIN_ROOT}/skills/tib-ship/SKILL.md`), operating on the branch's *existing* changes rather than freshly-scaffolded TIPs. Two things differ: this skill delegates its stop conditions to the tested `goal-loop.ts` whereas `tib-ship` still carries its own convergence prose (until it is migrated, on both hosts), and the terminals differ (this skill pushes the converged branch to its existing open PR, whereas `tib-ship` stops short of pushing).
 
 **"Passes cleanly" = no `critical`/`high`/`medium` findings remain.** `low` findings are never auto-fixed — they are carried to the final summary for the user to triage.
 
@@ -357,7 +375,7 @@ Reached only when `GOAL=1` (the Routing section diverts here after Step 2 — St
 
 ### Command sniff (once)
 
-Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — the pre-flight gates below depend on `<TEST_CMD>`.
+Resolve `<FORMAT_CMD>` / `<LINT_CMD>` / `<TYPECHECK_CMD>` / `<TEST_CMD>` from `package.json` scripts with the biome/prettier fallback for format and the `<exec>` choice (`pnpm exec` / `yarn exec` / `npx` / `bunx`) by lockfile — the same logic as `tib-ship` Step 4. If a command is unresolvable (no `package.json`, no matching script, no formatter dep), skip that gate step with a one-line warning; never invent a command. Run this sniff **first** — pre-flight gate 3 below runs `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>` and depends on all three.
 
 > **Package-manager pre-run-install guard (same as Step 7b).** When the resolved `<exec>` is `pnpm exec` or a `pnpm` script, pnpm's `verify-deps-before-run` can fire an implicit `pnpm install` that fails on a from-source native build and sinks an otherwise-green gate. Prefer the resolved binary (`./node_modules/.bin/<tool>`) or disable the check (`pnpm --config.verify-deps-before-run=false exec <tool>` — flag before `exec` — or env `npm_config_verify_deps_before_run=false`). A failed pre-run install is a tooling failure to surface — not a gate result, and not grounds to treat the iteration as red.
 
@@ -382,31 +400,93 @@ Before the first iteration, check in order; every gate aborts with a `GOAL_ABORT
      exit 1
    fi
    ```
-3. **Pre-existing red gate** — run `<TEST_CMD>` once (resolved by the sniff above). If it already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
-   - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`.
-   - On **proceed** → record the failing test IDs as a *pre-existing baseline*. The re-gate (loop step 6) then treats the gate as green so long as it produces no failures beyond that baseline — otherwise the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
+3. **Pre-existing red gate** — run the **same sequence the re-gate uses**, `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>` (resolved by the sniff above), not `<TEST_CMD>` alone. It is the baseline every later re-gate is compared against, and it is what seeds `gate_green` for iteration 1 — proving only the test command would let a branch with a red lint and no findings converge on iteration 1 without any gate having run. If any of them already fails on the current branch, surface the failure and stop-and-ask — yolo must not paper over pre-existing breakage:
+   Run all three before deciding, so the baseline is complete rather than truncated at the first red. A command the sniff could not resolve is **neither red nor green**: exclude it from the baseline and from `gate_green`, and report the skip as a coverage gap in the Final summary (the sniff's one-line warning is not the report) — treating it as red would make `--goal` permanently unusable on a repo with no linter, contradicting the idempotence guarantee that an already-clean branch converges on iteration 1.
+   - On **decline** → `echo "Sentinel: GOAL_ABORTED — base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal." >&2` and `exit 1`, where `<FAILED_CMD>` names the command that actually failed — reporting `<TEST_CMD>` when the lint was red sends the user to the wrong place.
+   - On **proceed** → record a **per-command** *pre-existing baseline*: failing test IDs for `<TEST_CMD>`, rule + `file:line` for `<LINT_CMD>`, error code + `file:line` for `<TYPECHECK_CMD>`. The re-gate (loop step 4) then treats the gate as green so long as **no command reports a failure absent from its own baseline** — a test-shaped baseline cannot represent an accepted red lint, so the pre-existing red would never clear and the loop would run straight to `GOAL_MAXED`.
 
 ### The loop
 
 `prev_findings_hash = ""`. For `i = 1..MAX_ITERS` (default `5` — a ceiling, not a target; expect convergence by iteration 2–3):
 
 1. **Review.** Run Steps 3–6 (the engine) with `DIFF_SOURCE=local`, `HEAD_REF=HEAD`, `INTENT_CONTEXT` = the commit-messages-only block from the Steps 3–6 inputs above, and `EXCLUDE_AGENTS = ["runtime-validation"]` (also append `"docs"` when `FAST=1`). Excluding `runtime-validation` keeps the dev server from booting every iteration — it runs once after convergence (see below).
-2. **Partition.** `actionable` = findings with severity in `{critical, high, medium}`; set the `low` findings aside as the triage list.
-3. **Success check.** If `actionable` is empty **AND** `FAILED_AGENTS == 0` → **break, success** (carry the lows forward to the summary). If `actionable` is empty but `FAILED_AGENTS > 0`, an agent crashed and the empty actionable set is unproven — do NOT declare clean (the same single-shot contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`): restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_INCOMPLETE — <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.`, print the failed-agent names and any findings, and stop and ask the user (do not commit or stamp the result as clean).
-4. **Stuck check.** Compute a stable hash of `actionable` (sort by `file`, `line`, `description`; hash). If `hash == prev_findings_hash` → identical findings two iterations running → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_STUCK — identical findings on iteration <i> and <i-1>; stopping for user input.`, print the findings, and stop and ask the user (do not silently retry).
-5. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
-6. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 7). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
-7. **Commit** (only when the gate is green):
-   ```
-   fix(review): iteration <i> — <N> findings
-   ```
-8. Set `prev_findings_hash = hash`; continue.
+2. **Decide.** The whole stop-condition state machine — the `{critical, high, medium}` partition, the success check (gated on `FAILED_AGENTS == 0`), the stuck check, the `MAX_ITERS` ceiling, and the matching sentinel line — is a **tested script**, not prose the model re-derives each run (feedback #63). Pipe the post-review state to it:
 
-If `i == MAX_ITERS` and `actionable` is still non-empty → restore the tree (see *Leaving the branch clean* below), then emit `Sentinel: GOAL_MAXED — <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?`, print the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop.
+   This takes **three** steps, not one. The state has to be written between the two bash calls, and a shell variable does not survive from the first call to the second — so the path is printed, and step 3 uses that printed literal. No heredoc either: an indented terminator is not recognized at column 0 and would silently fold into the payload.
+
+   1. Allocate the state file and **print** its path:
+
+      ```bash
+      GOAL_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/facets-goal-state.XXXXXX") || { echo "mktemp failed; cannot allocate the goal-state path." >&2; exit 1; }
+      echo "GOAL_STATE_FILE=$GOAL_STATE_FILE"
+      ```
+
+   2. Write this iteration's state to that **literal** path with the Write tool:
+
+      ```json
+      { "iteration": <i>, "max_iters": <MAX_ITERS>,
+        "failed_agents": [ ...FAILED_AGENTS names... ], "total_agents_launched": <TOTAL_AGENTS_LAUNCHED>,
+        "prev_actionable_hash": "<prev_findings_hash>",
+        "findings": [ ...this iteration's FINDINGS, lows included, PLUS any synthetic findings carried
+                      from a previous iteration's red re-gate (step 4), each with a severity of
+                      critical/high/medium/low — an unrecognized label is neither fixed nor called clean... ],
+        "gate_green": <the OBSERVED gate result, never an assumption — on iteration 1 the outcome of
+                       pre-flight gate 3, afterwards the outcome of the PREVIOUS iteration's step-4 re-gate,
+                       both under gate 3's rule (green = no resolved command reports a failure absent from
+                       its own baseline; unresolvable commands excluded). Required: the script refuses to
+                       converge on a red tree, and omitting the field yields no decision, not a false clean>,
+        "head_branch": "<HEAD_BRANCH>", "base_branch": "<BASE_BRANCH>" }
+      ```
+
+   3. Run the decision against that literal path. Print both the decision and the status — do not capture either into a shell variable, or the next step cannot read them:
+
+      ```bash
+      node "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/scripts/goal-loop.ts" < "<the GOAL_STATE_FILE path printed in step 1>"
+      echo "GOAL_STATUS=$?"
+      ```
+
+   **Check the printed `GOAL_STATUS` before reading the decision JSON above it.** Stdout is empty on any non-zero exit (2 = invalid state, 3 = internal error, other = node itself failed — most commonly a runtime older than 22.18), and an empty capture must never be mistaken for a converged decision. On a non-zero status, or if the printed decision does not parse to an object with a known `action`, this iteration produced **no decision**: emit `Sentinel: GOAL_ABORTED — goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.`, print the script's stderr, restore the tree (see *Leaving the branch clean* below), and stop for the user. Do **not** fall through to a success path — a helper failure is never clean.
+
+   On a zero status it prints `{action, actionable_hash, actionable_count, low_count, sentinel}`. Set `prev_findings_hash = actionable_hash` and branch on `action`:
+   - `converged` → **break, success**; carry the `low` findings forward to the summary. Its `sentinel` is `null` by construction — the script cannot mint `GOAL_CLEAN`, because that token certifies the runtime pass, the ledger stamp and the push, none of which have run yet, and it is what a wrapping `/goal` audit keys off. The Final summary mints it.
+   - `incomplete` → the actionable set is empty but **cannot be proven clean**. Three causes share this action: an agent crashed (the same contract that maps zero findings + a failed agent to `REVIEW_INCOMPLETE`, never `REVIEW_CLEAN`); a finding carries a severity the loop can neither fix nor call harmless; or the last re-gate was red. Restore the tree (see *Leaving the branch clean* below), print the returned `sentinel` **verbatim — it names which cause fired** — plus the failed-agent names *when `failed_agents` is non-empty* and any findings, and stop and ask the user. Do not commit or stamp the result as clean.
+   - `stuck` → identical findings two iterations running. Restore the tree, print `sentinel` (`GOAL_STUCK`) and the findings, and stop and ask the user (do not silently retry).
+   - `maxed` → the ceiling is reached with work left. Restore the tree, print `sentinel` (`GOAL_MAXED`) and the residual findings, and ask the user whether to extend iterations, accept-and-continue, or stop. The loop stops **before** applying this round's fixes, so the residual findings it prints describe the tree as it actually stands.
+   - `fix` → continue to step 3.
+
+   Hand-evaluating those five conditions instead of running the script is a last resort, not a silent fallback: it is reachable only through the `GOAL_ABORTED` stop above, when the user explicitly asks to continue without the helper. Say plainly that the stop conditions are unverified in that case.
+3. **Fix.** Apply fixes in order `critical → high → medium`, **batched by file** (reuse Step 7b's batch-by-file, all-or-nothing-per-file discipline). Apply the smallest change that addresses each finding's `description`. Skip any finding that is ambiguous or needs more than a localized edit (e.g. "refactor this module"); carry it to the next iteration — do not invent large changes.
+4. **Re-gate.** Run `<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`. Format may mutate files freely; the other three must end green (relative to the pre-existing baseline from pre-flight gate 3, if any). **If green** → commit (step 5). **If non-green** → do **not** commit; the failing gate output becomes additional synthetic findings for the next iteration. The fix edits stay uncommitted so the next iteration can build on them, but they are not a committed checkpoint — if the loop then terminates while still red, *Leaving the branch clean* (below) discards them.
+5. **Commit** (only when the gate is green) — and **check that it succeeded**:
+
+   ```bash
+   # STAGE FIRST. The loop's fixes are unstaged worktree edits (step 3 reuses
+   # Step 7b's discipline, which forbids `git add`), so a bare `git commit`
+   # would hit an empty index, exit 1 and fire the guard below on every green
+   # iteration. Stage tracked edits with `git add -u`, and add any file a fix
+   # created explicitly — never a blind `git add -A`, which would also sweep
+   # untracked artifacts the gate commands just produced (coverage dirs,
+   # build info). Same rule as `pr-create` Step 3.
+   git add -u
+   # git add <path>   # for each new file this iteration's fixes created
+   # A no-op iteration is legitimate (step 3 skips ambiguous findings and carries
+   # them), and it reaches here with a green gate and an empty index. That is not
+   # a rejected commit — do not fire the guard on it; continue, and the repeat
+   # findings surface as GOAL_STUCK next round.
+   if git diff --cached --quiet; then
+     echo "iteration <i>: no fixes applied (all findings carried); nothing to commit — continuing."
+   else
+     git commit -m "fix(review): iteration <i> — <N> findings" \
+       || { echo "Sentinel: GOAL_ABORTED — iteration <i> passed the gate but the commit failed; the fixes are uncommitted; they are staged — commit them by hand (do not stash), then re-run --goal." >&2; exit 1; }
+   fi
+   ```
+
+   The two commit sites — this one and the post-convergence runtime commit below — are the steps on the convergence path whose failure is otherwise invisible. A rejected commit (signing agent down, a pre-commit hook) leaves the fixes as uncommitted edits — and because the next review reads the local diff it still sees them, finds nothing actionable, and reports a genuinely green gate, so the loop converges from a *truthful* state and mints `GOAL_CLEAN` over work that was never committed. The ledger would then stamp a HEAD that is not the last fix commit, and the push would ship the pre-fix HEAD. On failure, print git's stderr and stop for the user; do **not** restore the tree — the uncommitted edits are the work.
+6. Continue with the next iteration.
 
 ### Leaving the branch clean on a non-success exit
 
-Whenever goal mode stops **without** converging — `GOAL_INCOMPLETE` (a failed agent left the actionable set unproven), `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
+Whenever goal mode stops **without** converging — `GOAL_ABORTED` from the decide step (`goal-loop.ts` produced no decision), `GOAL_INCOMPLETE` (a failed agent left the actionable set unproven), `GOAL_STUCK`, `GOAL_MAXED`, or an aborted runtime re-pass — restore the working tree to the last committed state *before* printing the sentinel:
 
 ```bash
 git checkout -- .   # discard the current iteration's uncommitted edits to tracked files
@@ -422,13 +502,22 @@ After the loop converges (success break), compute `<HAS_ROUTE_UI>` (engine Step 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/pr-review-engine/agents/runtime-validation.md`.
 2. Launch a single Agent (subagent_type: `general-purpose`) with that persona body, the cumulative diff, the changed-files list, and the project's dev-server command.
 3. If it returns any `critical`/`high` findings → run **one** dedicated runtime-fix pass — **not** a re-entry of the static loop, so the loop's `GOAL_STUCK` / `GOAL_MAXED` exits do not apply here. Apply the fixes, then **leave the work uncommitted until it is proven good on both gates** (so any failure is undone by the uncommitted-only restore — no committed runtime fix can be left behind):
-   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 5). Do **not** commit yet.
+   - Apply fixes for the runtime findings (`critical` → `high`, batched by file, same discipline as loop step 3). Do **not** commit yet.
    - Re-gate (`<FORMAT_CMD>` → `<LINT_CMD>` → `<TYPECHECK_CMD>` → `<TEST_CMD>`). **If non-green** (the runtime fix broke the static gate) → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`; do **not** re-run `runtime-validation`.
    - If the gate is green → re-run `runtime-validation` exactly once more (still uncommitted):
-     - **If that re-run is clean** → commit `fix(review): runtime — <N> findings`, then fall through to the Final summary with `Runtime check: failed-then-fixed` (count this single runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
+     - **If that re-run is clean** → commit with the **same staged-and-guarded block as loop step 5** — a bare commit here has the exact failure shape step 5 closes, one site over:
+
+       ```bash
+       git add -u
+       # git add <path>   # for each new file the runtime fix created
+       git commit -m "fix(review): runtime — <N> findings" \
+         || { echo "Sentinel: GOAL_ABORTED — the runtime fix passed both gates but the commit failed; the runtime fix is uncommitted; it is staged — commit it by hand (do not stash), then re-run --goal." >&2; exit 1; }
+       ```
+
+       Do **not** restore on that failure — the staged edits are the work. On success, fall through to the Final summary with `Runtime check: failed-then-fixed` (count this single runtime commit in `<M>`; `<i>` is unchanged — the static loop already converged).
      - **If still red** → restore the tree (see *Leaving the branch clean* above) and emit `Sentinel: GOAL_RUNTIME_RED — runtime fix pass failed (static gate or re-validation still red); stopping for user input.`, print the runtime findings, and stop and ask the user.
 
-   `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the third non-success exit the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
+   `GOAL_RUNTIME_RED` is the terminal for either failure branch above — the last of the non-success exits the rollback rule covers, same restore-then-named-sentinel shape as `GOAL_STUCK` / `GOAL_MAXED`. Because the runtime fix is committed only after both gates pass, the restore (uncommitted-only) always fully undoes a failed runtime pass.
 
 If `NO_RUNTIME` is set or `<HAS_ROUTE_UI>` is false, print a one-line note that runtime validation was skipped (and why).
 
@@ -500,6 +589,7 @@ Branch:        <HEAD_BRANCH> -> <BASE_BRANCH>
 Iterations:    <i> (clean on iteration <i>)
 Commits:       <M> (fix(review): iteration N; plus one fix(review): runtime — N when Runtime check is failed-then-fixed)
 Runtime check: passed | skipped (<reason>) | failed-then-fixed
+Gate coverage: lint ✓ typecheck ✓ test ✓ | skipped: <cmds> (unresolvable — fixes committed without them)
 Pushed:        yes — PR #<N> | skipped (no open PR) | skipped (gh unavailable) | FAILED — push manually
 Low findings:  <K> (not auto-fixed — listed below for manual triage)
 
@@ -535,9 +625,14 @@ Sentinel: GOAL_CLEAN — review passes cleanly after <i> iteration(s) on <HEAD_B
 | `FIX_ABORTED` | Step 7b pre-flight | `— working tree is not clean. Commit or stash before --fix.` |
 | `GOAL_CLEAN` | Goal mode final summary | `— review passes cleanly after <i> iteration(s) on <HEAD_BRANCH> vs <BASE_BRANCH>; <K> low finding(s) triaged (not auto-fixed).` |
 | `GOAL_INCOMPLETE` | Goal mode loop (success check) | `— <FAILED_AGENTS> of <TOTAL_AGENTS_LAUNCHED> agents failed (<names>); no actionable findings does NOT mean clean — re-run --goal once the panel completes.` |
+| `GOAL_INCOMPLETE` | Goal mode loop (severity veto, checked before the success check) | `— <N> finding(s) carry an unrecognized severity (<labels>); the set cannot be proven clean. Re-emit them with a severity of critical, high, medium or low, then re-run --goal.` |
+| `GOAL_INCOMPLETE` | Goal mode loop (gate veto, checked before the success check) | `— no actionable findings remain but the last re-gate was red; a green tree is a precondition for convergence, not an inference — fix the gate and re-run --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 1) | `— working tree is not clean; commit or stash before --goal.` |
 | `GOAL_ABORTED` | Goal mode pre-flight (gate 2) | `— detached HEAD; check out a branch before --goal.` |
-| `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<TEST_CMD> fails before any fix); fix it or run without --goal.` |
+| `GOAL_ABORTED` | Goal mode pre-flight (gate 3) | `— base gate is red (<FAILED_CMD> fails before any fix); fix it or run without --goal.` |
+| `GOAL_ABORTED` | Goal mode loop (step 5 commit) | `— iteration <i> passed the gate but the commit failed; the fixes are uncommitted; they are staged — commit them by hand (do not stash), then re-run --goal.` (does NOT restore the tree) |
+| `GOAL_ABORTED` | Goal mode runtime commit | `— the runtime fix passed both gates but the commit failed; the runtime fix is uncommitted; it is staged — commit it by hand (do not stash), then re-run --goal.` (does NOT restore the tree) |
+| `GOAL_ABORTED` | Goal mode loop (decide step) | `— goal-loop.ts could not produce a decision (exit <GOAL_STATUS>); stop conditions unverified.` |
 | `GOAL_STUCK` | Goal mode loop (stuck check) | `— identical findings on iteration <i> and <i-1>; stopping for user input.` |
 | `GOAL_MAXED` | Goal mode loop (budget exhausted) | `— <N> actionable finding(s) remain after <MAX_ITERS> iteration(s); extend, accept, or stop?` |
 | `GOAL_RUNTIME_RED` | Goal mode runtime re-pass | `— runtime fix pass failed (static gate or re-validation still red); stopping for user input.` |

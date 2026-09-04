@@ -92,7 +92,7 @@ Prereqs: `npx` (Node.js), `gh` (authenticated), `git` ≥ 2.30 on `PATH` — see
 │   │       │   ├── styling.md             # conditional (<HAS_TAILWIND> OR <HAS_STYLING>)
 │   │       │   └── web3.md                # conditional (<HAS_WEB3>)
 │   │       ├── references/                # shared rubrics loaded on demand
-│   │       └── scripts/                   # deterministic helpers, TypeScript run via node (changed-lines, finding validation, findings-ledger merge, git-scope helpers)
+│   │       └── scripts/                   # deterministic helpers, TypeScript run via node (changed-lines, finding validation, findings-ledger merge, git-scope helpers, goal-loop stop conditions, coupled-partner sweep)
 │   ├── hooks/hooks.json                   # SessionStart auto-install
 │   ├── bin/install-prereqs.sh             # idempotent prereq installer
 │   └── README.md
@@ -169,7 +169,7 @@ Claude Code's `plugin.json` `dependencies` field only resolves other **plugins**
 
 - `gh` CLI authenticated (`gh auth status`) — for the GitHub PR skills.
 - `git` ≥ 2.30 — for `--name-status --find-renames`.
-- **Node ≥ 22.18** — the review skills' bundled helpers (`build-changed-lines.ts`, `validate-findings.ts`, `findings-ledger.ts`, `review-scope.ts`) run via Node's native TypeScript type-stripping; `npx` (Node) also drives the prereq installer.
+- **Node ≥ 22.18** — the review skills' bundled helpers (`build-changed-lines.ts`, `validate-findings.ts`, `findings-ledger.ts`, `review-scope.ts`, `goal-loop.ts`, `couple-sweep.ts`) run via Node's native TypeScript type-stripping; `npx` (Node) also drives the prereq installer.
 
 ## Install
 
