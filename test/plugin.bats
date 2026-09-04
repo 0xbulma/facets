@@ -698,8 +698,17 @@ setup() {
   # commit leaves the fixes uncommitted while the next review still sees them in
   # the local diff — so the loop converges truthfully and mints GOAL_CLEAN over
   # work that was never committed, then pushes the pre-fix HEAD.
-  grep -Fq 'the commit failed; the fixes are uncommitted' "$local_skill" \
+  # Anchor on the EXECUTABLE echo (`" >&2` never appears in the backticked table
+  # rows that repeat the phrase) — a bare-phrase grep matched three lines.
+  grep -Fq 'the fixes are uncommitted; they are staged — commit them by hand (do not stash), then re-run --goal." >&2' "$local_skill" \
     || { echo "pr-review-local lost the failed-commit guard" >&2; return 1; }
+  grep -Fq 'the runtime fix is uncommitted; it is staged — commit it by hand (do not stash), then re-run --goal." >&2' "$local_skill" \
+    || { echo "pr-review-local lost the failed-RUNTIME-commit guard" >&2; return 1; }
+  grep -Fq 'check that the runtime commit actually succeeded' "$codex" \
+    || { echo "Codex lost the failed-runtime-commit guard" >&2; return 1; }
+  # A no-op iteration must NOT fire the guard (empty index is legitimate there).
+  grep -Fq 'if git diff --cached --quiet; then' "$local_skill" \
+    || { echo "pr-review-local commit guard fires on a no-op iteration" >&2; return 1; }
   grep -Fq 'check that the commit actually succeeded' "$codex" \
     || { echo "Codex lost the failed-commit guard" >&2; return 1; }
   # 8. gate_green must be an observed result, not an assumed one — the whole
@@ -728,6 +737,31 @@ setup() {
   # command, so anchor on the executable line itself.
   grep -Eq '^   git add -u$' "$local_skill" \
     || { echo "pr-review-local commits without staging; every green iteration would abort" >&2; return 1; }
+  # 12. Gate 3's baseline is PER-COMMAND (a test-shaped one cannot represent an
+  # accepted red lint, so it would never clear), and an unresolvable command is
+  # neither red nor green (else --goal is unusable on a repo with no linter).
+  grep -Fq 'record a **per-command** *pre-existing baseline*' "$local_skill" \
+    || { echo "pr-review-local baseline reverted to test-only" >&2; return 1; }
+  grep -Fq 'no command reports a failure absent from its own baseline' "$local_skill" \
+    || { echo "pr-review-local lost the per-command green rule" >&2; return 1; }
+  grep -Fq 'record a per-command baseline' "$codex" \
+    || { echo "Codex baseline reverted to test-only" >&2; return 1; }
+  grep -Fq "no failure absent from that command's own baseline" "$codex" \
+    || { echo "Codex lost the per-command green rule" >&2; return 1; }
+  grep -Fq 'is **neither red nor green**: exclude it' "$local_skill" \
+    || { echo "pr-review-local treats an unresolvable command as red again" >&2; return 1; }
+  grep -Fq 'is neither red nor green — exclude it' "$codex" \
+    || { echo "Codex treats an unresolvable command as red again" >&2; return 1; }
+  grep -Fq '<FAILED_CMD> fails before any fix); fix it or run without --goal." >&2' "$local_skill" \
+    || { echo "pr-review-local gate-3 sentinel reverted to naming <TEST_CMD>" >&2; return 1; }
+  # 13. The non-delegated Codex loop (tib-ship) must keep its own stuck rule.
+  grep -Fq 'the same hash twice means stuck' "$codex" \
+    || { echo "Codex tib-ship has no stuck rule" >&2; return 1; }
+  # 14. An ungated converge must be visible in the summary on both hosts.
+  grep -Fq 'Gate coverage:' "$local_skill" \
+    || { echo "pr-review-local summary no longer reports gate coverage" >&2; return 1; }
+  grep -Fq 'report gate coverage' "$codex" \
+    || { echo "Codex convergence report no longer covers gate coverage" >&2; return 1; }
 }
 
 @test "engine prints every value a later bash block consumes" {
